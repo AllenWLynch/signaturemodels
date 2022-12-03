@@ -118,7 +118,7 @@ class LdaModel(BaseModel):
 
         phi_matrix_prebuild = np.exp(self.logE_lambda)[:,:,:,None] * np.exp(self.logE_epsilon)    
         
-        for _ in range(iterations):
+        for i in range(iterations):
 
             old_gamma = gamma.copy()
             logE_gamma = log_dirichlet_expectation(gamma)

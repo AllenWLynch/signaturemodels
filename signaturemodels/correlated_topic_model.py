@@ -53,14 +53,6 @@ def initialize_document_variational_parameters(*,
     
     return gamma, v
 
-
-def E_step_squigly(*,gamma, v):
-    
-    return np.sum(
-        np.exp(gamma + v/2),
-        axis = -1
-    )
-
 def M_step_mu_sigma(gamma, v):
     
     mu_hat = gamma.mean(0)
@@ -79,91 +71,85 @@ def lambda_log_expectation(_lambda):
     
     return flattended_expectation.reshape((n_comps, 2, n_contexts))
 
+def E_step_squigly(*,gamma, v):
+    
+    return np.sum(
+        np.exp(gamma + v/2),
+        axis = -1
+    )
 
 def E_step_gamma(*,weighted_phi, gamma, v, squigly,
-                mu, sigma, freqs):
+                mu, sigma, freq):
     
     inv_sigma = inv(sigma)
     phisum = weighted_phi.sum(axis = (-3, -2, -1))
     
-    def objective(curr_gamma, i):
+    def objective(gamma):
 
-        v_sq = v[i]
+        val = -1/2 * (gamma - mu).dot(inv_sigma).dot((gamma - mu)[:,None])
 
-        val = -1/2 * (curr_gamma - mu).dot(inv_sigma).dot((curr_gamma - mu)[:,None])
-
-        val += np.sum(weighted_phi[i]*curr_gamma[:,None,None,None]) + \
-            freqs[i]*\
-            ( 1 - np.log(squigly[i]) - 1/squigly[i]*np.sum(np.exp(curr_gamma+v_sq/2), axis = -1))
+        val += np.sum(weighted_phi*gamma[:,None,None,None]) + \
+            freq*\
+            ( 1 - np.log(squigly) - 1/squigly*np.sum(np.exp(gamma+v/2), axis = -1))
         
         return -val[0]  # maximize!!!!
 
 
-    def jacobian(curr_gamma, i):
+    def jacobian(gamma):
 
-        jac = np.squeeze(-np.dot(inv_sigma, (curr_gamma - mu)[:,None]).T) + \
-               phisum[i] - (freqs[i]/squigly[i])*np.exp(curr_gamma + v[i]/2)
+        jac = np.squeeze(-np.dot(inv_sigma, (gamma - mu)[:,None]).T) + \
+               phisum - (freq/squigly)*np.exp(gamma + v/2)
 
         return -jac # maximize!!!!
+
+    initial_loss = -objective(gamma)
+        
+    new_gamma = minimize(
+        objective, 
+        gamma,
+        jac = jacobian,
+        method='bfgs',
+    ).x
     
-    new_gamma = np.zeros_like(gamma)
-    
-    improvement = []
-    for i in range(len(freqs)):
-        
-        initial_loss = -objective(gamma[i], i)
-        
-        new_gamma[i] = minimize(
-            partial(objective, i=i), 
-            gamma[i],
-            jac = partial(jacobian, i=i),
-            method='bfgs',
-        ).x
-        
-        improvement.append(-objective(new_gamma[i], i) - initial_loss)
+    improvement = -objective(new_gamma) - initial_loss
 
-    return new_gamma, sum(improvement)
+    return new_gamma, improvement
 
 
-def E_step_v(*, gamma, v, squigly, freqs,
+def E_step_v(*, gamma, v, squigly, freq,
                 sigma):
     
     inv_sigma = inv(sigma)
     
-    def objective(v_sq, i):
+    def objective(v_sq):
         
         val = -1/2 * np.trace(np.diag(v_sq).dot(inv_sigma)) \
-            + freqs[i]*( 1 - np.log(squigly[i]) - 1/squigly[i] * np.sum(np.exp(gamma[i]+v_sq/2), axis = -1)) \
+            + freq*( 1 - np.log(squigly) - 1/squigly * np.sum(np.exp(gamma+v_sq/2), axis = -1)) \
             + 1/2 * np.sum(np.log(v_sq) + np.log(2*np.pi) + 1)
         
         return -val
     
-    def jaccobian(v_sq, i):
+    def jacobian(v_sq):
         
         jac = -np.diag(inv_sigma)/2 \
-            - freqs[i]/(2*squigly[i]) * np.exp(gamma[i] + v_sq/2) \
+            - freq/(2*squigly) * np.exp(gamma + v_sq/2) \
             + 1/(2*v_sq)
 
         return -jac    
     
-    new_v = np.ones_like(v)
+    initial_loss = -objective(v)
         
-    improvement = []
-    for i in range(len(freqs)):
+    new_v = minimize(
+        objective, 
+        v,
+        jac = jacobian,
+        method='l-bfgs-b',
+        bounds= [(1e-10, np.inf) for _ in range(v.shape[-1])],
+    ).x
+    
+    improvement = -objective(new_v) - initial_loss
         
-        initial_loss = -objective(v[i], i)
-        
-        new_v[i] = minimize(
-            partial(objective, i=i), 
-            v[i], 
-            jac = partial(jaccobian, i=i),
-            bounds = [(1e-8, np.inf) for _ in range(v.shape[-1])],
-            method = 'l-bfgs-b',
-        ).x
-        
-        improvement.append(-objective(new_v[i], i) - initial_loss)
-        
-    return new_v, sum(improvement)
+    return new_v, improvement
 
 
 class CorrelatedTopicModel(BaseModel):
@@ -244,58 +230,56 @@ class CorrelatedTopicModel(BaseModel):
         )
 
         return evidence
-    
+
 
     def _inference(self,*, gamma, v, freq_matrix, freqs, difference_tol = 1e-2, iterations = 100,
                 quiet = True):
 
         phi_matrix_prebuild = np.exp(self.logE_lambda)[:,:,:,None] * np.exp(self.logE_epsilon)
 
+        phis, weighted_phis = [],[]
+
+        _it = range(len(freq_matrix))
         if not quiet:
-            min_ = np.log(difference_tol)
+            _it = tqdm.tqdm(_it, desc = 'Infering latent variables')
 
-        max_ = None
+        for i in _it:
     
-        for i in range(iterations):
+            for j in range(iterations):
 
-            old_gamma = gamma.copy()
+                old_gamma = gamma[i].copy()
 
-            squigly = E_step_squigly(gamma = gamma, v = v)
-            
-            phi_matrix_unnormalized = phi_matrix_prebuild * np.exp(gamma[:,:,None,None,None])
-            phi_matrix = phi_matrix_unnormalized/phi_matrix_unnormalized.sum(1, keepdims = True)
-            
-            weighted_phi = phi_matrix*np.expand_dims(freq_matrix, 1)
-
-            print(weighted_phi[0])
-
-            gamma, _ = E_step_gamma(weighted_phi = weighted_phi,
-                                        gamma = gamma, v = v, squigly = squigly,
-                                        mu = self.mu, sigma = self.sigma, freqs=freqs)
-            
-            v, _ = E_step_v(freqs = freqs,
-                                gamma = gamma, v = v, squigly = squigly,
-                                sigma = self.sigma)
-
-            print(gamma[0])
-            assert(False)
-
-            mean_gamma_diff = np.abs(gamma - old_gamma).mean()
-
-            if not quiet:
-                if max_ is None:
-                    max_ = np.log(mean_gamma_diff)
-                    range_ = max_ - min_
-                    convergence_bar = tqdm.tqdm(total = 100, desc = 'Convergence')
+                squigly = E_step_squigly(gamma = gamma[i], v = v[i])
                 
-                progress = int( 100 * (1-(max(np.log(mean_gamma_diff) - min_, 0)/range_)) )
-                convergence_bar.update(max(progress - convergence_bar.n, 0))
+                phi_matrix_unnormalized = phi_matrix_prebuild * np.exp(gamma[i,:,None,None,None])
+                phi_matrix = phi_matrix_unnormalized/phi_matrix_unnormalized.sum(0, keepdims = True)
+                
+                weighted_phi = phi_matrix*np.expand_dims(freq_matrix[i], 0)
 
-            if  mean_gamma_diff < difference_tol:
-                logging.debug('Stopped E-step after {} iterations.'.format(str(i+1)))
-                break
+                gamma[i], _ = E_step_gamma(weighted_phi = weighted_phi,
+                                            gamma = gamma[i], 
+                                            v = v[i], 
+                                            squigly = squigly,
+                                            freq=freqs[i],
+                                            mu = self.mu, sigma = self.sigma, 
+                                        )
+                
+                v[i], _ = E_step_v(freq = freqs[i],
+                                    gamma = gamma[i], 
+                                    v = v[i], 
+                                    squigly = squigly,
+                                    sigma = self.sigma)
 
-        return gamma, v, phi_matrix, weighted_phi
+
+                mean_gamma_diff = np.abs(gamma[i] - old_gamma).mean()
+
+                if mean_gamma_diff < difference_tol:
+                    break
+            
+            phis.append(phi_matrix)
+            weighted_phis.append(weighted_phi)
+
+        return gamma, v, np.array(phis), np.array(weighted_phis)
 
 
     def _update_model_parameters(self, weighted_phi):
@@ -321,6 +305,7 @@ class CorrelatedTopicModel(BaseModel):
         nu = M_step_nu(nu = self.nu, _lambda = self._lambda)
     
         return b, nu
+
 
     def get_freqs(self, freq_matrix):
         return freq_matrix.reshape((len(freq_matrix), -1)).sum(-1)
