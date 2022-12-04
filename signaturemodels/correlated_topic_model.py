@@ -108,7 +108,7 @@ def E_step_gamma(*,weighted_phi, gamma, v, squigly,
         objective, 
         gamma,
         jac = jacobian,
-        method='bfgs',
+        method='l-bfgs-b',
     ).x
     
     improvement = -objective(new_gamma) - initial_loss
