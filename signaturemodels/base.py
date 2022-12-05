@@ -4,6 +4,7 @@ import re
 from functools import wraps as functoolswraps
 from sklearn.base import BaseEstimator
 import matplotlib.pyplot as plt
+import pickle
 
 MUTATION_MATCH = re.compile('([ATGC])\[([TC])\>([ATGC])\]([ATGC])')
 
@@ -92,7 +93,7 @@ def E_step_lambda(*,nu, _lambda_sstats):
     return np.expand_dims(nu, 0) + _lambda_sstats
 
 
-def M_step_b(*, b, epsilon):
+def M_step_b(*, b, epsilon, rho):
     
     new_b = np.zeros_like(b)
     
@@ -104,18 +105,21 @@ def M_step_b(*, b, epsilon):
             new_b[k, cat] = update_dir_prior(
                             b[k, cat], 
                             epsilon.shape[-2],
-                            log_phat
+                            log_phat,
+                            rho = rho,
                         )
     return new_b
 
 
-def M_step_nu(*, nu, _lambda):
+def M_step_nu(*, nu, _lambda, rho):
     
     N = _lambda.shape[0]
     _lambda = _lambda.reshape(N,-1)
     log_phat = log_dirichlet_expectation(_lambda).mean(0)
     
-    return update_dir_prior(nu.reshape(-1), N, log_phat).reshape(2,-1)
+
+    return update_dir_prior(nu.reshape(-1), N, log_phat, 
+            rho = rho).reshape(2,-1)
 
 
 def lambda_log_expectation(_lambda):
@@ -167,6 +171,48 @@ def extract_freqmatrix(func):
 
 class BaseModel(BaseEstimator):
 
+    def __init__(self, 
+        seed = 0, 
+        tau = 1.,
+        kappa = 0.5,
+        batch_size = 256,
+        eval_every = 10,
+        dtype = np.float32,
+        pi_prior = 1.,
+        m_prior = 1.,
+        beta_prior = 1.,
+        num_epochs = 10000, 
+        difference_tol = 5e-3,
+        estep_iterations = 100,
+        bound_tol = 1e-2,
+        n_components = 10,
+        quiet = True):
+
+        self.seed = seed
+        self.difference_tol = difference_tol
+        self.estep_iterations = estep_iterations
+        self.num_epochs = num_epochs
+        self.dtype = dtype
+        self.bound_tol = bound_tol
+        self.pi_prior = pi_prior
+        self.m_prior = m_prior
+        self.beta_prior = beta_prior
+        self.n_components = n_components
+        self.quiet = quiet
+        self.tau = tau
+        self.kappa = kappa
+        self.batch_size = batch_size
+        self.eval_every = eval_every
+
+    @classmethod
+    def load(cls, filename):
+        with open(filename, 'rb') as f:
+            return pickle.load(f)
+
+    def save(self, filename):
+        with open(filename, 'wb') as f:
+            pickle.dump(self, f)
+
     # epsilon setters and getters
     # whenever epsilon is updated, track the log expectation
     @property
@@ -183,7 +229,6 @@ class BaseModel(BaseEstimator):
         self._logE_epsilon = log_dirichlet_expectation(_epsilon)
 
     # lambda setters and getter
-
     @property
     def _lambda(self):
         return self._lambda_
@@ -197,6 +242,46 @@ class BaseModel(BaseEstimator):
         self._lambda_ = _lambda
         self._logE_lambda = lambda_log_expectation(_lambda)
 
+
+    @staticmethod
+    def get_global_update_scale(corpus_size, sstats_size):
+        return corpus_size/sstats_size
+
+    @staticmethod
+    def svi_update(old, new, rho):
+        return (1-rho)*old + rho*new
+
+    def get_rho(self, epoch):
+        return (self.tau + epoch)**-self.kappa
+
+
+    def _estimate_global_parameters(self, weighted_phi, rho, sstat_scale = 1.):
+
+        _lambda_sstats = weighted_phi.sum(axis = (0,-1)) * sstat_scale # scale to whole dataset size
+        epsilon_sstats = weighted_phi.sum(axis = 0) * sstat_scale
+        
+        epsilon_hat = E_step_epsilon(
+            epsilon_sstats = epsilon_sstats,
+            b = self.b,
+        )
+        
+        _lambda_hat = E_step_lambda(
+            nu = self.nu, 
+            _lambda_sstats = _lambda_sstats
+            )
+
+        return self.svi_update(self.epsilon, epsilon_hat, rho), \
+            self.svi_update(self._lambda, _lambda_hat, rho)
+
+
+    def _estimate_global_priors(self, rho):
+
+        b = M_step_b(b = self.b, epsilon = self.epsilon, rho = rho)
+
+        nu = M_step_nu(nu = self.nu, _lambda = self._lambda, rho = rho)
+    
+        return b, nu
+    
 
     def signature_posterior(self, signature):
 

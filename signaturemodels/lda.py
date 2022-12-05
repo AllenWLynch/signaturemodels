@@ -47,55 +47,44 @@ def initialize_document_variational_parameters(*,
     return gamma
 
 
-def M_step_alpha(*, alpha, gamma):
+def M_step_alpha(*, alpha, gamma, rho):
     
     N = gamma.shape[0]
     log_phat = log_dirichlet_expectation(gamma).mean(-2)
     
-    return update_dir_prior(alpha, N, log_phat)
+    return update_dir_prior(alpha, N, log_phat, rho = rho)
+
+
+def E_step_phi(gamma, phi_matrix_prebuild, freq_matrix):
+
+    logE_gamma = log_dirichlet_expectation(gamma)
+
+    phi_matrix_unnormalized = phi_matrix_prebuild * np.exp(logE_gamma)[:,:,None,None,None]
+    phi_matrix = phi_matrix_unnormalized/phi_matrix_unnormalized.sum(1, keepdims = True)
+
+    weighted_phi = phi_matrix*np.expand_dims(freq_matrix, 1)
+
+    return phi_matrix, weighted_phi
 
 
 class LdaModel(BaseModel):
 
     n_contexts = 32
 
-    def __init__(self, 
-        seed = 0, 
-        dtype = np.float32,
-        pi_prior = 1.,
-        m_prior = 1.,
-        beta_prior = 1.,
-        num_epochs = 10000, 
-        difference_tol = 5e-3,
-        estep_iterations = 100,
-        bound_tol = 1e-2,
-        n_components = 10,
-        quiet = True):
-
-        self.seed = seed
-        self.difference_tol = difference_tol
-        self.estep_iterations = estep_iterations
-        self.num_epochs = num_epochs
-        self.dtype = dtype
-        self.bound_tol = bound_tol
-        self.pi_prior = pi_prior
-        self.m_prior = m_prior
-        self.beta_prior = beta_prior
-        self.n_components = n_components
-        self.quiet = quiet
-
-
-    def _bound(self, gamma, phi_matrix, weighted_phi):
+    def _bound(self, gamma, phi_matrix, weighted_phi, likelihood_scale = 1.):
 
         logE_gamma = log_dirichlet_expectation(gamma)
-
         evidence = 0
+
+        # 
         evidence += np.sum(weighted_phi*(
                 np.expand_dims(self.logE_epsilon, 0) + logE_gamma[:,:,None,None,None] \
                     + self.logE_lambda[None,:,:,:,None] - np.log(phi_matrix))
             )
         
         evidence += sum(dirichlet_bound(self.alpha, gamma, logE_gamma))
+
+        evidence*=likelihood_scale
         
         for i in range(self.n_components):
             for j in [0,1]:
@@ -114,55 +103,36 @@ class LdaModel(BaseModel):
         return evidence
     
 
-    def _inference(self, gamma, freq_matrix, difference_tol = 1e-2, iterations = 100):
+    def _inference(self, gamma, freq_matrix, difference_tol = 1e-2, iterations = 100, quiet = True):
 
-        phi_matrix_prebuild = np.exp(self.logE_lambda)[:,:,:,None] * np.exp(self.logE_epsilon)    
+        phi_matrix_prebuild = np.exp(self.logE_lambda)[:,:,:,None] * np.exp(self.logE_epsilon)
+        max_ = None
         
         for i in range(iterations):
 
             old_gamma = gamma.copy()
-            logE_gamma = log_dirichlet_expectation(gamma)
-
-            phi_matrix_unnormalized = phi_matrix_prebuild * np.exp(logE_gamma)[:,:,None,None,None]
-            phi_matrix = phi_matrix_unnormalized/phi_matrix_unnormalized.sum(1, keepdims = True)
-
-            weighted_phi = phi_matrix*np.expand_dims(freq_matrix, 1)
+            phi_matrix, weighted_phi = E_step_phi(old_gamma, phi_matrix_prebuild, freq_matrix)
 
             gamma = self.alpha + weighted_phi.sum(axis = (-1,-2,-3))
 
-            if np.abs(gamma - old_gamma).mean() < difference_tol:
+            mean_abs_diff = np.abs(gamma - old_gamma).mean()
+
+            if not quiet:
+                if max_ is None:
+                    max_ = np.log10(mean_abs_diff)
+                    min_ = np.log10(difference_tol)
+                    range_ = max_ - min_
+                    bar = tqdm.tqdm(total = 100, desc = 'Convergence')
+
+                progress = 1-(np.log10(mean_abs_diff) - min_)/range_
+                bar.update(int(progress*100) - bar.n)
+
+            if  mean_abs_diff < difference_tol:
                 logging.debug('Stopped E-step after {} iterations.'.format(str(i+1)))
                 break
 
         return gamma, phi_matrix, weighted_phi
 
-
-    def _update_model_parameters(self, weighted_phi):
-
-        _lambda_sstats = weighted_phi.sum(axis = (0,-1))
-        epsilon_sstats = weighted_phi.sum(axis = 0)
-        
-        epsilon = E_step_epsilon(
-            epsilon_sstats = epsilon_sstats,
-            b = self.b,
-        )
-        
-        _lambda = E_step_lambda(nu = self.nu, 
-                _lambda_sstats = _lambda_sstats)
-
-        return epsilon, _lambda
-
-        
-    def _update_priors(self, gamma):
-
-        b = M_step_b(b = self.b, epsilon = self.epsilon)
-
-        alpha = M_step_alpha(alpha = self.alpha, gamma = gamma)
-
-        nu = M_step_nu(nu = self.nu, _lambda = self._lambda)
-    
-        return b, alpha, nu
-    
 
     @extract_freqmatrix
     def fit(self, freq_matrix):
@@ -191,35 +161,88 @@ class LdaModel(BaseModel):
             n_samples= len(freq_matrix),
         )
 
+        corpus_size = len(freq_matrix)
+        batch_size = min(self.batch_size, corpus_size)
+        sstat_scale = corpus_size/batch_size
+        batch_lda = batch_size == corpus_size
+
+        logger.debug('Sstat scale: {}'.format(str(sstat_scale)))
+        logger.debug('Batch size: {}'.format(str(batch_size)))
+
+        if batch_lda:
+            logger.warn('Running batch LDA algorithm')
+
         self.bounds = []
 
         _it = range(self.num_epochs)
         if not self.quiet:
             _it = tqdm.tqdm(_it, desc = 'Training')
 
-        for epoch in _it:
-            
-            gamma, phi_matrix, weighted_phi = \
-                self._inference(
-                    gamma, freq_matrix, 
-                    difference_tol = self.difference_tol,
-                    iterations = self.estep_iterations
+        try:
+            for epoch in _it:
+
+                rho = self.get_rho(epoch) if not batch_lda else 1.
+
+                logger.debug('Rho: {}'.format(str(rho)))
+
+                if not batch_lda:
+                    subsample = np.random.choice(corpus_size, 
+                            size = batch_size, 
+                            replace = False
+                        )
+                else:
+                    subsample = np.arange(corpus_size)
+                
+                logger.debug('Subsample size: {}'.format(str(len(subsample))))
+
+                gamma[subsample], phi_matrix, weighted_phi = \
+                    self._inference(
+                        gamma[subsample], 
+                        freq_matrix[subsample], 
+                        difference_tol = self.difference_tol,
+                        iterations = self.estep_iterations
+                    )
+
+                # local prior update
+                self.alpha = M_step_alpha(
+                    gamma = gamma[subsample],
+                    alpha = self.alpha,  
+                    rho = (rho if not batch_lda else 0.1)
                 )
 
-            self.epsilon, self._lambda = \
-                self._update_model_parameters(weighted_phi)
-            
-            #if epoch > 10:
-            self.b, self.alpha, self.nu = \
-                self._update_priors(gamma)
+                self.epsilon, self._lambda = \
+                    self._estimate_global_parameters(weighted_phi, rho, 
+                            sstat_scale=sstat_scale
+                    )
+                
+                self.b, self.nu = \
+                    self._estimate_global_priors(rho if not batch_lda else 0.1)
 
-            self.bounds.append(
-                self._bound(gamma, phi_matrix, weighted_phi)
-            )
+                if epoch % self.eval_every == 0:
+                    
+                    if not batch_lda:
+                        phi_matrix, weighted_phi = E_step_phi(
+                            gamma, 
+                            np.exp(self.logE_lambda)[:,:,:,None] * np.exp(self.logE_epsilon) , 
+                            freq_matrix
+                        )
 
-            if epoch > 1 and (self.bounds[-1] - self.bounds[-2]) < self.bound_tol:
-                break
-    
+                    self.bounds.append(
+                        self._bound(gamma, phi_matrix, weighted_phi, 1.)
+                    )
+
+                    if not np.isfinite(self.bounds[-1]):
+                        raise ValueError('Bound is not finite, something has gone wrong in training.')
+                    
+                    if len(self.bounds) > 1:
+                        improvement = self.bounds[-1] - self.bounds[-2]
+                        logger.debug('Bounds improvement: {}'.format(str(improvement)))
+                        if 0 < improvement < self.bound_tol:
+                            break
+
+        except KeyboardInterrupt:
+            pass
+        
         return self
 
 
@@ -233,8 +256,9 @@ class LdaModel(BaseModel):
                     n_components=self.n_components
                 ), 
                 freq_matrix, 
-                difference_tol = 1e-3, 
-                iterations = 1000
+                difference_tol = 1e-2, 
+                iterations = 1000,
+                quiet=False,
             )
 
     @extract_freqmatrix
@@ -250,4 +274,4 @@ class LdaModel(BaseModel):
 
         return self._bound(
             *self._infer_document_variables(freq_matrix)
-        )
+        )/np.sum(freq_matrix) # per-word perplexity

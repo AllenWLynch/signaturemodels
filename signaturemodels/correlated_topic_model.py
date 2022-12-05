@@ -53,23 +53,6 @@ def initialize_document_variational_parameters(*,
     
     return gamma, v
 
-def M_step_mu_sigma(gamma, v):
-    
-    mu_hat = gamma.mean(0)
-    sigma = 1/len(gamma) * ( (gamma - mu_hat).T.dot(gamma - mu_hat) \
-        + np.array([np.diag(v[i]) for i in range(len(v))]).sum(0) )
-    
-    return mu_hat, sigma
-
-
-def lambda_log_expectation(_lambda):
-    
-    n_comps, _, n_contexts = _lambda.shape
-    flattended_expectation = log_dirichlet_expectation(
-        _lambda.reshape((n_comps, 2*n_contexts))
-    )
-    
-    return flattended_expectation.reshape((n_comps, 2, n_contexts))
 
 def E_step_squigly(*,gamma, v):
     
@@ -77,6 +60,7 @@ def E_step_squigly(*,gamma, v):
         np.exp(gamma + v/2),
         axis = -1
     )
+
 
 def E_step_gamma(*,weighted_phi, gamma, v, squigly,
                 mu, sigma, freq):
@@ -152,35 +136,19 @@ def E_step_v(*, gamma, v, squigly, freq,
     return new_v, improvement
 
 
+def E_step_phi(gamma, phi_matrix_prebuild, freq_matrix):
+
+        phi_matrix_unnormalized = phi_matrix_prebuild * np.exp(gamma)[:,:,None,None,None]
+        phi_matrix = phi_matrix_unnormalized/phi_matrix_unnormalized.sum(1, keepdims = True)
+
+        weighted_phi = phi_matrix*np.expand_dims(freq_matrix, 1)
+
+        return phi_matrix, weighted_phi
+
+
 class CorrelatedTopicModel(BaseModel):
 
     n_contexts = 32
-
-    def __init__(self, 
-        seed = 0, 
-        dtype = np.float32,
-        pi_prior = 1.,
-        m_prior = 1.,
-        beta_prior = 1.,
-        num_epochs = 10000, 
-        difference_tol = 5e-3,
-        estep_iterations = 100,
-        bound_tol = 1e-2,
-        n_components = 10,
-        quiet = True):
-
-        self.seed = seed
-        self.difference_tol = difference_tol
-        self.estep_iterations = estep_iterations
-        self.num_epochs = num_epochs
-        self.dtype = dtype
-        self.bound_tol = bound_tol
-        self.pi_prior = pi_prior
-        self.m_prior = m_prior
-        self.beta_prior = beta_prior
-        self.n_components = n_components
-        self.quiet = quiet
-
 
     @property
     def sigma(self):
@@ -194,6 +162,16 @@ class CorrelatedTopicModel(BaseModel):
     def sigma(self, _sigma):
         self._sigma = _sigma
         self._inv_sigma = inv(_sigma)
+
+
+    def M_step_mu_sigma(self, gamma, v, rho):
+    
+        mu_hat = gamma.mean(0)
+        sigma_hat = 1/len(gamma) * ( (gamma - mu_hat).T.dot(gamma - mu_hat) \
+            + np.array([np.diag(v[i]) for i in range(len(v))]).sum(0) )
+        
+        return self.svi_update(self.mu, mu_hat, rho), \
+                self.svi_update(self.sigma, sigma_hat, rho)
 
 
     def _bound(self,*, gamma, v, phi_matrix, weighted_phi, freqs):
@@ -243,7 +221,7 @@ class CorrelatedTopicModel(BaseModel):
         if not quiet:
             _it = tqdm.tqdm(_it, desc = 'Infering latent variables')
 
-        for i in _it:
+        for i in _it: # outer data loop
     
             for j in range(iterations):
 
@@ -280,31 +258,6 @@ class CorrelatedTopicModel(BaseModel):
             weighted_phis.append(weighted_phi)
 
         return gamma, v, np.array(phis), np.array(weighted_phis)
-
-
-    def _update_model_parameters(self, weighted_phi):
-
-        _lambda_sstats = weighted_phi.sum(axis = (0,-1))
-        epsilon_sstats = weighted_phi.sum(axis = 0)
-        
-        epsilon = E_step_epsilon(
-            epsilon_sstats = epsilon_sstats,
-            b = self.b,
-        )
-        
-        _lambda = E_step_lambda(nu = self.nu, 
-                _lambda_sstats = _lambda_sstats)
-
-        return epsilon, _lambda
-
-        
-    def _update_priors(self):
-
-        b = M_step_b(b = self.b, epsilon = self.epsilon)
-
-        nu = M_step_nu(nu = self.nu, _lambda = self._lambda)
-    
-        return b, nu
 
 
     def get_freqs(self, freq_matrix):
@@ -344,38 +297,77 @@ class CorrelatedTopicModel(BaseModel):
         if not self.quiet:
             _it = tqdm.tqdm(_it, desc = 'Training')
 
-        for epoch in _it:
+        corpus_size = len(freq_matrix)
+        batch_size = min(self.batch_size, corpus_size)
+        sstat_scale = corpus_size/batch_size
+        batch_lda = batch_size == corpus_size
 
-            logger.debug('Begin epoch {}.'.format(str(epoch)))
-            
-            gamma, v, phi_matrix, weighted_phi = \
-                self._inference(
-                    gamma = gamma, 
-                    v = v, 
-                    freq_matrix = freq_matrix, 
-                    freqs = freqs,
-                    difference_tol = self.difference_tol,
-                    iterations = self.estep_iterations
-                )
+        logger.debug('Sstat scale: {}'.format(str(sstat_scale)))
+        logger.debug('Batch size: {}'.format(str(batch_size)))
 
-            self.epsilon, self._lambda = \
-                self._update_model_parameters(weighted_phi)
-            
-            #if epoch > 10:
-            self.b, self.nu = self._update_priors()
+        if batch_lda:
+            logger.warn('Running batch CTM algorithm')
 
-            self.mu, self.sigma = M_step_mu_sigma(gamma, v)
+        try:
+            for epoch in _it:
+
+                rho = self.get_rho(epoch) if not batch_lda else 1.
+
+                logger.debug('Rho: {}'.format(str(rho)))
+
+                if not batch_lda:
+                    subsample = np.random.choice(corpus_size, 
+                            size = batch_size, 
+                            replace = False
+                        )
+                else:
+                    subsample = np.arange(corpus_size)
+                
+                gamma[subsample], v[subsample], phi_matrix, weighted_phi = \
+                    self._inference(
+                        gamma = gamma[subsample], 
+                        v = v[subsample], 
+                        freq_matrix = freq_matrix[subsample], 
+                        freqs = freqs[subsample],
+                        difference_tol = self.difference_tol,
+                        iterations = self.estep_iterations
+                    )
+
+                # update local priors
+                self.mu, self.sigma = self.M_step_mu_sigma(gamma, v, 
+                        rho if not batch_lda else 1.)
+
+                self.epsilon, self._lambda = \
+                    self._estimate_global_parameters(weighted_phi, rho, sstat_scale = sstat_scale)
+
+                self.b, self.nu = self._estimate_global_priors(rho if not batch_lda else 0.1)
+
+
+                if epoch % self.eval_every == 0:
+                        
+                    if not batch_lda:
+                        phi_matrix, weighted_phi = E_step_phi(
+                            gamma, 
+                            np.exp(self.logE_lambda)[:,:,:,None] * np.exp(self.logE_epsilon) , 
+                            freq_matrix
+                        )
+
+                    self.bounds.append(
+                        self._bound(gamma = gamma, v = v, phi_matrix = phi_matrix,
+                            weighted_phi=weighted_phi, freqs=freqs)
+                    )
+
+                    if not np.isfinite(self.bounds[-1]):
+                        raise ValueError('Bound is not finite, something has gone wrong in training.')
                     
-            self.bounds.append(
-                self._bound(gamma = gamma, v = v, phi_matrix = phi_matrix,
-                    weighted_phi=weighted_phi, freqs=freqs)
-            )
+                    if len(self.bounds) > 1:
+                        improvement = self.bounds[-1] - self.bounds[-2]
+                        logger.debug('Bounds improvement: {}'.format(str(improvement)))
+                        if 0 < improvement < self.bound_tol:
+                            break
 
-            if epoch > 1 and (self.bounds[-2] > self.bounds[-1]):
-                logger.warning('Bounds did not decrease between epochs, training may be numerically unstable.\nThis usually occurs because the model has too many parameters for the training data.')
-
-            if epoch > 25 and (self.bounds[-1] - self.bounds[-2]) < self.bound_tol:
-                break
+        except KeyboardInterrupt:
+            pass
     
         return self
 
