@@ -79,7 +79,8 @@ class LdaModel(BaseModel):
         # 
         evidence += np.sum(weighted_phi*(
                 np.expand_dims(self.logE_epsilon, 0) + logE_gamma[:,:,None,None,None] \
-                    + self.logE_lambda[None,:,:,:,None] - np.log(phi_matrix))
+                    + self.logE_lambda[None,:,:,:,None] - np.where(phi_matrix > 0, np.log(phi_matrix), 0.)
+                )
             )
         
         evidence += sum(dirichlet_bound(self.alpha, gamma, logE_gamma))
@@ -207,7 +208,7 @@ class LdaModel(BaseModel):
                 self.alpha = M_step_alpha(
                     gamma = gamma[subsample],
                     alpha = self.alpha,  
-                    rho = (rho if not batch_lda else 0.1)
+                    rho = (rho if not batch_lda else 0.05)
                 )
 
                 self.epsilon, self._lambda = \
@@ -216,7 +217,7 @@ class LdaModel(BaseModel):
                     )
                 
                 self.b, self.nu = \
-                    self._estimate_global_priors(rho if not batch_lda else 0.1)
+                    self._estimate_global_priors(rho if not batch_lda else 0.05)
 
                 if epoch % self.eval_every == 0:
                     
@@ -233,7 +234,7 @@ class LdaModel(BaseModel):
 
                     if not np.isfinite(self.bounds[-1]):
                         logger.warn('Bound is not finite on training data, stopping training.')
-                        break                    
+                        #break                    
                     elif len(self.bounds) > 1:
                         improvement = self.bounds[-1] - self.bounds[-2]
                         logger.debug('Bounds improvement: {}'.format(str(improvement)))

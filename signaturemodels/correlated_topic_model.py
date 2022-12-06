@@ -273,7 +273,8 @@ class CorrelatedTopicModel(BaseModel):
         evidence = 0
         evidence += np.sum(weighted_phi*(
                 np.expand_dims(self.logE_epsilon, 0) + logE_gamma[:,:,None,None,None] \
-                    + self.logE_lambda[None,:,:,:,None] - np.log(phi_matrix))
+                    + self.logE_lambda[None,:,:,:,None] - np.where(weighted_phi > 0, np.log(phi_matrix), 0.)
+                )
             )
 
         for i in range(len(freqs)):
