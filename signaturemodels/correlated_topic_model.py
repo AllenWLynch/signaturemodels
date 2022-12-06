@@ -450,9 +450,9 @@ class CorrelatedTopicModel(BaseModel):
                     )
 
                     if not np.isfinite(self.bounds[-1]):
-                        raise ValueError('Bound is not finite, something has gone wrong in training.')
-                    
-                    if len(self.bounds) > 1:
+                        logger.warn('Bound is not finite on training data, stopping training.')
+                        break
+                    elif len(self.bounds) > 1:
                         improvement = self.bounds[-1] - self.bounds[-2]
                         logger.debug('Bounds improvement: {}'.format(str(improvement)))
                         if 0 < improvement < self.bound_tol:
