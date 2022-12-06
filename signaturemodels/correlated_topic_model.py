@@ -6,7 +6,7 @@ from scipy.optimize import minimize
 from functools import partial
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
-
+import warnings
 from scipy.linalg import inv, det
 
 
@@ -63,76 +63,168 @@ def E_step_squigly(*,gamma, v):
 
 
 def E_step_gamma(*,weighted_phi, gamma, v, squigly,
-                mu, sigma, freq):
+                mu, inv_sigma, freq, tol = 1e-8):
     
-    inv_sigma = inv(sigma)
     phisum = weighted_phi.sum(axis = (-3, -2, -1))
     
     def objective(gamma):
 
-        val = -1/2 * (gamma - mu).dot(inv_sigma).dot((gamma - mu)[:,None])
+        E_nu = np.exp(gamma+v/2)
+        mu_diff = (gamma - mu)
 
-        val += np.sum(weighted_phi*gamma[:,None,None,None]) + \
+        ### Objective
+        obj = -1/2 * mu_diff.dot(inv_sigma).dot(mu_diff[:,None])
+
+        obj += np.sum(weighted_phi*gamma[:,None,None,None]) + \
             freq*\
-            ( 1 - np.log(squigly) - 1/squigly*np.sum(np.exp(gamma+v/2), axis = -1))
+            ( 1 - np.log(squigly) - 1/squigly*np.sum(E_nu, axis = -1))
+
+        ### Jacobian
+        jac = np.squeeze(-np.dot(inv_sigma, mu_diff[:,None]).T) + \
+               phisum - (freq/squigly)*E_nu
         
-        return -val[0]  # maximize!!!!
+        return -obj[0], -jac  # maximize!!!!
 
 
-    def jacobian(gamma):
+    def hess(gamma, p):
+        hess = np.dot(inv_sigma, p) + np.dot( (freq/squigly)*np.exp(gamma + v/2) , p )
+        return -hess
 
-        jac = np.squeeze(-np.dot(inv_sigma, (gamma - mu)[:,None]).T) + \
-               phisum - (freq/squigly)*np.exp(gamma + v/2)
-
-        return -jac # maximize!!!!
-
-    initial_loss = -objective(gamma)
-        
-    new_gamma = minimize(
-        objective, 
-        gamma,
-        jac = jacobian,
-        method='l-bfgs-b',
-    ).x
+    #initial_loss = -objective(gamma)[0]
     
-    improvement = -objective(new_gamma) - initial_loss
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
 
+        new_gamma = minimize(
+            objective, 
+            gamma,
+            jac = True,
+            hessp = hess,
+            method='newton-cg',
+            tol=tol
+        ).x
+    
+    #improvement = -objective(new_gamma)[0] - initial_loss
+    improvement = None
     return new_gamma, improvement
 
 
-def E_step_v(*, gamma, v, squigly, freq,
-                sigma):
-    
-    inv_sigma = inv(sigma)
+def _E_step_v(*, gamma, v_sq, squigly, freq, tol = 1e-8,
+                inv_sigma):
+
+    #hessian_matrix = np.zeros((v_sq.shape, v_sq.shape))
     
     def objective(v_sq):
         
-        val = -1/2 * np.trace(np.diag(v_sq).dot(inv_sigma)) \
-            + freq*( 1 - np.log(squigly) - 1/squigly * np.sum(np.exp(gamma+v_sq/2), axis = -1)) \
-            + 1/2 * np.sum(np.log(v_sq) + np.log(2*np.pi) + 1)
-        
-        return -val
-    
-    def jacobian(v_sq):
-        
-        jac = -np.diag(inv_sigma)/2 \
-            - freq/(2*squigly) * np.exp(gamma + v_sq/2) \
-            + 1/(2*v_sq)
+        E_nu = np.exp(gamma + v_sq/2)
 
-        return -jac    
-    
-    initial_loss = -objective(v)
+        ### Objective
+        obj = -1/2 * np.trace(np.diag(v_sq).dot(inv_sigma)) \
+            + freq*( 1 - np.log(squigly) - 1/squigly * np.sum(E_nu, axis = -1)) \
+            + 1/2 * np.sum(np.log(v_sq) + np.log(2*np.pi) + 1)
+
+        ### Jacobian
+        jac = -np.diag(inv_sigma)/2 \
+            - freq/(2*squigly) * E_nu + 1/(2*v_sq)
         
-    new_v = minimize(
+        return -obj, -jac
+    
+    def hess(v_sq):
+
+        hessian_matrix = np.fill_diagonal(
+            hessian_matrix,
+            -freq/(2*squigly)*np.exp(gamma + v_sq/2) - 1/(2*np.square(v_sq)),
+        )
+        return -hessian_matrix
+    
+    #initial_loss = -objective(v_sq)[0]
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+
+        new_v = minimize(
+            objective, 
+            v_sq,
+            jac = True,
+            method='l-bfgs-b',
+            tol = tol,
+            bounds= [(1e-10, np.inf) for _ in range(v_sq.shape[-1])],
+        ).x
+
+    '''new_v = minimize(
         objective, 
-        v,
-        jac = jacobian,
-        method='l-bfgs-b',
-        bounds= [(1e-10, np.inf) for _ in range(v.shape[-1])],
-    ).x
+        v_sq,
+        jac = True,
+        hess=hess,
+        method='tnc',
+        bounds= [(1e-10, np.inf) for _ in range(v_sq.shape[-1])],
+    ).x'''
     
-    improvement = -objective(new_v) - initial_loss
+    #improvement = -objective(new_v)[0] - initial_loss
+    improvement = None
+
+    return new_v, improvement
+
+def E_step_v(*, gamma, v_sq, squigly, freq, tol = 1e-8,
+                inv_sigma):
+
+    #hessian_matrix = np.zeros((v_sq.shape, v_sq.shape))
+    
+    def objective(r):
+
+        v_sq = np.exp(2*r)
+        E_nu = np.exp(gamma + v_sq/2)
+
+        ### Objective
+        obj = -1/2 * np.trace(np.diag(v_sq).dot(inv_sigma)) \
+            + freq*( 1 - np.log(squigly) - 1/squigly * np.sum(E_nu, axis = -1)) \
+            + 1/2 * np.sum(np.log(v_sq) + np.log(2*np.pi) + 1)
+
+        ### Jacobian
+        jac = -np.diag(inv_sigma)*v_sq \
+            - freq/(2*squigly)*np.exp(gamma + 1/2*v_sq + 2*r) + 1
         
+        return -obj, -jac
+    
+    def hess(r, p):
+        
+        v_sq = np.exp(2*r)
+
+        hessp = (-2*np.diag(inv_sigma)*v_sq \
+                - freq/(2*squigly)*np.exp(gamma + 1/2*v_sq + 2*r)*(v_sq + 2))*p
+
+        return -hessp
+    
+
+    r0 = 1/2*np.log(v_sq)
+
+    initial_loss = -objective(r0)[0]
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+
+        new_r = minimize(
+            objective, 
+            r0,
+            jac = True,
+            hessp = hess,
+            method='newton-cg',
+            tol = tol,
+        ).x
+
+    '''new_v = minimize(
+        objective, 
+        v_sq,
+        jac = True,
+        hess=hess,
+        method='tnc',
+        bounds= [(1e-10, np.inf) for _ in range(v_sq.shape[-1])],
+    ).x'''
+    
+    improvement = -objective(new_r)[0] - initial_loss
+    #improvement = None
+    #print(improvement)
+
+    new_v = np.exp(2*new_r)
+
     return new_v, improvement
 
 
@@ -218,12 +310,9 @@ class CorrelatedTopicModel(BaseModel):
         phis, weighted_phis = [],[]
 
         _it = range(len(freq_matrix))
-        if not quiet:
-            _it = tqdm.tqdm(_it, desc = 'Infering latent variables')
-
-        for i in _it: # outer data loop
-    
-            for j in range(iterations):
+        for i in _it if quiet else tqdm.tqdm(_it, desc = 'Inferring latent variables', leave=False): # outer data loop 
+   
+            for j in range(iterations): # inner convergence loop
 
                 old_gamma = gamma[i].copy()
 
@@ -239,14 +328,18 @@ class CorrelatedTopicModel(BaseModel):
                                             v = v[i], 
                                             squigly = squigly,
                                             freq=freqs[i],
-                                            mu = self.mu, sigma = self.sigma, 
+                                            mu = self.mu, 
+                                            inv_sigma = self.inv_sigma, 
+                                            tol = difference_tol/100
                                         )
-                
+
                 v[i], _ = E_step_v(freq = freqs[i],
                                     gamma = gamma[i], 
-                                    v = v[i], 
+                                    v_sq = v[i], 
                                     squigly = squigly,
-                                    sigma = self.sigma)
+                                    inv_sigma = self.inv_sigma,
+                                    tol = difference_tol/100
+                                 )
 
 
                 mean_gamma_diff = np.abs(gamma[i] - old_gamma).mean()
@@ -330,12 +423,11 @@ class CorrelatedTopicModel(BaseModel):
                         freq_matrix = freq_matrix[subsample], 
                         freqs = freqs[subsample],
                         difference_tol = self.difference_tol,
-                        iterations = self.estep_iterations
+                        iterations = self.estep_iterations,
                     )
 
                 # update local priors
-                self.mu, self.sigma = self.M_step_mu_sigma(gamma, v, 
-                        rho if not batch_lda else 1.)
+                self.mu, self.sigma = self.M_step_mu_sigma(gamma, v, rho)
 
                 self.epsilon, self._lambda = \
                     self._estimate_global_parameters(weighted_phi, rho, sstat_scale = sstat_scale)
@@ -408,6 +500,13 @@ class CorrelatedTopicModel(BaseModel):
 
         gamma, v, _, _ = self._infer_document_variables(freq_matrix)
         return self._monte_carlo_softmax_expecation(gamma, v)
+
+
+    @extract_freqmatrix
+    def _get_local_variational_parameters(self, freq_matrix):
+
+        gamma, v, _, _ = self._infer_document_variables(freq_matrix)
+        return self._monte_carlo_softmax_expecation(gamma, v)
         
 
     @extract_freqmatrix
@@ -421,4 +520,4 @@ class CorrelatedTopicModel(BaseModel):
         return self._bound(
             gamma = gamma, v = v, phi_matrix=phi_matrix,
             weighted_phi=weighted_phi, freqs = freqs,
-        )
+        )/np.sum(freq_matrix)
