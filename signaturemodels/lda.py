@@ -47,12 +47,12 @@ def initialize_document_variational_parameters(*,
     return gamma
 
 
-def M_step_alpha(*, alpha, gamma, rho):
+def M_step_alpha(*, alpha, gamma, rho, optimize):
     
     N = gamma.shape[0]
     log_phat = log_dirichlet_expectation(gamma).mean(-2)
     
-    return update_dir_prior(alpha, N, log_phat, rho = rho)
+    return update_dir_prior(alpha, N, log_phat, rho = rho, optimize = optimize)
 
 
 def E_step_phi(gamma, phi_matrix_prebuild, freq_matrix):
@@ -182,7 +182,7 @@ class LdaModel(BaseModel):
         try:
             for epoch in _it:
 
-                rho = self.get_rho(epoch) if not batch_lda else 1.
+                rho = 1. if batch_lda else self.get_rho(epoch)
 
                 logger.debug('Rho: {}'.format(str(rho)))
 
@@ -204,20 +204,29 @@ class LdaModel(BaseModel):
                         iterations = self.estep_iterations
                     )
 
+                if ~np.all(np.isfinite(weighted_phi)):
+                    raise ValueError('Non-finite values detected in sufficient statistics. Stopping training to preserve current state.')
+
                 # local prior update
                 self.alpha = M_step_alpha(
                     gamma = gamma[subsample],
                     alpha = self.alpha,  
-                    rho = (rho if not batch_lda else 0.05)
+                    rho = rho,
+                    optimize = batch_lda,
                 )
 
                 self.epsilon, self._lambda = \
-                    self._estimate_global_parameters(weighted_phi, rho, 
-                            sstat_scale=sstat_scale
+                    self._estimate_global_parameters(
+                            weighted_phi, 
+                            rho, 
+                            sstat_scale=sstat_scale, 
                     )
                 
                 self.b, self.nu = \
-                    self._estimate_global_priors(rho if not batch_lda else 0.05)
+                    self._estimate_global_priors(
+                            rho,
+                            optimize = batch_lda,
+                        )
 
                 if epoch % self.eval_every == 0:
                     

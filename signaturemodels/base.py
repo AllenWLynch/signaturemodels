@@ -5,6 +5,8 @@ from functools import wraps as functoolswraps
 from sklearn.base import BaseEstimator
 import matplotlib.pyplot as plt
 import pickle
+import logging
+logger = logging.getLogger(__name__)
 
 MUTATION_MATCH = re.compile('([ATGC])\[([TC])\>([ATGC])\]([ATGC])')
 
@@ -68,8 +70,7 @@ def dirichlet_bound(alpha, gamma, logE_gamma):
              axis = -1
         )
 
-
-def update_dir_prior(prior, N, logphat, rho = 0.05):
+def _dir_prior_update_step(prior, N, logphat, rho = 0.05):
     
     gradf = N * (psi(np.sum(prior)) - psi(prior) + logphat)
 
@@ -80,9 +81,42 @@ def update_dir_prior(prior, N, logphat, rho = 0.05):
 
     dprior = -(gradf - b) / q
 
-    updated_prior = rho * dprior + prior
-    
-    return updated_prior
+    return rho * dprior + prior
+
+
+def update_dir_prior(prior, N, logphat, rho = 0.05,
+    optimize = True, tol = 1e-4, max_iterations = 100):
+
+    if not optimize:
+        new_prior = _dir_prior_update_step(prior, N, logphat, rho = rho)
+        
+        if not np.all(new_prior > 0) and np.all(np.isfinite(new_prior)):
+            logger.warning('Prior update failed. Reverting to old prior')
+            return prior
+        else:
+            return new_prior
+
+    else:
+        
+        failures = 0
+        for it_ in range(max_iterations): #max iterations
+            old_prior = prior.copy()
+
+            prior = _dir_prior_update_step(prior, N, logphat, rho = rho)
+
+            if not np.all(prior > 0) and np.all(np.isfinite(prior)):
+                if failures > 5:
+                    logger.debug('Prior update failed at iteration {}. Reverting to old prior'.format(str(it_)))
+                    return old_prior
+                else:
+                    prior = old_prior
+                    rho*=1/2
+                    failures+=1
+                    
+            elif np.abs(old_prior-prior).mean() < tol:
+                break
+        
+        return prior
 
 
 def E_step_epsilon(*,b, epsilon_sstats):
@@ -93,7 +127,7 @@ def E_step_lambda(*,nu, _lambda_sstats):
     return np.expand_dims(nu, 0) + _lambda_sstats
 
 
-def M_step_b(*, b, epsilon, rho):
+def M_step_b(*, b, epsilon, rho, optimize):
     
     new_b = np.zeros_like(b)
     
@@ -107,19 +141,22 @@ def M_step_b(*, b, epsilon, rho):
                             epsilon.shape[-2],
                             log_phat,
                             rho = rho,
+                            optimize = optimize,
                         )
     return new_b
 
 
-def M_step_nu(*, nu, _lambda, rho):
+def M_step_nu(*, nu, _lambda, rho, optimize):
     
     N = _lambda.shape[0]
     _lambda = _lambda.reshape(N,-1)
     log_phat = log_dirichlet_expectation(_lambda).mean(0)
     
 
-    return update_dir_prior(nu.reshape(-1), N, log_phat, 
-            rho = rho).reshape(2,-1)
+    return update_dir_prior(
+            nu.reshape(-1), N, log_phat, 
+            rho = rho, optimize=optimize
+            ).reshape(2,-1)
 
 
 def lambda_log_expectation(_lambda):
@@ -178,9 +215,9 @@ class BaseModel(BaseEstimator):
         batch_size = 256,
         eval_every = 10,
         dtype = np.float32,
-        pi_prior = 1.,
-        m_prior = 1.,
-        beta_prior = 1.,
+        pi_prior = 0.1,
+        m_prior = 0.1,
+        beta_prior = 0.1,
         num_epochs = 10000, 
         difference_tol = 5e-3,
         estep_iterations = 100,
@@ -251,6 +288,7 @@ class BaseModel(BaseEstimator):
     def svi_update(old, new, rho):
         return (1-rho)*old + rho*new
 
+
     def get_rho(self, epoch):
         return (self.tau + epoch)**-self.kappa
 
@@ -274,11 +312,13 @@ class BaseModel(BaseEstimator):
             self.svi_update(self._lambda, _lambda_hat, rho)
 
 
-    def _estimate_global_priors(self, rho):
+    def _estimate_global_priors(self, rho, optimize = True):
 
-        b = M_step_b(b = self.b, epsilon = self.epsilon, rho = rho)
+        b = M_step_b(b = self.b, epsilon = self.epsilon, 
+                rho = rho, optimize = optimize)
 
-        nu = M_step_nu(nu = self.nu, _lambda = self._lambda, rho = rho)
+        nu = M_step_nu(nu = self.nu, _lambda = self._lambda, 
+            rho = rho, optimize = optimize)
     
         return b, nu
     

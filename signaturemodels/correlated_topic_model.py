@@ -109,7 +109,7 @@ def E_step_gamma(*,weighted_phi, gamma, v, squigly,
     return new_gamma, improvement
 
 
-def _E_step_v(*, gamma, v_sq, squigly, freq, tol = 1e-8,
+def blei_E_step_v(*, gamma, v_sq, squigly, freq, tol = 1e-8,
                 inv_sigma):
 
     #hessian_matrix = np.zeros((v_sq.shape, v_sq.shape))
@@ -210,14 +210,15 @@ def E_step_v(*, gamma, v_sq, squigly, freq, tol = 1e-8,
             tol = tol,
         ).x
 
-    '''new_v = minimize(
-        objective, 
-        v_sq,
-        jac = True,
-        hess=hess,
-        method='tnc',
-        bounds= [(1e-10, np.inf) for _ in range(v_sq.shape[-1])],
-    ).x'''
+        '''new_r = minimize(
+            objective, 
+            r0,
+            jac = True,
+            #hessp = hess,
+            method='l-bfgs-b',
+            bounds = [(1e-10, np.inf) for _ in range(r0.shape[-1])],
+            tol = tol,
+        ).x'''
     
     improvement = -objective(new_r)[0] - initial_loss
     #improvement = None
@@ -334,6 +335,8 @@ class CorrelatedTopicModel(BaseModel):
                                             tol = difference_tol/100
                                         )
 
+                #squigly = E_step_squigly(gamma = gamma[i], v = v[i])
+
                 v[i], _ = E_step_v(freq = freqs[i],
                                     gamma = gamma[i], 
                                     v_sq = v[i], 
@@ -405,7 +408,7 @@ class CorrelatedTopicModel(BaseModel):
         try:
             for epoch in _it:
 
-                rho = self.get_rho(epoch) if not batch_lda else 1.
+                rho = 1. if batch_lda else self.get_rho(epoch)
 
                 logger.debug('Rho: {}'.format(str(rho)))
 
@@ -428,13 +431,18 @@ class CorrelatedTopicModel(BaseModel):
                     )
 
                 # update local priors
-                self.mu, self.sigma = self.M_step_mu_sigma(gamma, v, rho)
+                self.mu, self.sigma = self.M_step_mu_sigma(gamma[subsample], v[subsample], rho)
 
                 self.epsilon, self._lambda = \
-                    self._estimate_global_parameters(weighted_phi, rho, sstat_scale = sstat_scale)
+                    self._estimate_global_parameters(
+                        weighted_phi, 
+                        rho, 
+                        sstat_scale = sstat_scale
+                    )
 
-                self.b, self.nu = self._estimate_global_priors(rho if not batch_lda else 0.1)
-
+                self.b, self.nu = self._estimate_global_priors(
+                            rho, optimize=batch_lda
+                        )
 
                 if epoch % self.eval_every == 0:
                         
