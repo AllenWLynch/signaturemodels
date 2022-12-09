@@ -85,7 +85,7 @@ def _dir_prior_update_step(prior, N, logphat, rho = 0.05):
 
 
 def update_dir_prior(prior, N, logphat, rho = 0.05,
-    optimize = True, tol = 1e-4, max_iterations = 100):
+    optimize = True, tol = 1e-8, max_iterations = 100):
 
     if not optimize:
         new_prior = _dir_prior_update_step(prior, N, logphat, rho = rho)
@@ -98,16 +98,19 @@ def update_dir_prior(prior, N, logphat, rho = 0.05,
 
     else:
         
+        rho = 1.
         failures = 0
-        for it_ in range(max_iterations): #max iterations
-            old_prior = prior.copy()
+        initial_prior = prior.copy()
 
+        for it_ in range(max_iterations): #max iterations
+
+            old_prior = prior.copy()
             prior = _dir_prior_update_step(prior, N, logphat, rho = rho)
 
             if not np.all(prior > 0) and np.all(np.isfinite(prior)):
                 if failures > 5:
                     logger.debug('Prior update failed at iteration {}. Reverting to old prior'.format(str(it_)))
-                    return old_prior
+                    return initial_prior
                 else:
                     prior = old_prior
                     rho*=1/2
@@ -115,6 +118,9 @@ def update_dir_prior(prior, N, logphat, rho = 0.05,
 
             elif np.abs(old_prior-prior).mean() < tol:
                 break
+        else:
+            logger.info('Prior update did not converge.')
+            return initial_prior
         
         return prior
 

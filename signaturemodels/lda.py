@@ -61,9 +61,9 @@ def E_step_phi(gamma, phi_matrix_prebuild, freq_matrix):
     logE_gamma = log_dirichlet_expectation(gamma)
 
     phi_matrix_unnormalized = phi_matrix_prebuild * np.exp(logE_gamma)[:,:,None,None,None]
-    phi_matrix = phi_matrix_unnormalized/phi_matrix_unnormalized.sum(0, keepdims = True)
+    phi_matrix = phi_matrix_unnormalized/phi_matrix_unnormalized.sum(1, keepdims = True)
 
-    weighted_phi = phi_matrix*np.expand_dims(freq_matrix, 0)
+    weighted_phi = phi_matrix*np.expand_dims(freq_matrix, 1)
 
     return phi_matrix, weighted_phi
 
@@ -108,38 +108,44 @@ class LdaModel(BaseModel):
         return evidence
 
 
-    def _inference_inner_loop(self,iterations = 1000, difference_tol = 1e-3,*, 
-            gamma, phi_matrix_prebuild, freq_matrix):
-
-        for i in range(iterations):
-
-            old_gamma = gamma.copy()
-            phi_matrix, weighted_phi = E_step_phi(old_gamma, phi_matrix_prebuild, freq_matrix)
-
-            gamma = self.alpha + weighted_phi.sum(axis = (-1,-2,-3))
-
-            mean_abs_diff = np.abs(gamma - old_gamma).mean()
-            if  mean_abs_diff < difference_tol:
-                logging.debug('Stopped E-step after {} iterations.'.format(str(i+1)))
-                break
-        else:
-            logging.info('E-step reached maximum iterations. If this is happening late in training, increase the "estep_iterations" parameter.')
-
-        return gamma, phi_matrix, weighted_phi
-
-
-    def _inference(self, gamma, freq_matrix, difference_tol = 0.001, iterations = 100, quiet = True):
+    def _inference(self, gamma, freq_matrix, 
+        difference_tol = 0.001, iterations = 100, quiet = True):
 
         phi_matrix_prebuild = np.exp(self.logE_lambda)[:,:,:,None] * np.exp(self.logE_epsilon)
-        max_ = None
-        
-        phis, weighted_phis = [],[]
-        
-        for i in range(len(gamma)):
-            gamma[i] = self._inference_inner_loop(
-                gamma = gamma[i], freq_matrix=[]
-                phi_matrix_prebuild=phi_matrix_prebuild
-            )
+
+        # Do the first E-step out of the loop
+        old_gamma = gamma.copy()
+        phi_matrix, weighted_phi = E_step_phi(
+                    old_gamma, 
+                    phi_matrix_prebuild,
+                    freq_matrix
+                )
+        gamma = self.alpha + weighted_phi.sum(axis = (-1,-2,-3))
+
+        not_converged = np.abs(gamma - old_gamma).mean(axis = 1) > difference_tol
+
+        for i in range(iterations) if quiet else tqdm.tqdm(range(iterations), desc = 'E-step'):
+            
+            if np.all(~not_converged):
+                logging.debug('Stopped E-step after {} iterations.'.format(str(i+1)))
+                break
+            else:
+
+                old_gamma = gamma[not_converged].copy()
+
+                phi_matrix[not_converged], weighted_phi[not_converged] = E_step_phi(
+                            old_gamma, 
+                            phi_matrix_prebuild,
+                            freq_matrix[not_converged]
+                        )
+
+                gamma[not_converged] = self.alpha + weighted_phi[not_converged]\
+                                                    .sum(axis = (-1,-2,-3))
+
+                not_converged[not_converged] = np.abs(gamma[not_converged] - old_gamma).mean(1) > difference_tol
+
+        else:
+            logging.info('E-step reached maximum iterations. If this is happening late in training, increase the "estep_iterations" parameter.')
 
         return gamma, phi_matrix, weighted_phi
 
@@ -216,6 +222,12 @@ class LdaModel(BaseModel):
                 if ~np.all(np.isfinite(weighted_phi)):
                     raise ValueError('Non-finite values detected in sufficient statistics. Stopping training to preserve current state.')
 
+                #self.bounds.append(
+                #        self._bound(gamma, phi_matrix, weighted_phi, 1.)
+                #    )
+                #if len(self.bounds) > 1 and self.bounds[-2] > self.bounds[-1]:
+                #    print('1')
+
                 # local prior update
                 self.alpha = M_step_alpha(
                     gamma = gamma[subsample],
@@ -224,18 +236,34 @@ class LdaModel(BaseModel):
                     optimize = batch_lda,
                 )
 
+                #self.bounds.append(
+                #        self._bound(gamma, phi_matrix, weighted_phi, 1.)
+                #    )
+                #if len(self.bounds) > 1 and self.bounds[-2] > self.bounds[-1]:
+                #    print('2')
+
                 self.epsilon, self._lambda = \
                     self._estimate_global_parameters(
                             weighted_phi, 
                             rho, 
                             sstat_scale=sstat_scale, 
                     )
+                #self.bounds.append(
+                #        self._bound(gamma, phi_matrix, weighted_phi, 1.)
+                #    )
+                #if len(self.bounds) > 1 and self.bounds[-2] > self.bounds[-1]:
+                #    print('3')
                 
                 self.b, self.nu = \
                     self._estimate_global_priors(
                             rho,
                             optimize = batch_lda,
                         )
+                #self.bounds.append(
+                #        self._bound(gamma, phi_matrix, weighted_phi, 1.)
+                #    )
+                #if len(self.bounds) > 1 and self.bounds[-2] > self.bounds[-1]:
+                #    print('4')
 
                 if epoch % self.eval_every == 0:
                     
