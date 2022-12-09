@@ -131,6 +131,8 @@ class LdaModel(BaseModel):
             if  mean_abs_diff < difference_tol:
                 logging.debug('Stopped E-step after {} iterations.'.format(str(i+1)))
                 break
+        else:
+            logger.info('E-step maximum iterations reached. If this happens late into training, increase "estep_iterations".')
 
         return gamma, phi_matrix, weighted_phi
 
@@ -176,8 +178,8 @@ class LdaModel(BaseModel):
         self.bounds = []
 
         _it = range(self.num_epochs)
-        if not self.quiet:
-            _it = tqdm.tqdm(_it, desc = 'Training')
+        #if not self.quiet:
+        #    _it = tqdm.tqdm(_it, desc = 'Training')
 
         try:
             for epoch in _it:
@@ -229,6 +231,7 @@ class LdaModel(BaseModel):
                         )
 
                 if epoch % self.eval_every == 0:
+                    logger.info('Epoch {} concluded.'.format(str(epoch)))
                     
                     if not batch_lda:
                         phi_matrix, weighted_phi = E_step_phi(
@@ -247,6 +250,10 @@ class LdaModel(BaseModel):
                     elif len(self.bounds) > 1:
                         improvement = self.bounds[-1] - self.bounds[-2]
                         logger.debug('Bounds improvement: {}'.format(str(improvement)))
+
+                        if batch_lda and improvement < 0:
+                            logger.error('Bounds did not improve in batch mode')
+
                         if 0 < improvement < self.bound_tol:
                             break
 
