@@ -2,6 +2,7 @@ import numpy as np
 from .base import *
 import logging
 import tqdm
+import warnings
 
 logger = logging.getLogger(__name__)
 
@@ -60,9 +61,9 @@ def E_step_phi(gamma, phi_matrix_prebuild, freq_matrix):
     logE_gamma = log_dirichlet_expectation(gamma)
 
     phi_matrix_unnormalized = phi_matrix_prebuild * np.exp(logE_gamma)[:,:,None,None,None]
-    phi_matrix = phi_matrix_unnormalized/phi_matrix_unnormalized.sum(1, keepdims = True)
+    phi_matrix = phi_matrix_unnormalized/phi_matrix_unnormalized.sum(0, keepdims = True)
 
-    weighted_phi = phi_matrix*np.expand_dims(freq_matrix, 1)
+    weighted_phi = phi_matrix*np.expand_dims(freq_matrix, 0)
 
     return phi_matrix, weighted_phi
 
@@ -77,11 +78,14 @@ class LdaModel(BaseModel):
         evidence = 0
 
         # 
-        evidence += np.sum(weighted_phi*(
-                np.expand_dims(self.logE_epsilon, 0) + logE_gamma[:,:,None,None,None] \
-                    + self.logE_lambda[None,:,:,:,None] - np.where(phi_matrix > 0, np.log(phi_matrix), 0.)
+        with warnings.catch_warnings():
+            warnings.filterwarnings('ignore', message='divide by zero encountered in log')
+
+            evidence += np.sum(weighted_phi*(
+                    np.expand_dims(self.logE_epsilon, 0) + logE_gamma[:,:,None,None,None] \
+                        + self.logE_lambda[None,:,:,:,None] - np.where(phi_matrix > 0, np.log(phi_matrix), 0.)
+                    )
                 )
-            )
         
         evidence += sum(dirichlet_bound(self.alpha, gamma, logE_gamma))
 
@@ -102,13 +106,11 @@ class LdaModel(BaseModel):
         )
 
         return evidence
-    
 
-    def _inference(self, gamma, freq_matrix, difference_tol = 1e-2, iterations = 100, quiet = True):
 
-        phi_matrix_prebuild = np.exp(self.logE_lambda)[:,:,:,None] * np.exp(self.logE_epsilon)
-        max_ = None
-        
+    def _inference_inner_loop(self,iterations = 1000, difference_tol = 1e-3,*, 
+            gamma, phi_matrix_prebuild, freq_matrix):
+
         for i in range(iterations):
 
             old_gamma = gamma.copy()
@@ -117,20 +119,27 @@ class LdaModel(BaseModel):
             gamma = self.alpha + weighted_phi.sum(axis = (-1,-2,-3))
 
             mean_abs_diff = np.abs(gamma - old_gamma).mean()
-
-            if not quiet:
-                if max_ is None:
-                    max_ = np.log10(mean_abs_diff)
-                    min_ = np.log10(difference_tol)
-                    range_ = max_ - min_
-                    bar = tqdm.tqdm(total = 100, desc = 'Convergence')
-
-                progress = 1-(np.log10(mean_abs_diff) - min_)/range_
-                bar.update(int(progress*100) - bar.n)
-
             if  mean_abs_diff < difference_tol:
                 logging.debug('Stopped E-step after {} iterations.'.format(str(i+1)))
                 break
+        else:
+            logging.info('E-step reached maximum iterations. If this is happening late in training, increase the "estep_iterations" parameter.')
+
+        return gamma, phi_matrix, weighted_phi
+
+
+    def _inference(self, gamma, freq_matrix, difference_tol = 0.001, iterations = 100, quiet = True):
+
+        phi_matrix_prebuild = np.exp(self.logE_lambda)[:,:,:,None] * np.exp(self.logE_epsilon)
+        max_ = None
+        
+        phis, weighted_phis = [],[]
+        
+        for i in range(len(gamma)):
+            gamma[i] = self._inference_inner_loop(
+                gamma = gamma[i], freq_matrix=[]
+                phi_matrix_prebuild=phi_matrix_prebuild
+            )
 
         return gamma, phi_matrix, weighted_phi
 
@@ -247,6 +256,8 @@ class LdaModel(BaseModel):
                     elif len(self.bounds) > 1:
                         improvement = self.bounds[-1] - self.bounds[-2]
                         logger.debug('Bounds improvement: {}'.format(str(improvement)))
+                        if batch_lda and improvement < 0:
+                            logging.error('Bounds did not improve. Something is wrong.')
                         if 0 < improvement < self.bound_tol:
                             break
 

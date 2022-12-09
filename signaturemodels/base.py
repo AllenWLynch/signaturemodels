@@ -112,7 +112,7 @@ def update_dir_prior(prior, N, logphat, rho = 0.05,
                     prior = old_prior
                     rho*=1/2
                     failures+=1
-                    
+
             elif np.abs(old_prior-prior).mean() < tol:
                 break
         
@@ -219,8 +219,8 @@ class BaseModel(BaseEstimator):
         m_prior = 0.1,
         beta_prior = 0.1,
         num_epochs = 10000, 
-        difference_tol = 5e-3,
-        estep_iterations = 100,
+        difference_tol = 1e-3,
+        estep_iterations = 1000,
         bound_tol = 1e-2,
         n_components = 10,
         quiet = True):
