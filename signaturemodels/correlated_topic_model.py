@@ -11,7 +11,7 @@ logging.basicConfig(level=logging.INFO,
                     format='')
 logger = logging.getLogger(__name__)
 
-def initialize_parameters( 
+def initialize_parameters(
         m_prior = 1., 
         beta_prior = 1.,*,
         dtype, n_components, n_contexts):
@@ -363,7 +363,7 @@ class CorrelatedTopicModel(BaseModel):
             weighted_phis.append(weighted_phi)
         
         if not_converged > 0:
-            logging.info('\t{} samples reached maximum E-step iterations.'\
+            logging.debug('\t{} samples reached maximum E-step iterations.'\
                     .format(str(not_converged)))
 
         return gamma, v, np.array(phis), np.array(weighted_phis)

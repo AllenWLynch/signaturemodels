@@ -148,7 +148,7 @@ class LdaModel(BaseModel):
                 not_converged[not_converged] = np.abs(gamma[not_converged] - old_gamma).mean(1) > difference_tol
 
         else:
-            logging.info('\t{} samples reached maximum E-step iterations.'\
+            logging.debug('\t{} samples reached maximum E-step iterations.'\
                     .format(str(not_converged.sum())))
 
         return gamma, phi_matrix, weighted_phi
@@ -204,7 +204,7 @@ class LdaModel(BaseModel):
             for epoch in _it:
                 
                 epoch_start_time = time.time()
-                logger.info('Begin Epoch {} E-step.'.format(str(epoch)))
+                logger.debug('Begin Epoch {} E-step.'.format(str(epoch)))
 
                 rho = 1. if batch_lda else self.get_rho(epoch)
 
