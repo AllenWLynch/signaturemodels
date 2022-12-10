@@ -424,7 +424,7 @@ class CorrelatedTopicModel(BaseModel):
             for epoch in _it:
                 
                 epoch_start_time = time.time()
-                logger.info('Begin Epoch {} E-step.'.format(str(epoch)))
+                logger.debug('Begin Epoch {} E-step.'.format(str(epoch)))
 
                 rho = 1. if batch_lda else self.get_rho(epoch)
 
@@ -494,7 +494,7 @@ class CorrelatedTopicModel(BaseModel):
                     elif len(self.bounds) > 1:
 
                         improvement = self.bounds[-1] - self.bounds[-2]
-                        logger.info('\tBounds improvement: {:.2f}'.format(improvement))
+                        logger.debug('\tBounds improvement: {:.2f}'.format(improvement))
 
                         improvement_ema = (1-0.1) * improvement_ema + 0.1*improvement
                         logger.debug('\tImprovement EMA: {:.2f}'.format(-improvement_ema))
@@ -504,7 +504,7 @@ class CorrelatedTopicModel(BaseModel):
                     else:
                         improvement_ema = self.bounds[-1]
                 
-                logger.info('\tEpoch time: {:.2f} sec, total elapsed time {:.1f} min'\
+                logger.debug('\tEpoch time: {:.2f} sec, total elapsed time {:.1f} min'\
                     .format(
                         time.time() - epoch_start_time,
                         (time.time() - start_time)/60

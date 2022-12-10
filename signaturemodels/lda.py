@@ -264,7 +264,7 @@ class LdaModel(BaseModel):
                         
 
                 if epoch % self.eval_every == 0:
-                    logger.info('Epoch {} concluded.'.format(str(epoch)))
+                    logger.debug('\tEpoch {} concluded.'.format(str(epoch)))
                     
                     if not batch_lda:
                         phi_matrix, weighted_phi = E_step_phi(
@@ -285,7 +285,7 @@ class LdaModel(BaseModel):
                     elif len(self.bounds) > 1:
 
                         improvement = self.bounds[-1] - self.bounds[-2]
-                        logger.info('\tBounds improvement: {:.2f}'.format(improvement))
+                        logger.debug('\tBounds improvement: {:.2f}'.format(improvement))
 
                         improvement_ema = (1-0.1) * improvement_ema + 0.1*improvement
                         logger.debug('\tImprovement EMA: {:.2f}'.format(-improvement_ema))
@@ -295,7 +295,7 @@ class LdaModel(BaseModel):
                     else:
                         improvement_ema = self.bounds[-1]
 
-                logger.info('\tEpoch time: {:.2f} sec, total elapsed time {:.1f} min'\
+                logger.debug('\tEpoch time: {:.2f} sec, total elapsed time {:.1f} min'\
                     .format(
                         time.time() - epoch_start_time,
                         (time.time() - start_time)/60
