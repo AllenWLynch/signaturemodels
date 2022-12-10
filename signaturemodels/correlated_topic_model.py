@@ -3,12 +3,13 @@ from .base import *
 import logging
 import tqdm
 from scipy.optimize import minimize
-from functools import partial
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+import time
 import warnings
 from scipy.linalg import inv, det
 
+logging.basicConfig(level=logging.INFO,
+                    format='')
+logger = logging.getLogger(__name__)
 
 def initialize_parameters( 
         m_prior = 1., 
@@ -16,6 +17,7 @@ def initialize_parameters(
         dtype, n_components, n_contexts):
     
     mu = np.zeros(n_components).astype(dtype)
+
     sigma = np.diag(np.ones(n_components)).astype(dtype)
     
     b = (np.ones((n_components,2,3)) * m_prior).astype(dtype, copy = False)
@@ -310,10 +312,15 @@ class CorrelatedTopicModel(BaseModel):
         phi_matrix_prebuild = np.exp(self.logE_lambda)[:,:,:,None] * np.exp(self.logE_epsilon)
 
         phis, weighted_phis = [],[]
+        not_converged = 0
 
-        _it = range(len(freq_matrix))
-        for i in _it if quiet else tqdm.tqdm(_it, desc = 'Inferring latent variables', leave=False): # outer data loop 
-   
+        for i in tqdm.tqdm(
+            range(len(gamma)), 
+            desc = 'Inferring latent variables' if not quiet else '\tE-step progress',
+            ncols=50,
+            bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt}'
+            ): # outer data loop 
+            
             for j in range(iterations): # inner convergence loop
 
                 old_gamma = gamma[i].copy()
@@ -335,8 +342,6 @@ class CorrelatedTopicModel(BaseModel):
                                             tol = difference_tol/100
                                         )
 
-                #squigly = E_step_squigly(gamma = gamma[i], v = v[i])
-
                 v[i], _ = E_step_v(freq = freqs[i],
                                     gamma = gamma[i], 
                                     v_sq = v[i], 
@@ -350,9 +355,16 @@ class CorrelatedTopicModel(BaseModel):
 
                 if mean_gamma_diff < difference_tol:
                     break
+
+            else:
+                not_converged+=1
             
             phis.append(phi_matrix)
             weighted_phis.append(weighted_phi)
+        
+        if not_converged > 0:
+            logging.info('\t{} samples reached maximum E-step iterations.'\
+                    .format(str(not_converged)))
 
         return gamma, v, np.array(phis), np.array(weighted_phis)
 
@@ -391,8 +403,8 @@ class CorrelatedTopicModel(BaseModel):
         self.bounds = []
 
         _it = range(self.num_epochs)
-        if not self.quiet:
-            _it = tqdm.tqdm(_it, desc = 'Training')
+        #if not self.quiet:
+        #    _it = tqdm.tqdm(_it, desc = 'Training')
 
         corpus_size = len(freq_matrix)
         batch_size = min(self.batch_size, corpus_size)
@@ -404,13 +416,20 @@ class CorrelatedTopicModel(BaseModel):
 
         if batch_lda:
             logger.warn('Running batch CTM algorithm')
+        
+        improvement_ema = None
+        start_time = time.time()
 
         try:
             for epoch in _it:
+                
+                epoch_start_time = time.time()
+                logger.info('Begin Epoch {} E-step.'.format(str(epoch)))
 
                 rho = 1. if batch_lda else self.get_rho(epoch)
 
-                logger.debug('Rho: {}'.format(str(rho)))
+                if not batch_lda:
+                    logger.debug('\tRho: {:.2f}'.format(rho))
 
                 if not batch_lda:
                     subsample = np.random.choice(corpus_size, 
@@ -430,22 +449,32 @@ class CorrelatedTopicModel(BaseModel):
                         iterations = self.estep_iterations,
                     )
 
-                # update local priors
-                self.mu, self.sigma = self.M_step_mu_sigma(gamma[subsample], v[subsample], rho)
+                if ~np.all(np.isfinite(weighted_phi)):
+                    raise ValueError('Non-finite values detected in sufficient statistics. Stopping training to preserve current state.')
+
+                logger.debug('\tBegin M-step.'.format(str(epoch)))
 
                 self.epsilon, self._lambda = \
                     self._estimate_global_parameters(
                         weighted_phi, 
                         rho, 
-                        sstat_scale = sstat_scale
+                        sstat_scale = sstat_scale,
                     )
 
-                self.b, self.nu = self._estimate_global_priors(
+                if epoch > 0 and epoch % self.prior_update_every == 0:
+                    logger.debug('\tUpdating priors.')
+                     # update local priors
+                    self.mu, self.sigma = self.M_step_mu_sigma(
+                        gamma[subsample], v[subsample], rho
+                    )
+
+                    self.b, self.nu = self._estimate_global_priors(
                             rho, optimize=batch_lda
                         )
 
+
                 if epoch % self.eval_every == 0:
-                        
+                   
                     if not batch_lda:
                         phi_matrix, weighted_phi = E_step_phi(
                             gamma, 
@@ -459,18 +488,33 @@ class CorrelatedTopicModel(BaseModel):
                     )
 
                     if not np.isfinite(self.bounds[-1]):
-                        logger.warn('Bound is not finite on training data, stopping training.')
+                        logger.warn('\tBound is not finite on training data, stopping training.')
                         break
+
                     elif len(self.bounds) > 1:
+
                         improvement = self.bounds[-1] - self.bounds[-2]
-                        logger.debug('Bounds improvement: {}'.format(str(improvement)))
-                        if 0 < improvement < self.bound_tol:
+                        logger.info('\tBounds improvement: {:.2f}'.format(improvement))
+
+                        improvement_ema = (1-0.1) * improvement_ema + 0.1*improvement
+                        logger.debug('\tImprovement EMA: {:.2f}'.format(-improvement_ema))
+                        if 0 < -improvement_ema < self.bound_tol:
                             break
+
+                    else:
+                        improvement_ema = self.bounds[-1]
+                
+                logger.info('\tEpoch time: {:.2f} sec, total elapsed time {:.1f} min'\
+                    .format(
+                        time.time() - epoch_start_time,
+                        (time.time() - start_time)/60
+                    ))
 
         except KeyboardInterrupt:
             pass
     
         return self
+
 
     @staticmethod
     def _monte_carlo_softmax_expecation(gamma, v, n_samples = 300):
@@ -481,7 +525,6 @@ class CorrelatedTopicModel(BaseModel):
         z = np.random.randn(n_samples, *gamma.shape)
 
         return softmax(v[None, :, :]*z + gamma[None,:,:]).mean(axis = 0)
-
 
 
     def _infer_document_variables(self, freq_matrix):
@@ -499,8 +542,8 @@ class CorrelatedTopicModel(BaseModel):
                 gamma = gamma, v = v,
                 freq_matrix = freq_matrix,
                 freqs = freqs,
-                difference_tol = 5e-3, 
-                iterations = 1000,
+                difference_tol = 1e-3, 
+                iterations = 10000,
                 quiet=False,
             )
 

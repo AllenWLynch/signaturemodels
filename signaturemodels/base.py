@@ -85,38 +85,54 @@ def _dir_prior_update_step(prior, N, logphat, rho = 0.05):
 
 
 def update_dir_prior(prior, N, logphat, rho = 0.05,
-    optimize = True, tol = 1e-4, max_iterations = 100):
-
-    if not optimize:
-        new_prior = _dir_prior_update_step(prior, N, logphat, rho = rho)
+    optimize = True, tol = 1e-8, max_iterations = 1000):
         
-        if not np.all(new_prior > 0) and np.all(np.isfinite(new_prior)):
-            logger.warning('Prior update failed. Reverting to old prior')
-            return prior
-        else:
-            return new_prior
+    failures = 0
+    initial_prior = prior.copy()
+
+    for it_ in range(max_iterations): #max iterations
+
+        old_prior = prior.copy()
+        prior = _dir_prior_update_step(prior, N, logphat, rho = rho)
+
+        if not np.all(prior > 0) and np.all(np.isfinite(prior)):
+            if failures > 5:
+                logger.debug('Prior update failed at iteration {}. Reverting to old prior'.format(str(it_)))
+                return initial_prior
+            else:
+                prior = old_prior
+                rho*=1/2
+                failures+=1
+
+        elif np.abs(old_prior-prior).mean() < tol:
+            break
+    else:
+        logger.info('Prior update did not converge.')
+        return initial_prior
+    
+    return prior
+
+'''def update_dir_prior(prior, N, logphat, rho = 0.05, optimize = True):
+
+    rho = 0.1 if optimize else rho
+
+    gradf = N * (psi(np.sum(prior)) - psi(prior) + logphat)
+
+    c = N * polygamma(1, np.sum(prior))
+    q = -N * polygamma(1, prior)
+
+    b = np.sum(gradf / q) / (1 / c + np.sum(1 / q))
+
+    dprior = -(gradf - b) / q
+
+    new_prior = rho * dprior + prior
+
+    if not (np.all(prior > 0) and np.all(np.isfinite(prior))):
+        logger.debug('Prior update failed. Reverting to old prior')
+        return prior
 
     else:
-        
-        failures = 0
-        for it_ in range(max_iterations): #max iterations
-            old_prior = prior.copy()
-
-            prior = _dir_prior_update_step(prior, N, logphat, rho = rho)
-
-            if not np.all(prior > 0) and np.all(np.isfinite(prior)):
-                if failures > 5:
-                    logger.debug('Prior update failed at iteration {}. Reverting to old prior'.format(str(it_)))
-                    return old_prior
-                else:
-                    prior = old_prior
-                    rho*=1/2
-                    failures+=1
-                    
-            elif np.abs(old_prior-prior).mean() < tol:
-                break
-        
-        return prior
+        return new_prior'''
 
 
 def E_step_epsilon(*,b, epsilon_sstats):
@@ -219,10 +235,11 @@ class BaseModel(BaseEstimator):
         m_prior = 0.1,
         beta_prior = 0.1,
         num_epochs = 10000, 
-        difference_tol = 5e-3,
-        estep_iterations = 100,
+        difference_tol = 1e-3,
+        estep_iterations = 1000,
         bound_tol = 1e-2,
         n_components = 10,
+        prior_update_every = 5,
         quiet = True):
 
         self.seed = seed
@@ -240,6 +257,7 @@ class BaseModel(BaseEstimator):
         self.kappa = kappa
         self.batch_size = batch_size
         self.eval_every = eval_every
+        self.prior_update_every = prior_update_every
 
     @classmethod
     def load(cls, filename):
@@ -314,13 +332,14 @@ class BaseModel(BaseEstimator):
 
     def _estimate_global_priors(self, rho, optimize = True):
 
-        b = M_step_b(b = self.b, epsilon = self.epsilon, 
+        b_hat = M_step_b(b = self.b, epsilon = self.epsilon, 
                 rho = rho, optimize = optimize)
 
-        nu = M_step_nu(nu = self.nu, _lambda = self._lambda, 
+        nu_hat = M_step_nu(nu = self.nu, _lambda = self._lambda, 
             rho = rho, optimize = optimize)
     
-        return b, nu
+        return self.svi_update(self.b, b_hat, rho), \
+            self.svi_update(self.nu, nu_hat, rho)
     
 
     def signature_posterior(self, signature):
