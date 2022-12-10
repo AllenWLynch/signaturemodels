@@ -3,8 +3,10 @@ from .base import *
 import logging
 import tqdm
 import warnings
-
+logging.basicConfig(level=logging.INFO,
+                    format='')
 logger = logging.getLogger(__name__)
+import time
 
 def initialize_parameters(
         pi_prior = 1., 
@@ -124,10 +126,11 @@ class LdaModel(BaseModel):
 
         not_converged = np.abs(gamma - old_gamma).mean(axis = 1) > difference_tol
 
-        for i in range(iterations) if quiet else tqdm.tqdm(range(iterations), desc = 'E-step'):
+        for i in range(iterations) if quiet \
+            else tqdm.tqdm(range(iterations), desc = 'E-step'):
             
             if np.all(~not_converged):
-                logging.debug('Stopped E-step after {} iterations.'.format(str(i+1)))
+                logging.debug('\tStopped E-step after {} iterations.'.format(str(i+1)))
                 break
             else:
 
@@ -145,7 +148,8 @@ class LdaModel(BaseModel):
                 not_converged[not_converged] = np.abs(gamma[not_converged] - old_gamma).mean(1) > difference_tol
 
         else:
-            logging.info('E-step reached maximum iterations. If this is happening late in training, increase the "estep_iterations" parameter.')
+            logging.info('\t{} samples reached maximum E-step iterations.'\
+                    .format(str(not_converged.sum())))
 
         return gamma, phi_matrix, weighted_phi
 
@@ -191,15 +195,21 @@ class LdaModel(BaseModel):
         self.bounds = []
 
         _it = range(self.num_epochs)
-        if not self.quiet:
-            _it = tqdm.tqdm(_it, desc = 'Training')
+        #if not self.quiet:
+        #    _it = tqdm.tqdm(_it, desc = 'Training')
+        improvement_ema = None
+        start_time = time.time()
 
         try:
             for epoch in _it:
+                
+                epoch_start_time = time.time()
+                logger.info('Begin Epoch {} E-step.'.format(str(epoch)))
 
                 rho = 1. if batch_lda else self.get_rho(epoch)
 
-                logger.debug('Rho: {}'.format(str(rho)))
+                if not batch_lda:
+                    logger.debug('\tRho: {:.3f}'.format(rho))
 
                 if not batch_lda:
                     subsample = np.random.choice(corpus_size, 
@@ -209,7 +219,7 @@ class LdaModel(BaseModel):
                 else:
                     subsample = np.arange(corpus_size)
                 
-                logger.debug('Subsample size: {}'.format(str(len(subsample))))
+                #logger.debug('\tSubsample size: {}'.format(str(len(subsample))))
 
                 gamma[subsample], phi_matrix, weighted_phi = \
                     self._inference(
@@ -222,25 +232,7 @@ class LdaModel(BaseModel):
                 if ~np.all(np.isfinite(weighted_phi)):
                     raise ValueError('Non-finite values detected in sufficient statistics. Stopping training to preserve current state.')
 
-                #self.bounds.append(
-                #        self._bound(gamma, phi_matrix, weighted_phi, 1.)
-                #    )
-                #if len(self.bounds) > 1 and self.bounds[-2] > self.bounds[-1]:
-                #    print('1')
-
-                # local prior update
-                self.alpha = M_step_alpha(
-                    gamma = gamma[subsample],
-                    alpha = self.alpha,  
-                    rho = rho,
-                    optimize = batch_lda,
-                )
-
-                #self.bounds.append(
-                #        self._bound(gamma, phi_matrix, weighted_phi, 1.)
-                #    )
-                #if len(self.bounds) > 1 and self.bounds[-2] > self.bounds[-1]:
-                #    print('2')
+                logger.debug('\tBegin M-step.'.format(str(epoch)))
 
                 self.epsilon, self._lambda = \
                     self._estimate_global_parameters(
@@ -248,22 +240,28 @@ class LdaModel(BaseModel):
                             rho, 
                             sstat_scale=sstat_scale, 
                     )
-                #self.bounds.append(
-                #        self._bound(gamma, phi_matrix, weighted_phi, 1.)
-                #    )
-                #if len(self.bounds) > 1 and self.bounds[-2] > self.bounds[-1]:
-                #    print('3')
                 
-                self.b, self.nu = \
-                    self._estimate_global_priors(
-                            rho,
+                if epoch > 0 and epoch % self.prior_update_every == 0:
+
+                    logger.debug('\tUpdating priors.')
+                    # local prior update
+                    self.alpha = self.svi_update(
+                        self.alpha, 
+                        M_step_alpha(
+                            gamma = gamma[subsample],
+                            alpha = self.alpha,  
+                            rho = rho,
                             optimize = batch_lda,
+                        ), 
+                        rho
+                    )
+
+                    self.b, self.nu = \
+                        self._estimate_global_priors(
+                                rho,
+                                optimize = batch_lda,
                         )
-                #self.bounds.append(
-                #        self._bound(gamma, phi_matrix, weighted_phi, 1.)
-                #    )
-                #if len(self.bounds) > 1 and self.bounds[-2] > self.bounds[-1]:
-                #    print('4')
+                        
 
                 if epoch % self.eval_every == 0:
                     
@@ -275,19 +273,32 @@ class LdaModel(BaseModel):
                         )
 
                     self.bounds.append(
-                        self._bound(gamma, phi_matrix, weighted_phi, 1.)
+                        self._bound(gamma = gamma, phi_matrix = phi_matrix,
+                            weighted_phi=weighted_phi)
                     )
 
                     if not np.isfinite(self.bounds[-1]):
-                        logger.warn('Bound is not finite on training data, stopping training.')
-                        #break                    
+                        logger.warn('\tBound is not finite on training data, stopping training.')
+                        break
+
                     elif len(self.bounds) > 1:
+
                         improvement = self.bounds[-1] - self.bounds[-2]
-                        logger.debug('Bounds improvement: {}'.format(str(improvement)))
-                        if batch_lda and improvement < 0:
-                            logging.error('Bounds did not improve. Something is wrong.')
-                        if 0 < improvement < self.bound_tol:
+                        logger.info('\tBounds improvement: {:.2f}'.format(improvement))
+
+                        improvement_ema = (1-0.1) * improvement_ema + 0.1*improvement
+                        logger.debug('\tImprovement EMA: {:.2f}'.format(-improvement_ema))
+                        if 0 < -improvement_ema < self.bound_tol:
                             break
+                        
+                    else:
+                        improvement_ema = self.bounds[-1]
+
+                logger.info('\tEpoch time: {:.2f} sec, total elapsed time {:.1f} min'\
+                    .format(
+                        time.time() - epoch_start_time,
+                        (time.time() - start_time)/60
+                    ))
 
         except KeyboardInterrupt:
             pass
@@ -305,8 +316,8 @@ class LdaModel(BaseModel):
                     n_components=self.n_components
                 ), 
                 freq_matrix, 
-                difference_tol = 1e-2, 
-                iterations = 1000,
+                difference_tol = 1e-3, 
+                iterations = 10000,
                 quiet=False,
             )
 
