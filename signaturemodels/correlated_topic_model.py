@@ -462,6 +462,7 @@ class CorrelatedTopicModel(BaseModel):
                     )
 
                 if epoch > 0 and epoch % self.prior_update_every == 0:
+                    
                     logger.debug('\tUpdating priors.')
                      # update local priors
                     self.mu, self.sigma = self.M_step_mu_sigma(

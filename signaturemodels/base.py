@@ -107,7 +107,7 @@ def update_dir_prior(prior, N, logphat, rho = 0.05,
         elif np.abs(old_prior-prior).mean() < tol:
             break
     else:
-        logger.info('Prior update did not converge.')
+        logger.debug('Prior update did not converge.')
         return initial_prior
     
     return prior
@@ -367,17 +367,17 @@ class BaseModel(BaseEstimator):
             height = list(sig.values()),
             x = SORTED_MUTATIONS,
             width = 1,
-            edgecolor = 'black',
-            linewidth = 0.3,
+            edgecolor = 'white',
+            linewidth = 1,
             color = MUTATION_PALETTE,
         )
 
-        ax.bar(
-            height = list(sig.values()),
-            x = SORTED_MUTATIONS,
-            width = 1,
-            color = MUTATION_PALETTE,
-        )
+        #ax.bar(
+        #    height = list(sig.values()),
+        #    x = SORTED_MUTATIONS,
+        #    width = 1,
+        #    color = MUTATION_PALETTE,
+        #)
 
         for s in ['left','right','top']:
             ax.spines[s].set_visible(False)
