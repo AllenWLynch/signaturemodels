@@ -330,16 +330,20 @@ class BaseModel(BaseEstimator):
             self.svi_update(self._lambda, _lambda_hat, rho)
 
 
-    def _estimate_global_priors(self, rho, optimize = True):
+    def _update_b_prior(self, rho, optimize):
 
         b_hat = M_step_b(b = self.b, epsilon = self.epsilon, 
                 rho = rho, optimize = optimize)
 
+        return self.svi_update(self.b, b_hat, rho)
+
+
+    def _estimate_global_priors(self, rho, optimize = True):
+
         nu_hat = M_step_nu(nu = self.nu, _lambda = self._lambda, 
             rho = rho, optimize = optimize)
     
-        return self.svi_update(self.b, b_hat, rho), \
-            self.svi_update(self.nu, nu_hat, rho)
+        return self.svi_update(self.nu, nu_hat, rho)
     
 
     def signature_posterior(self, signature):

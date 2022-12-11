@@ -240,6 +240,9 @@ class LdaModel(BaseModel):
                             rho, 
                             sstat_scale=sstat_scale, 
                     )
+
+                if epoch > 0 and epoch % 5 == 0:
+                    self.b = self._update_b_prior(rho, optimize=batch_lda)
                 
                 if epoch > 0 and epoch % self.prior_update_every == 0:
 
@@ -256,8 +259,7 @@ class LdaModel(BaseModel):
                         rho
                     )
 
-                    self.b, self.nu = \
-                        self._estimate_global_priors(
+                    self.nu = self._estimate_global_priors(
                                 rho,
                                 optimize = batch_lda,
                         )
