@@ -77,9 +77,8 @@ def E_step_gamma(*,weighted_phi, gamma, v, squigly,
         ### Objective
         obj = -1/2 * mu_diff.dot(inv_sigma).dot(mu_diff[:,None])
 
-        obj += np.sum(weighted_phi*gamma[:,None,None,None]) + \
-            freq*\
-            ( 1 - np.log(squigly) - 1/squigly*np.sum(E_nu, axis = -1))
+        obj += np.dot(phisum, gamma) + \
+            freq*( 1 - np.log(squigly) - 1/squigly*np.sum(E_nu, axis = -1))
 
         ### Jacobian
         jac = np.squeeze(-np.dot(inv_sigma, mu_diff[:,None]).T) + \
@@ -90,6 +89,7 @@ def E_step_gamma(*,weighted_phi, gamma, v, squigly,
 
     def hess(gamma, p):
         hess = np.dot(inv_sigma, p) + np.dot( (freq/squigly)*np.exp(gamma + v/2) , p )
+
         return -hess
 
     #initial_loss = -objective(gamma)[0]
@@ -101,8 +101,8 @@ def E_step_gamma(*,weighted_phi, gamma, v, squigly,
             objective, 
             gamma,
             jac = True,
-            hessp = hess,
-            method='newton-cg',
+            #hessp = hess,
+            method='l-bfgs-b',
             tol=tol
         ).x
     
@@ -138,17 +138,20 @@ def new_E_step_v(*, gamma, v_sq, squigly, freq,
         return -hess
     
     initial_loss = -objective(v_sq)
-        
-    '''new_v = minimize(
-        objective, 
-        v_sq,
-        jac = jacobian,
-        #hessp = hessp,
-        method='l-bfgs-b',
-        bounds= [(1e-10, np.inf) for _ in range(v_sq.shape[-1])],
-    ).x'''
+    
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
 
-    new_v = minimize(
+        new_v = minimize(
+            objective, 
+            v_sq,
+            jac = jacobian,
+            #hessp = hessp,
+            method='l-bfgs-b',
+            bounds= [(1e-10, np.inf) for _ in range(v_sq.shape[-1])],
+        ).x
+
+    '''new_v = minimize(
         objective, 
         v_sq,
         jac = jacobian,
@@ -161,80 +164,12 @@ def new_E_step_v(*, gamma, v_sq, squigly, freq,
             keep_feasible=True,
         ),
         tol = tol,
-    ).x
+    ).x'''
 
     improvement = -objective(new_v) - initial_loss
-
     #print(improvement)
         
     return new_v, None
-
-
-def E_step_v(*, gamma, v_sq, squigly, freq, tol = 1e-8,
-                inv_sigma):
-
-    #hessian_matrix = np.zeros((v_sq.shape, v_sq.shape))
-    
-    def objective(r):
-
-        v_sq = np.exp(2*r)
-
-        ### Objective
-        obj = -1/2 * np.trace(np.diag(v_sq).dot(inv_sigma)) \
-            + freq*( -1/squigly * np.sum(np.exp(gamma+v_sq/2)) + 1 - np.log(squigly)  ) \
-            + 1/2 * np.sum(np.log(v_sq) + np.log(2*np.pi) + 1)
-
-        print(obj)
-
-        ### Jacobian
-        jac = -np.diag(inv_sigma)*v_sq \
-            - freq/(2*squigly)*np.exp(gamma + 1/2*v_sq + 2*r) + 1
-        
-        return -obj, -jac
-    
-    def hess(r, p):
-        
-        v_sq = np.exp(2*r)
-
-        hessp = (-2*np.diag(inv_sigma)*v_sq \
-                - freq/(2*squigly)*np.exp(gamma + 1/2*v_sq + 2*r)*(v_sq + 2))*p
-
-        return -hessp
-    
-
-    r0 = 1/2*np.log(v_sq)
-
-    initial_loss = -objective(r0)[0]
-    
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-
-        new_r = minimize(
-            objective, 
-            r0,
-            jac = True,
-            hessp = hess,
-            method='newton-cg',
-            #tol = 1e-3,
-        ).x
-
-        '''new_r = minimize(
-            objective, 
-            r0,
-            jac = True,
-            #hessp = hess,
-            method='l-bfgs-b',
-            bounds = [(1e-10, np.inf) for _ in range(r0.shape[-1])],
-            tol = tol,
-        ).x'''
-    
-    improvement = -objective(new_r)[0] - initial_loss
-    #improvement = None
-    print(improvement)
-
-    new_v = np.exp(2*new_r)
-
-    return new_v, improvement
 
 
 def E_step_phi(gamma, phi_matrix_prebuild, freq_matrix):
@@ -466,21 +401,13 @@ class CorrelatedTopicModel(BaseModel):
                         sstat_scale = sstat_scale,
                     )
 
+                if epoch > 10:
 
-                self.b = self._update_b_prior(rho, optimize=batch_lda)
+                    self.b = self._update_b_prior(rho, optimize=batch_lda)
 
-                self.mu, self.sigma = self.M_step_mu_sigma(
+                    self.mu, self.sigma = self.M_step_mu_sigma(
                         gamma[subsample], v[subsample], rho
                     )
-
-                if epoch > 0 and epoch % self.prior_update_every == 0:
-                    
-                    logger.debug('\tUpdating priors.')
-                     # update local priors
-
-                    self.b, self.nu = self._estimate_global_priors(
-                            rho, optimize=batch_lda
-                        )
 
                 if epoch % self.eval_every == 0:
                    
