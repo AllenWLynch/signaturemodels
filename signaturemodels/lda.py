@@ -223,7 +223,11 @@ class LdaModel(BaseModel):
 
                 gamma[subsample], phi_matrix, weighted_phi = \
                     self._inference(
-                        gamma[subsample], 
+                        initialize_document_variational_parameters(
+                            random_state = self.random_state, dtype = self.dtype, 
+                            n_components = self.n_components,
+                            n_samples= len(subsample),
+                        ),
                         freq_matrix[subsample], 
                         difference_tol = self.difference_tol,
                         iterations = self.estep_iterations
@@ -241,8 +245,8 @@ class LdaModel(BaseModel):
                             sstat_scale=sstat_scale, 
                     )
 
-                if epoch > 0 and epoch % 5 == 0:
-                    self.b = self._update_b_prior(rho, optimize=batch_lda)
+                #if epoch > 0 and epoch % 5 == 0:
+                self.b = self._update_b_prior(rho, optimize=batch_lda)
                 
                 if epoch > 0 and epoch % self.prior_update_every == 0:
 

@@ -366,8 +366,6 @@ class CorrelatedTopicModel(BaseModel):
             
             phis.append(phi_matrix)
             weighted_phis.append(weighted_phi)
-        
-        assert(False)
 
         if not_converged > 0:
             logging.debug('\t{} samples reached maximum E-step iterations.'\
@@ -468,18 +466,21 @@ class CorrelatedTopicModel(BaseModel):
                         sstat_scale = sstat_scale,
                     )
 
+
+                self.b = self._update_b_prior(rho, optimize=batch_lda)
+
+                self.mu, self.sigma = self.M_step_mu_sigma(
+                        gamma[subsample], v[subsample], rho
+                    )
+
                 if epoch > 0 and epoch % self.prior_update_every == 0:
                     
                     logger.debug('\tUpdating priors.')
                      # update local priors
-                    self.mu, self.sigma = self.M_step_mu_sigma(
-                        gamma[subsample], v[subsample], rho
-                    )
 
                     self.b, self.nu = self._estimate_global_priors(
                             rho, optimize=batch_lda
                         )
-
 
                 if epoch % self.eval_every == 0:
                    
