@@ -2,7 +2,7 @@ import numpy as np
 from .base import *
 import logging
 import tqdm
-from scipy.optimize import minimize
+from scipy.optimize import minimize, LinearConstraint
 import time
 import warnings
 from scipy.linalg import inv, det
@@ -111,60 +111,64 @@ def E_step_gamma(*,weighted_phi, gamma, v, squigly,
     return new_gamma, improvement
 
 
-def blei_E_step_v(*, gamma, v_sq, squigly, freq, tol = 1e-8,
-                inv_sigma):
-
-    #hessian_matrix = np.zeros((v_sq.shape, v_sq.shape))
+def new_E_step_v(*, gamma, v_sq, squigly, freq,
+                inv_sigma, tol = 1e-8):
     
     def objective(v_sq):
         
-        E_nu = np.exp(gamma + v_sq/2)
-
-        ### Objective
-        obj = -1/2 * np.trace(np.diag(v_sq).dot(inv_sigma)) \
-            + freq*( 1 - np.log(squigly) - 1/squigly * np.sum(E_nu, axis = -1)) \
+        val = -1/2 * np.trace(np.diag(v_sq).dot(inv_sigma)) \
+            + freq*( -1/squigly * np.sum(np.exp(gamma+v_sq/2)) + 1 - np.log(squigly)  ) \
             + 1/2 * np.sum(np.log(v_sq) + np.log(2*np.pi) + 1)
 
-        ### Jacobian
-        jac = -np.diag(inv_sigma)/2 \
-            - freq/(2*squigly) * E_nu + 1/(2*v_sq)
+        #print(v_sq.min(), val)
+
+        return -val
+    
+    def jacobian(v_sq):
         
-        return -obj, -jac
+        jac = -np.diag(inv_sigma)/2 \
+            - freq/(2*squigly) * np.exp(gamma + v_sq/2) \
+            + 1/(2*v_sq)
+
+        return -jac    
+
+    def hessp(v_sq, p):
+
+        hess = p * (-freq/(4*squigly) * np.exp(gamma + v_sq/2) - 1/(2*np.square(v_sq)))
+        return -hess
     
-    def hess(v_sq):
-
-        hessian_matrix = np.fill_diagonal(
-            hessian_matrix,
-            -freq/(2*squigly)*np.exp(gamma + v_sq/2) - 1/(2*np.square(v_sq)),
-        )
-        return -hessian_matrix
-    
-    #initial_loss = -objective(v_sq)[0]
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-
-        new_v = minimize(
-            objective, 
-            v_sq,
-            jac = True,
-            method='l-bfgs-b',
-            tol = tol,
-            bounds= [(1e-10, np.inf) for _ in range(v_sq.shape[-1])],
-        ).x
-
+    initial_loss = -objective(v_sq)
+        
     '''new_v = minimize(
         objective, 
         v_sq,
-        jac = True,
-        hess=hess,
-        method='tnc',
+        jac = jacobian,
+        #hessp = hessp,
+        method='l-bfgs-b',
         bounds= [(1e-10, np.inf) for _ in range(v_sq.shape[-1])],
     ).x'''
-    
-    #improvement = -objective(new_v)[0] - initial_loss
-    improvement = None
 
-    return new_v, improvement
+    new_v = minimize(
+        objective, 
+        v_sq,
+        jac = jacobian,
+        method='trust-constr',
+        hessp = hessp,
+        constraints=LinearConstraint(
+            np.eye(v_sq.size),
+            lb = np.zeros_like(v_sq) + 1e-8,
+            ub = np.ones_like(v_sq)*np.inf,
+            keep_feasible=True,
+        ),
+        tol = tol,
+    ).x
+
+    improvement = -objective(new_v) - initial_loss
+
+    #print(improvement)
+        
+    return new_v, None
+
 
 def E_step_v(*, gamma, v_sq, squigly, freq, tol = 1e-8,
                 inv_sigma):
@@ -174,12 +178,13 @@ def E_step_v(*, gamma, v_sq, squigly, freq, tol = 1e-8,
     def objective(r):
 
         v_sq = np.exp(2*r)
-        E_nu = np.exp(gamma + v_sq/2)
 
         ### Objective
         obj = -1/2 * np.trace(np.diag(v_sq).dot(inv_sigma)) \
-            + freq*( 1 - np.log(squigly) - 1/squigly * np.sum(E_nu, axis = -1)) \
+            + freq*( -1/squigly * np.sum(np.exp(gamma+v_sq/2)) + 1 - np.log(squigly)  ) \
             + 1/2 * np.sum(np.log(v_sq) + np.log(2*np.pi) + 1)
+
+        print(obj)
 
         ### Jacobian
         jac = -np.diag(inv_sigma)*v_sq \
@@ -200,6 +205,7 @@ def E_step_v(*, gamma, v_sq, squigly, freq, tol = 1e-8,
     r0 = 1/2*np.log(v_sq)
 
     initial_loss = -objective(r0)[0]
+    
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
 
@@ -209,7 +215,7 @@ def E_step_v(*, gamma, v_sq, squigly, freq, tol = 1e-8,
             jac = True,
             hessp = hess,
             method='newton-cg',
-            tol = tol,
+            #tol = 1e-3,
         ).x
 
         '''new_r = minimize(
@@ -224,7 +230,7 @@ def E_step_v(*, gamma, v_sq, squigly, freq, tol = 1e-8,
     
     improvement = -objective(new_r)[0] - initial_loss
     #improvement = None
-    #print(improvement)
+    print(improvement)
 
     new_v = np.exp(2*new_r)
 
@@ -342,7 +348,7 @@ class CorrelatedTopicModel(BaseModel):
                                             tol = difference_tol/100
                                         )
 
-                v[i], _ = E_step_v(freq = freqs[i],
+                v[i], _ = new_E_step_v(freq = freqs[i],
                                     gamma = gamma[i], 
                                     v_sq = v[i], 
                                     squigly = squigly,
@@ -350,18 +356,19 @@ class CorrelatedTopicModel(BaseModel):
                                     tol = difference_tol/100
                                  )
 
-
                 mean_gamma_diff = np.abs(gamma[i] - old_gamma).mean()
 
                 if mean_gamma_diff < difference_tol:
                     break
-
+                    
             else:
                 not_converged+=1
             
             phis.append(phi_matrix)
             weighted_phis.append(weighted_phi)
         
+        assert(False)
+
         if not_converged > 0:
             logging.debug('\t{} samples reached maximum E-step iterations.'\
                     .format(str(not_converged)))
