@@ -64,11 +64,9 @@ def E_step_squigly(*,gamma, v):
     )
 
 
-def E_step_gamma(*,weighted_phi, gamma, v, squigly,
+def E_step_gamma(*,gamma_sstats, gamma, v, squigly,
                 mu, inv_sigma, freq, tol = 1e-8):
-    
-    phisum = weighted_phi.sum(axis = (-3, -2, -1))
-    
+        
     def objective(gamma):
 
         E_nu = np.exp(gamma+v/2)
@@ -77,12 +75,12 @@ def E_step_gamma(*,weighted_phi, gamma, v, squigly,
         ### Objective
         obj = -1/2 * mu_diff.dot(inv_sigma).dot(mu_diff[:,None])
 
-        obj += np.dot(phisum, gamma) + \
+        obj += np.dot(gamma_sstats, gamma) + \
             freq*( 1 - np.log(squigly) - 1/squigly*np.sum(E_nu, axis = -1))
 
         ### Jacobian
         jac = np.squeeze(-np.dot(inv_sigma, mu_diff[:,None]).T) + \
-               phisum - (freq/squigly)*E_nu
+               gamma_sstats - (freq/squigly)*E_nu
         
         return -obj[0], -jac  # maximize!!!!
 
@@ -111,7 +109,7 @@ def E_step_gamma(*,weighted_phi, gamma, v, squigly,
     return new_gamma, improvement
 
 
-def new_E_step_v(*, gamma, v_sq, squigly, freq,
+def E_step_v(*, gamma, v_sq, squigly, freq,
                 inv_sigma, tol = 1e-8):
     
     def objective(v_sq):
@@ -149,6 +147,7 @@ def new_E_step_v(*, gamma, v_sq, squigly, freq,
             #hessp = hessp,
             method='l-bfgs-b',
             bounds= [(1e-10, np.inf) for _ in range(v_sq.shape[-1])],
+            tol = tol
         ).x
 
     '''new_v = minimize(
@@ -273,7 +272,7 @@ class CorrelatedTopicModel(BaseModel):
                 
                 weighted_phi = phi_matrix*np.expand_dims(freq_matrix[i], 0)
 
-                gamma[i], _ = E_step_gamma(weighted_phi = weighted_phi,
+                gamma[i], _ = E_step_gamma(gamma_sstats = weighted_phi.reshape(self.n_components, -1).sum(-1),
                                             gamma = gamma[i], 
                                             v = v[i], 
                                             squigly = squigly,
@@ -283,7 +282,7 @@ class CorrelatedTopicModel(BaseModel):
                                             tol = difference_tol/100
                                         )
 
-                v[i], _ = new_E_step_v(freq = freqs[i],
+                v[i], _ = E_step_v(freq = freqs[i],
                                     gamma = gamma[i], 
                                     v_sq = v[i], 
                                     squigly = squigly,
@@ -425,7 +424,7 @@ class CorrelatedTopicModel(BaseModel):
 
                     if not np.isfinite(self.bounds[-1]):
                         logger.warn('\tBound is not finite on training data, stopping training.')
-                        break
+                        #break
 
                     elif len(self.bounds) > 1:
 
