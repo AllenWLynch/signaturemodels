@@ -40,7 +40,7 @@ mutation_pallete = {
 
 def sort_mutations(mutation):
     left, initial, transition, right = re.findall(MUTATION_MATCH, mutation)[0]
-    return initial, transition
+    return initial, transition, left, right
 
 SORTED_MUTATIONS = sorted(POSSIBLE_MUTATIONS, key=sort_mutations)
 

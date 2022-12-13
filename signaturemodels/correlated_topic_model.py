@@ -209,7 +209,7 @@ class CorrelatedTopicModel(BaseModel):
                 self.svi_update(self.sigma, sigma_hat, rho)
 
 
-    def _bound(self,*, gamma, v, phi_matrix, weighted_phi, freqs):
+    def _bound(self,*, gamma, v, phi_matrix, weighted_phi, freqs, likelihood_scale = 1):
 
         logE_gamma = gamma # for consistency in bound equations
 
@@ -221,20 +221,23 @@ class CorrelatedTopicModel(BaseModel):
             )
 
         for i in range(len(freqs)):
-
-            evidence += 1/2 * np.log(det(self.inv_sigma)) - self.n_components/2*np.log(2*np.pi) \
+            
+            #1/2 * np.log(det(self.inv_sigma))
+            evidence += -self.n_components/2*np.log(2*np.pi) \
                  -1/2 * (np.trace(np.diag(v[i]).dot(self.inv_sigma)) + (gamma[i] - self.mu).dot(self.inv_sigma).dot((gamma[i] - self.mu)))
 
             evidence += -freqs[i]*np.log(np.sum(np.exp(gamma[i]+v[i]/2), axis = -1))
 
             evidence += 1/2 * np.sum(np.log(v[i]) + np.log(2*np.pi) + 1)
+
+        evidence *= likelihood_scale
         
         for i in range(self.n_components):
             for j in [0,1]:
                 evidence+=sum(
                     dirichlet_bound(self.b[i,j], self.epsilon[i,j], self.logE_epsilon[i,j])
                 )
-        
+
         evidence+=sum(
             dirichlet_bound(
                 self.nu.reshape(-1), 
@@ -317,6 +320,7 @@ class CorrelatedTopicModel(BaseModel):
 
         assert isinstance(self.n_components, int) and self.n_components > 1
 
+        self.num_docs = len(freq_matrix)
         self.random_state = np.random.RandomState(self.seed)
 
         self.b, self.nu, self.mu, self.sigma = initialize_parameters(
@@ -400,13 +404,13 @@ class CorrelatedTopicModel(BaseModel):
                         sstat_scale = sstat_scale,
                     )
 
-                if epoch > 10:
-
-                    self.b = self._update_b_prior(rho, optimize=batch_lda)
-
-                    self.mu, self.sigma = self.M_step_mu_sigma(
+                self.mu, self.sigma = self.M_step_mu_sigma(
                         gamma[subsample], v[subsample], rho
                     )
+
+                if epoch >= 10 and epoch % 5 == 0:
+
+                    self.b = self._update_b_prior(rho, optimize=batch_lda)
 
                 if epoch % self.eval_every == 0:
                    
@@ -431,9 +435,10 @@ class CorrelatedTopicModel(BaseModel):
                         improvement = self.bounds[-1] - self.bounds[-2]
                         logger.debug('\tBounds improvement: {:.2f}'.format(improvement))
 
-                        improvement_ema = (1-0.1) * improvement_ema + 0.1*improvement
+                        improvement_ema = (1-0.2) * improvement_ema + 0.2*improvement
                         logger.debug('\tImprovement EMA: {:.2f}'.format(-improvement_ema))
-                        if 0 < -improvement_ema < self.bound_tol:
+                        
+                        if (batch_lda and improvement < self.bound_tol) or (0 < -improvement_ema < self.bound_tol):
                             break
 
                     else:
@@ -507,4 +512,5 @@ class CorrelatedTopicModel(BaseModel):
         return self._bound(
             gamma = gamma, v = v, phi_matrix=phi_matrix,
             weighted_phi=weighted_phi, freqs = freqs,
+            likelihood_scale = self.num_docs/len(freq_matrix)
         )/np.sum(freq_matrix)

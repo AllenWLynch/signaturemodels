@@ -241,13 +241,10 @@ class LdaModel(BaseModel):
                             sstat_scale=sstat_scale, 
                     )
 
-                if epoch > 10: # and epoch % 5 == 0:
+                if epoch >= 10 and epoch % 5 == 0:
+                    
                     self.b = self._update_b_prior(rho, optimize=batch_lda)
-                
-                if epoch > 0 and epoch % self.prior_update_every == 0:
 
-                    logger.debug('\tUpdating priors.')
-                    # local prior update
                     self.alpha = self.svi_update(
                         self.alpha, 
                         M_step_alpha(
@@ -258,12 +255,7 @@ class LdaModel(BaseModel):
                         ), 
                         rho
                     )
-
-                    self.nu = self._estimate_global_priors(
-                                rho,
-                                optimize = batch_lda,
-                        )
-                        
+                                      
 
                 if epoch % self.eval_every == 0:
                     logger.debug('\tEpoch {} concluded.'.format(str(epoch)))
@@ -289,9 +281,10 @@ class LdaModel(BaseModel):
                         improvement = self.bounds[-1] - self.bounds[-2]
                         logger.debug('\tBounds improvement: {:.2f}'.format(improvement))
 
-                        improvement_ema = (1-0.1) * improvement_ema + 0.1*improvement
+                        improvement_ema = (1-0.2) * improvement_ema + 0.2*improvement
                         logger.debug('\tImprovement EMA: {:.2f}'.format(-improvement_ema))
-                        if 0 < -improvement_ema < self.bound_tol:
+                        
+                        if (batch_lda and improvement < self.bound_tol) or (0 < -improvement_ema < self.bound_tol):
                             break
                         
                     else:
