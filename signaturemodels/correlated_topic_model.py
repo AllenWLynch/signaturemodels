@@ -482,7 +482,7 @@ class CorrelatedTopicModel(BaseModel):
                 freqs = freqs,
                 difference_tol = 1e-3, 
                 iterations = 10000,
-                quiet=False,
+                quiet=self.quiet,
             )
 
     @extract_freqmatrix

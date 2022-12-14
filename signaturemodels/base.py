@@ -350,8 +350,8 @@ class BaseModel(BaseEstimator):
 
         assert isinstance(signature, int) and signature >= 0 and signature < self.n_components
 
-        context  = np.exp(lambda_log_expectation(self._lambda))[:,:,:,None]
-        transition = np.exp(log_dirichlet_expectation(self.epsilon))
+        context  = (self._lambda/self._lambda.sum((-1,-2), keepdims = True))[:,:,:,None]
+        transition = self.epsilon/self.epsilon.sum(-1, keepdims = True)
 
         score_dict = dict(zip(
             POSSIBLE_MUTATIONS, (context * transition).reshape(-1, len(POSSIBLE_MUTATIONS))[signature]
@@ -375,13 +375,6 @@ class BaseModel(BaseEstimator):
             linewidth = 1,
             color = MUTATION_PALETTE,
         )
-
-        #ax.bar(
-        #    height = list(sig.values()),
-        #    x = SORTED_MUTATIONS,
-        #    width = 1,
-        #    color = MUTATION_PALETTE,
-        #)
 
         for s in ['left','right','top']:
             ax.spines[s].set_visible(False)
