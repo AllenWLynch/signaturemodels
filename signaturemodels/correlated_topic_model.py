@@ -257,10 +257,8 @@ class CorrelatedTopicModel(BaseModel):
         phis, weighted_phis = [],[]
         not_converged = 0
 
-        for i in tqdm.tqdm(
-            range(len(gamma)), 
-            desc = 'Inferring latent variables' if not quiet else '\tE-step progress',
-            ncols=50,
+        for i in range(len(gamma)) if quiet else tqdm.tqdm(
+            range(len(gamma)), desc = '\tE-step progress', ncols=50,
             bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt}'
             ): # outer data loop 
             
