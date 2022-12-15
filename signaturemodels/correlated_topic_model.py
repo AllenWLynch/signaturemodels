@@ -81,12 +81,14 @@ def E_step_gamma(*,gamma_sstats, gamma, v, squigly,
         ### Jacobian
         jac = np.squeeze(-np.dot(inv_sigma, mu_diff[:,None]).T) + \
                gamma_sstats - (freq/squigly)*E_nu
+
+        #print(obj)
         
         return -obj[0], -jac  # maximize!!!!
 
 
     def hess(gamma, p):
-        hess = np.dot(inv_sigma, p) + np.dot( (freq/squigly)*np.exp(gamma + v/2) , p )
+        hess = -np.dot(inv_sigma, p) - (freq/squigly)*np.exp(gamma + v/2)*p
 
         return -hess
 
@@ -388,6 +390,7 @@ class CorrelatedTopicModel(BaseModel):
                         freqs = freqs[subsample],
                         difference_tol = self.difference_tol,
                         iterations = self.estep_iterations,
+                        quiet=self.quiet,
                     )
 
                 if ~np.all(np.isfinite(weighted_phi)):
@@ -402,11 +405,13 @@ class CorrelatedTopicModel(BaseModel):
                         sstat_scale = sstat_scale,
                     )
 
-                self.mu, self.sigma = self.M_step_mu_sigma(
-                        gamma[subsample], v[subsample], rho
-                    )
+                if epoch > 10:
+                    
+                    self.mu, self.sigma = self.M_step_mu_sigma(
+                            gamma[subsample], v[subsample], rho
+                        )
 
-                if epoch >= 10 and epoch % 5 == 0:
+                if epoch >= 10 and epoch % self.prior_update_every == 0:
 
                     self.b = self._update_b_prior(rho, optimize=batch_lda)
 

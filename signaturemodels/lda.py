@@ -241,7 +241,7 @@ class LdaModel(BaseModel):
                             sstat_scale=sstat_scale, 
                     )
 
-                if epoch >= 10 and epoch % 5 == 0:
+                if epoch >= 10 and epoch % self.prior_update_every == 0:
                     
                     self.b = self._update_b_prior(rho, optimize=batch_lda)
 
