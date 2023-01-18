@@ -64,51 +64,79 @@ def E_step_squigly(*,gamma, v):
     )
 
 
-def E_step_gamma(*,gamma_sstats, gamma, v, squigly,
+def M_step_gamma(*,gamma_sstats, gamma, v_sq, squigly,
                 mu, inv_sigma, freq, tol = 1e-8):
         
-    def objective(gamma):
+    F = len(gamma)
 
-        E_nu = np.exp(gamma+v/2)
+    def objective(x):
+
+        gamma, v_sq = x[:F],x[F:]
+
+        E_nu = np.exp(gamma+v_sq/2)
         mu_diff = (gamma - mu)
 
         ### Objective
-        obj = -1/2 * mu_diff.dot(inv_sigma).dot(mu_diff[:,None])
+        obj = -1/2 * np.trace(np.diag(v_sq).dot(inv_sigma)) -1/2 * mu_diff.dot(inv_sigma).dot(mu_diff[:,None])
 
         obj += np.dot(gamma_sstats, gamma) + \
             freq*( 1 - np.log(squigly) - 1/squigly*np.sum(E_nu, axis = -1))
 
+        obj += 1/2 * np.sum(np.log(v_sq))
+
         ### Jacobian
-        jac = np.squeeze(-np.dot(inv_sigma, mu_diff[:,None]).T) + \
+        mu_jac = np.squeeze(-np.dot(inv_sigma, mu_diff[:,None]).T) + \
                gamma_sstats - (freq/squigly)*E_nu
+
+        std_jac = -np.diag(inv_sigma)/2 \
+            - freq/(2*squigly)*E_nu \
+            + 1/(2*v_sq)
 
         #print(obj)
         
-        return -obj[0], -jac  # maximize!!!!
+        return -obj[0], -np.hstack([mu_jac, std_jac])  # maximize!!!!
 
 
-    def hess(gamma, p):
-        hess = -np.dot(inv_sigma, p) - (freq/squigly)*np.exp(gamma + v/2)*p
+    def hessp(x, p):
 
-        return -hess
+        gamma, v_sq = x[:F],x[F:]
+        p1, p2 = p[:F],p[F:]
+        E_nu = np.exp(gamma+v_sq/2)
 
-    #initial_loss = -objective(gamma)[0]
+        musums = -np.dot(inv_sigma, p1) - (3/2)*(freq/squigly)*E_nu*p1
+
+        colsums = p2 * (-(3/4)*(freq/squigly)*E_nu - 1/(2*np.square(v_sq)))
+
+        return -np.hstack([musums, colsums])
+
+    initial = np.hstack([gamma, v_sq])
+    initial_loss = -objective(initial)[0]
     
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
 
-        new_gamma = minimize(
+        new_params = minimize(
             objective, 
-            gamma,
+            initial,
             jac = True,
-            #hessp = hess,
-            method='l-bfgs-b',
-            tol=tol
+            method = 'tnc',
+            #hessp = hessp,
+            #method='trust-constr',
+            #bounds = [(-np.inf, np.inf) if i < F else (1e-30, np.inf) for i in range(2*F)],
+            #constraints=LinearConstraint(
+            #    np.hstack([np.zeros((F,F)), np.diag(np.ones(F))]),
+            #        1e-10*np.zeros(F),
+            #        np.inf*np.ones(F),
+            #        keep_feasible=True,
+            #    ),
+            #tol=tol
         ).x
     
-    #improvement = -objective(new_gamma)[0] - initial_loss
-    improvement = None
-    return new_gamma, improvement
+    improvement = -objective(new_params)[0] - initial_loss
+    #improvement = None
+    #print(improvement)
+    
+    return new_params[:F], new_params[F:]
 
 
 def E_step_v(*, gamma, v_sq, squigly, freq,
@@ -275,9 +303,9 @@ class CorrelatedTopicModel(BaseModel):
                 
                 weighted_phi = phi_matrix*np.expand_dims(freq_matrix[i], 0)
 
-                gamma[i], _ = E_step_gamma(gamma_sstats = weighted_phi.reshape(self.n_components, -1).sum(-1),
+                gamma[i], v[i] = M_step_gamma(gamma_sstats = weighted_phi.reshape(self.n_components, -1).sum(-1),
                                             gamma = gamma[i], 
-                                            v = v[i], 
+                                            v_sq = v[i], 
                                             squigly = squigly,
                                             freq=freqs[i],
                                             mu = self.mu, 
@@ -285,13 +313,13 @@ class CorrelatedTopicModel(BaseModel):
                                             tol = difference_tol/100
                                         )
 
-                v[i], _ = E_step_v(freq = freqs[i],
+                '''v[i], _ = E_step_v(freq = freqs[i],
                                     gamma = gamma[i], 
                                     v_sq = v[i], 
                                     squigly = squigly,
                                     inv_sigma = self.inv_sigma,
                                     tol = difference_tol/100
-                                 )
+                                 )'''
 
                 mean_gamma_diff = np.abs(gamma[i] - old_gamma).mean()
 
@@ -405,15 +433,13 @@ class CorrelatedTopicModel(BaseModel):
                         sstat_scale = sstat_scale,
                     )
 
-                if epoch > 10:
-                    
-                    self.mu, self.sigma = self.M_step_mu_sigma(
-                            gamma[subsample], v[subsample], rho
-                        )
+                self.mu, self.sigma = self.M_step_mu_sigma(
+                        gamma[subsample], v[subsample], rho
+                    )
 
-                if epoch >= 10 and epoch % self.prior_update_every == 0:
-
-                    self.b = self._update_b_prior(rho, optimize=batch_lda)
+                #if epoch >= 10 and epoch % self.prior_update_every == 0:
+                #
+                #    self.b = self._update_b_prior(rho, optimize=batch_lda)
 
                 if epoch % self.eval_every == 0:
                    
