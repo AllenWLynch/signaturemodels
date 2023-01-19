@@ -67,7 +67,7 @@ class LocusRegressor(BaseEstimator):
 
         self.random_state = np.random.RandomState(self.seed)
 
-        self.alpha = self.pi_prior = np.ones(self.n_components).astype(self.dtype, copy=False)
+        self.alpha = self.pi_prior * np.ones(self.n_components).astype(self.dtype, copy=False)
 
         self.delta = self.random_state.gamma(100, 1/100, 
                                                (self.n_components, self.n_contexts),
