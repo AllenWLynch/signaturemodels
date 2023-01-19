@@ -23,6 +23,12 @@ SIGNATURE_STRINGS = [
     for context, m in MUTATIONS.items() for alt in m
 ]
 
+IDXS_TO_STRINGS = {
+    (context_idx, mutation_idx) : '{0}[{1}>{3}]{2}'.format(*context, alt) 
+    for context_idx, context in enumerate(CONTEXTS)
+    for mutation_idx, alt in enumerate(MUTATIONS[context])
+}
+
 COSMIC_SORT_ORDER = [
  'A[C>A]A',
  'A[C>A]C',

@@ -108,7 +108,7 @@ def M_step_mu_nu(*,beta_mu, window_size,
         
         std_jac = -beta_nu -K_weights/normalizer * \
             np.dot(std_inner*locus_expectation, X_matrix.T) + 1/beta_nu
-
+        
         return -objective, -np.squeeze(np.concatenate([mu_jac, std_jac], axis = 1))
     
     

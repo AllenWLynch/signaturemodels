@@ -119,6 +119,13 @@ class Genome:
     @staticmethod
     def get_num_windows(chrom_len, window_size):
         return int(chrom_len / window_size) + int(chrom_len % window_size > 0)
+    
+    
+    def contains_region(self, region):
+        return region.chromosome in self.chrom_idx and \
+            region.start >= 0 and \
+            region.end <= self.get_chromlen(region.chromosome)
+    
 
     def check_region(self, region):
         if not region.chromosome in self.chrom_idx:

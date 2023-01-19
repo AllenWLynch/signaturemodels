@@ -7,7 +7,7 @@ from .optim import M_step_delta, M_step_mu_nu
 from ..corpus.interface import get_corpus_lists
 from sklearn.base import BaseEstimator
 import logging
-logger = logging.getLogger(__name__)
+logger = logging.getLogger('LocusRegressor')
 logger.setLevel(logging.INFO)
 import matplotlib.pyplot as plt
 import pickle
@@ -78,7 +78,7 @@ class LocusRegressor(BaseEstimator):
                                               ).astype(self.dtype, copy = False)
         
         
-        self.beta_mu = self.random_state.normal(0.,0.1, 
+        self.beta_mu = self.random_state.normal(0.,0.01, 
                                (self.n_components, self.n_locus_features) 
                               ).astype(self.dtype, copy=False)
 
@@ -174,9 +174,11 @@ class LocusRegressor(BaseEstimator):
         Elog_delta = log_dirichlet_expectation(self.delta)
         Elog_rho = log_dirichlet_expectation(self.rho)
         phi_matrix_prebuild = np.exp(Elog_delta)[:,:,None] * np.exp(Elog_rho)
+        
+        eps = np.finfo(self.dtype).eps
 
         for g in _it: # outer data loop, change for stochastic variational infernce
-                       
+            
             flattend_phi = trinuc_distributions[context[g],locus[g]]*phi_matrix_prebuild[:,context[g],mutation[g]]\
                                 /np.dot(
                                     self.delta/self.delta.sum(axis = 1, keepdims = True), 
@@ -192,9 +194,11 @@ class LocusRegressor(BaseEstimator):
                 old_gamma = gamma[g].copy()
                 exp_Elog_gamma = np.exp(log_dirichlet_expectation(old_gamma)[:,None])
                 
+                norm_phi = np.dot(flattend_phi.T, exp_Elog_gamma)
+                
                 gamma_sstats = np.squeeze(
                         exp_Elog_gamma*np.dot(
-                                flattend_phi, count_g/np.dot(flattend_phi.T, exp_Elog_gamma)
+                                flattend_phi, count_g/norm_phi
                         )
                     ).astype(self.dtype)
                 
@@ -203,12 +207,15 @@ class LocusRegressor(BaseEstimator):
                 if np.abs(gamma[g] - old_gamma).mean() < self.difference_tol:
                     break
             
-            Elog_gamma = log_dirichlet_expectation(old_gamma)
-            phi_matrix_unnormalized = flattend_phi*np.exp(Elog_gamma[:,None])
-            phi_matrix = phi_matrix_unnormalized/phi_matrix_unnormalized.sum(0, keepdims = True)
-
+            exp_Elog_gamma = np.exp(log_dirichlet_expectation(old_gamma)[:,None])
+            #phi_matrix_unnormalized = flattend_phi*exp_Elog_gamma
+            #phi_matrix = phi_matrix_unnormalized/phi_matrix_unnormalized.sum(0, keepdims = True)
+            #weighted_phi = phi_matrix * count_g.T
+            norm_phi = np.dot(flattend_phi.T, exp_Elog_gamma)
+            
+            phi_matrix = np.outer(exp_Elog_gamma, 1/norm_phi)*flattend_phi
             weighted_phi = phi_matrix * count_g.T
-
+            
             for _mutation, _context, _locus, ss in zip(mutation[g], context[g], locus[g], weighted_phi.T):
                 rho_sstats[:, _context, _mutation]+=ss
                 delta_sstats[:, _context]+=ss
@@ -256,12 +263,16 @@ class LocusRegressor(BaseEstimator):
 
         try:
             for epoch in range(self.num_epochs):
-
+                
+                logger.info(' E-step ...')
                 gamma, rho_sstats, delta_sstats, beta_sstats, \
                     entropy_sstats, weighted_phis = self._inference(
                         gamma = gamma,
                         **kwargs,
                     )
+                
+                
+                logger.info(' M-step delta ...')
                 
                 for k in range(self.n_components):
                     
@@ -272,6 +283,10 @@ class LocusRegressor(BaseEstimator):
                         trinuc_distributions = trinuc_distributions
                     ).astype(self.dtype)
                 
+                
+                logger.info(' M-step beta ...')
+                
+                for k in range(self.n_components):
                     
                     self.beta_mu[k], self.beta_nu[k] = M_step_mu_nu(
                         beta_sstats = {l : ss[k] for l,ss in beta_sstats.items()},
@@ -301,7 +316,7 @@ class LocusRegressor(BaseEstimator):
                     )
                 )
 
-                logger.info('Bound: {:.2f}'.format(self.bounds[-1]))
+                logger.info(' Bound: {:.2f}'.format(self.bounds[-1]))
 
                 if epoch > 1:
                     if (self.bounds[-1] - self.bounds[-2]) < self.bound_tol:
@@ -317,11 +332,11 @@ class LocusRegressor(BaseEstimator):
 
         return self
 
-    @get_corpus_lists()
+    @get_corpus_lists
     def fit(self, **kwargs):
         return self._fit(**kwargs)
 
-    @get_corpus_lists()
+    @get_corpus_lists
     def predict(self,**kwargs):
 
         n_samples = len(kwargs['mutation'])
@@ -335,7 +350,7 @@ class LocusRegressor(BaseEstimator):
         
         return E_gamma
 
-    @get_corpus_lists()
+    @get_corpus_lists
     def score(self,**kwargs):
 
         n_samples = len(kwargs['mutation'])

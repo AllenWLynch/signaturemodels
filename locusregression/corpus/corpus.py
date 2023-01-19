@@ -8,8 +8,10 @@ import logging
 import tqdm
 from joblib import Parallel, delayed
 import pickle
+from scipy import sparse
+from sklearn.preprocessing import MinMaxScaler
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger('Corpus')
 logger.setLevel(logging.INFO)
 
 #
@@ -49,24 +51,38 @@ class VCF(object):
 class Sample:
 
     @staticmethod
-    def _read_mutations(vcf_file, genome_object):
+    def _read_mutations(vcf_file, genome_object, 
+                        sep = '\t', index = -1):
 
         sbs_mutations = []
+        all_sbs = 0
         
         with open(vcf_file, 'r') as f:
+            
             for line in f:
                 if not line[0] == '#':
-                    line = line.strip().split(' ')
-                    assert len(line) == 12, 'This is not a valid VCF file. It should have twelve columns'
+                    line = line.strip().split(sep)
+                    #assert len(line) == 12, 'This is not a valid VCF file. It should have twelve columns'
 
                     if line[VCF.REF] in 'ATCG' and line[VCF.ALT] in 'ATCG': # check for SBS
-                        sbs_mutations.append(
-                            SbsRegion(
-                                'chr' + line[VCF.CHROM],int(line[VCF.POS])-1, int(line[VCF.POS])+2, # add some buffer indices for the context
+                        
+                        newregion = SbsRegion(
+                                'chr' + line[VCF.CHROM],int(line[VCF.POS])-1+index, int(line[VCF.POS])+2+index, # add some buffer indices for the context
                                 annotation=(line[VCF.REF], line[VCF.ALT])
                             )
-                        )
-
+                        
+                        all_sbs += 1
+                        if genome_object.contains_region(newregion):
+                            sbs_mutations.append(newregion)
+                        
+        
+        
+        if all_sbs == 0:
+            logger.warn('VCF file {} contained no valid SBS mutations.')
+        elif len(sbs_mutations)/all_sbs < 0.5:
+            logger.warn('It appears there was a mismatch between the names of chromosomes in your VCF file and genome file.'
+                       'Many mutations were rejected.')
+                
         return RegionSet(sbs_mutations, genome_object)
 
 
@@ -94,9 +110,14 @@ class Sample:
     @staticmethod
     def _collect_windows(sbs_set, window_set):
 
-        window_intersections = sbs_set.map_intersects(window_set).toarray()
-
-        return np.argmax(window_intersections, axis = 1) # convert intersection map to indices        
+        window_intersections = sbs_set.map_intersects(window_set)
+        
+        window_intersections = sparse.hstack([
+            sparse.csr_matrix((window_intersections.shape[0],1)),
+            window_intersections
+        ]).argmax(1) - 1
+        
+        return np.ravel(window_intersections)
 
 
     @staticmethod
@@ -115,17 +136,27 @@ class Sample:
         }
 
     @staticmethod
-    def featurize_mutations(vcf, fasta_object, genome_object, window_set):
+    def featurize_mutations(vcf, fasta_object, genome_object, window_set, 
+        sep = '\t', index= -1):
 
-        sbs_set = Sample._read_mutations(vcf, genome_object)
+        sbs_set = Sample._read_mutations(vcf, genome_object, sep = sep, index = index)
 
         mutation_indices, context_indices = list(zip(*[
             Sample._get_context_mutation_idx(fasta_object, sbs) for sbs in sbs_set.regions
         ]))
 
         locus_indices = Sample._collect_windows(sbs_set, window_set)
+        
+        unmatched_mask = locus_indices == -1
+        
+        if unmatched_mask.sum() > 0:
+            logger.warn('{} mutations did not intersect with any provided windows, filtering these out.')
 
-        return Sample._aggregate_counts(mutation_indices, context_indices, locus_indices)
+        return Sample._aggregate_counts(
+            np.array(mutation_indices)[~unmatched_mask], 
+            np.array(context_indices)[~unmatched_mask], 
+            np.array(locus_indices)[~unmatched_mask]
+        )
 
 
 class Dataset:
@@ -136,7 +167,7 @@ class Dataset:
             return pickle.load(f)
 
     def __init__(self, 
-            sep = '\t', n_jobs = 1,*,
+            sep = '\t', index = -1, n_jobs = 1,*,
             fasta_file,
             genome_file,
             bedgraph_mtx,
@@ -156,12 +187,15 @@ class Dataset:
                 vcf_files=vcf_files, 
                 fasta_object=fa, 
                 genome_object=genome,
-                window_set= self._windows
+                window_set= self._windows,
+                index = index,
+                sep = sep,
             )
 
             self._trinuc_distributions = self.get_trinucleotide_distributions(
                 self._windows, fa, n_jobs=n_jobs
             )
+            
 
     def save(self, filename):
         with open(filename, 'wb') as f:
@@ -170,6 +204,8 @@ class Dataset:
         
     @staticmethod
     def read_bedgraph(bedgraph_mtx, genome_object, fasta_object, sep = '\t'):
+        
+        logger.info('Reading genomic features ...')
         
         windows = []
         columns = []
@@ -196,33 +232,60 @@ class Dataset:
                     assert len(line) == numcols, 'Record {}\non line {} has inconsistent number of columns. Expected {} columns, got {}.'.format(
                             txt, lineno, numcols, len(line)
                         )
-
-                    windows.append(
-                        Region(*line[:3], annotation= {'features' : [float(x) for x in line[3:]] + [1.] }) # add the features of the bedgraph matrix to the annotation
-                                                                                                    # for that window
-                    )
+                        
+                    if any([f == '.' for f in line[3:]]):
+                        raise ValueError('A value was not recorded for window {}: {}'
+                                         'If this entry was made by "bedtools map", this means that the genomic feature file did not cover all'
+                                         ' of the windows. Consider imputing a feature value or removing those windows.'.format(
+                                             lineno, txt
+                                         )
+                                        )
+                    try:
+                        
+                        windows.append(
+                            Region(*line[:3], annotation= {'features' : [
+                                float(x) for x in line[3:]] + [1.]
+                            }) # add the features of the bedgraph matrix to the annotation for that window
+                        )
+                        
+                    except ValueError as err:
+                        raise ValueError('Could not ingest line {}: {}'.format(lineno, txt)) from err
 
         windows = RegionSet(windows, genome_object)
 
         features = np.array([
             w.annotation['features'] for w in windows
         ])
+        
+        features = MinMaxScaler().fit_transform(features)
 
         return windows, features, columns
 
 
     @staticmethod
-    def collect_vcfs(vcf_files,*,fasta_object, genome_object, window_set):
+    def collect_vcfs(vcf_files, sep = '\t', index = -1,*,
+                     fasta_object, genome_object, window_set):
         
-        return [
-                Sample.featurize_mutations(vcf, fasta_object, genome_object, window_set)
-                for vcf in vcf_files
-            ]
+        logger.info('Reading VCF files ...')
+        samples = []
+        for vcf in vcf_files:
+            
+            logger.info('Featurizing {}'.format(vcf))
+            
+            samples.append(
+                Sample.featurize_mutations(vcf, fasta_object, genome_object, window_set,
+                                          sep = sep, index = index)
+            )
+        
+        logger.info('Done reading VCF files.')
+        return samples
 
 
     @staticmethod
     def get_trinucleotide_distributions(window_set, fasta_object, n_jobs = 1):
-
+    
+        return np.ones((len(window_set), 32))/32
+        
         def count_trinucs(chrom, start, end, fasta_object):
 
             def rolling(seq, w = 3):
@@ -238,15 +301,16 @@ class Dataset:
             return [trinuc_counts[context] + trinuc_counts[revcomp(context)] for context in CONTEXT_IDX.keys()]
         
         trinuc_matrix = Parallel(n_jobs=n_jobs, verbose=0)(
-            delayed(count_trinucs)(w.chromosome, w.start, w.end, fasta_object) for w in tqdm.tqdm(window_set, nrows=30)
+            delayed(count_trinucs)(w.chromosome, w.start, w.end, fasta_object) 
+            for w in tqdm.tqdm(window_set, nrows=30, desc = 'Aggregating trinucleotide content')
         )
 
         return np.array(trinuc_matrix)
 
 
     @property
-    def window_lengths(self):
-        return np.array([len(w) for w in self._windows])
+    def window_sizes(self):
+        return np.array([[len(w)/10000 for w in self._windows]])
 
     @property
     def samples(self):
@@ -266,11 +330,15 @@ class Dataset:
 
     @property
     def trinucleotide_distributions(self):
-        return self._trinuc_distributions
+        return self._trinuc_distributions#.T
 
     @property
     def mutations(self):
         return [sample['mutation'] for sample in self._samples]
+    
+    @property
+    def contexts(self):
+        return [sample['context'] for sample in self._samples]
 
     @property
     def loci(self):
