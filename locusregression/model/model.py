@@ -246,6 +246,19 @@ class LocusRegressor(BaseEstimator):
         else:
             logger.info('E-step did not converge. If this happens frequently, consider increasing "estep_iterations".')
 
+
+        with open('../data/new_matrix_stats.pkl','wb') as b:
+            pickle.dump(
+                {
+                    'flattend_phi' : flattend_phi,
+                    'count' : count,
+                    'context' : context,
+                    'gamma' : gamma,
+                },b
+            )
+
+        assert False
+
         exp_Elog_gamma = np.exp(log_dirichlet_expectation(old_gamma)[:,None])
 
         phi_matrix = np.outer(exp_Elog_gamma, 1/np.dot(flattend_phi.T, exp_Elog_gamma))*flattend_phi
@@ -311,7 +324,7 @@ class LocusRegressor(BaseEstimator):
                 beta_sstats.append(sample_beta_sstats)
 
 
-        return np.array(gamma), rho_sstats, delta_sstats, beta_sstats, entropy_sstats, weighted_phis
+        return np.array(gammas), rho_sstats, delta_sstats, beta_sstats, entropy_sstats, weighted_phis
     
     
     def _fit(self,*,
