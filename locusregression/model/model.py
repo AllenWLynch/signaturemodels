@@ -399,6 +399,7 @@ class LocusRegressor(BaseEstimator):
                 # update rho distribution
                 self.rho = rho_sstats + 1.
 
+                logger.info("Estimating evidence lower bound ...")
                 self._clear_locus_cache()
                 
                 self.bounds.append(
@@ -430,8 +431,6 @@ class LocusRegressor(BaseEstimator):
     def fit(self, corpus):
         return self._fit(corpus)
 
-
-    
     def predict(self,corpus):
 
         n_samples = len(corpus)
