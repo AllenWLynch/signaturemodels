@@ -241,9 +241,10 @@ class LocusRegressor(BaseEstimator):
             gamma = self.alpha + gamma_sstats
             
             if np.abs(gamma - old_gamma).mean() < self.difference_tol:
+                logger.debug('E-step converged after {} iterations'.format(i))
                 break
-        
-        logger.info('Gamma converged in {} steps.'.format(i))
+        else:
+            logger.info('E-step did not converge. If this happens frequently, consider increasing "estep_iterations".')
 
         exp_Elog_gamma = np.exp(log_dirichlet_expectation(old_gamma)[:,None])
 
@@ -340,6 +341,8 @@ class LocusRegressor(BaseEstimator):
                         corpus= corpus,
                         gamma = gamma,
                     )
+
+                print(gamma)
                 
                 logger.info(' M-step delta ...')
                 
