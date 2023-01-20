@@ -10,6 +10,7 @@ import logging
 logger = logging.getLogger('LocusRegressor')
 logger.setLevel(logging.INFO)
 import matplotlib.pyplot as plt
+from joblib import Parallel, delayed
 import pickle
 
 
@@ -34,6 +35,7 @@ class LocusRegressor(BaseEstimator):
         bound_tol = 1e-2,
         n_components = 10,
         quiet = True,
+        n_jobs = 1
     ):
         
         self.seed = seed
@@ -46,7 +48,7 @@ class LocusRegressor(BaseEstimator):
         self.n_components = n_components
         self.quiet = quiet
         self.eval_every = eval_every
-
+        self.n_jobs = n_jobs
 
     def save(self, filename):
         with open(filename, 'wb') as f:
@@ -88,49 +90,66 @@ class LocusRegressor(BaseEstimator):
                               ).astype(self.dtype, copy=False)
 
 
-    def _bound(self,*,
-            gamma, 
+    def _sample_bound(
+            self,
+            shared_correlates,
             X_matrix,
             window_size,
             mutation,
             context,
             locus,
             count,
-            entropy_sstats,
             trinuc_distributions,
+            weighted_phi,
+            logweight_matrix,
+        ):
+
+
+        locus_logmu, _, log_normalizer = self._get_locus_distribution(
+                X_matrix=X_matrix, 
+                window_size=window_size,
+                shared_correlates=shared_correlates
+            )
+            
+        flattened_logweight = logweight_matrix[:, context, mutation] + trinuc_distributions[context, locus]
+        
+        flattened_logweight -= np.log(np.dot(
+                self.delta/self.delta.sum(axis = 1, keepdims = True), 
+                trinuc_distributions[:, locus]
+            ))
+        
+        flattened_logweight += np.log(window_size[:, locus]) + locus_logmu[:, locus] - log_normalizer
+        
+        return np.sum(weighted_phi*flattened_logweight)
+        
+
+
+    def _bound(self,*,
+            shared_correlates,
+            corpus, 
+            gamma,
+            entropy_sstats,
             weighted_phis, 
             likelihood_scale = 1.):
-        
-        
-        locus_logmu = self.beta_mu.dot(X_matrix) # n_topics, n_loci
-        locus_logstd = self.beta_nu.dot(X_matrix) # n_topics, n_loci
-        
-        log_normalizer = np.log(
-            ( window_size * np.exp(locus_logmu + 1/2*np.square(locus_logstd)) ).sum(axis = -1, keepdims = True)
-        )
         
         Elog_gamma = log_dirichlet_expectation(gamma)
         Elog_delta = log_dirichlet_expectation(self.delta)
         Elog_rho = log_dirichlet_expectation(self.rho)
-        
+
+        logweight_matrix = Elog_gamma_g[:,None, None] + Elog_delta[:,:,None] + Elog_rho
+
         elbo = 0
         
-        for g in range(len(gamma)):
+        for Elog_gamma_g, sample, weighted_phi in zip(Elog_gamma, corpus, weighted_phis):
             
-            logweight_matrix = Elog_gamma[g,:][:,None, None] + Elog_delta[:,:,None] + Elog_rho
-            
-            flattened_logweight = logweight_matrix[:, context[g], mutation[g]] + trinuc_distributions[context[g], locus[g]]
-            
-            flattened_logweight -= np.log(np.dot(
-                    self.delta/self.delta.sum(axis = 1, keepdims = True), 
-                    trinuc_distributions[:, locus[g]]
-                ))
-            
-            flattened_logweight += np.log(window_size[:, locus[g]]) + locus_logmu[:, locus[g]] - log_normalizer
-            
-            elbo += np.sum(weighted_phis[g]*flattened_logweight)
+            elbo += self._sample_bound(
+                **sample,
+                shared_correlates = shared_correlates,
+                weighted_phi = weighted_phi,
+                logweight_matrix = logweight_matrix,
+            )
         
-        elbo += entropy_sstats    
+        elbo += entropy_sstats
         elbo *= likelihood_scale
         
         elbo += np.sum(-1/2 * (np.square(self.beta_mu) + np.square(self.beta_nu)))
@@ -143,9 +162,43 @@ class LocusRegressor(BaseEstimator):
         elbo += np.sum(dirichlet_bound(np.ones((1,3)), self.rho, Elog_rho))
 
         return elbo
+
+
+    def _prebuild_phi_matrix(self):
+
+        Elog_delta = log_dirichlet_expectation(self.delta)
+        Elog_rho = log_dirichlet_expectation(self.rho)
+
+        self.phi_matrix_prebuild = np.exp(Elog_delta)[:,:,None] * np.exp(Elog_rho)
+
+
+    def _get_locus_distribution(self,*,X_matrix, window_size, shared_correlates):
+
+        if shared_correlates:
+            try:
+                return self._cached_correlates
+            except AttributeError:
+                pass
+
+        locus_logmu = self.beta_mu.dot(X_matrix) # n_topics, n_loci
+        locus_logstd = self.beta_nu.dot(X_matrix) # n_topics, n_loci
+        
+        log_normalizer = np.log(
+            (window_size * np.exp(locus_logmu + 1/2*np.square(locus_logstd)) ).sum(axis = -1, keepdims = True)
+        )
+
+        if shared_correlates:
+            self._cached_correlates = (locus_logmu, locus_logstd, log_normalizer)
+
+        return locus_logmu, locus_logstd, log_normalizer
+
+
+    def _clear_locus_cache(self):
+        delattr(self, '_cached_correlates')
+
     
-    
-    def _inference(self,*,
+    def _sample_inference(self,
+        shared_correlates,
         gamma,
         X_matrix,
         mutation,
@@ -153,103 +206,119 @@ class LocusRegressor(BaseEstimator):
         locus,
         count,
         trinuc_distributions,
-        window_size):
+        window_size
+    ):
+
+        locus_logmu, _, log_normalizer = self._get_locus_distribution(
+                X_matrix=X_matrix, 
+                window_size=window_size,
+                shared_correlates=shared_correlates
+            )
         
-        # calculate distribution over loci
-        locus_logmu = self.beta_mu.dot(X_matrix) # n_topics, n_loci
-        locus_logstd = self.beta_nu.dot(X_matrix) # n_topics, n_loci
-        
-        log_normalizer = np.log(
-            (window_size * np.exp(locus_logmu + 1/2*np.square(locus_logstd)) ).sum(axis = -1, keepdims = True)
-        )
-        
+        beta_sstats = defaultdict(lambda : np.zeros(self.n_components))
         delta_sstats = np.zeros_like(self.delta)
         rho_sstats = np.zeros_like(self.rho)
-        beta_sstats = defaultdict(lambda : np.zeros(self.n_components))
-        entropy_sstats = 0
-        
-        weighted_phis = []
-        _it = range(len(mutation))
-        
-        Elog_delta = log_dirichlet_expectation(self.delta)
-        Elog_rho = log_dirichlet_expectation(self.rho)
-        phi_matrix_prebuild = np.exp(Elog_delta)[:,:,None] * np.exp(Elog_rho)
-        
-        eps = np.finfo(self.dtype).eps
 
-        for g in _it: # outer data loop, change for stochastic variational infernce
+        flattend_phi = trinuc_distributions[context,locus]*\
+                       self.phi_matrix_prebuild[:,context,mutation]*\
+                       1/np.dot(
+                            self.delta/self.delta.sum(axis = 1, keepdims = True), 
+                            trinuc_distributions[:, locus]
+                        )*\
+                       window_size[:, locus] * np.exp( locus_logmu[:, locus] - log_normalizer )
+        
+        count_g = np.array(count)[:,None]
+        
+        for i in range(self.estep_iterations): # inner e-step loop
             
-            flattend_phi = trinuc_distributions[context[g],locus[g]]*phi_matrix_prebuild[:,context[g],mutation[g]]\
-                                /np.dot(
-                                    self.delta/self.delta.sum(axis = 1, keepdims = True), 
-                                    trinuc_distributions[:, locus[g]]
-                                ) # j * (k,j) / ( (k,m)x(m,j) --> (k,j)
-            
-            flattend_phi *= window_size[:, locus[g]] * np.exp( locus_logmu[:, locus[g]] - log_normalizer )
-            
-            count_g = np.array(count[g])[:,None]
-            
-            for i in range(self.estep_iterations): # inner e-step loop
-                
-                old_gamma = gamma[g].copy()
-                exp_Elog_gamma = np.exp(log_dirichlet_expectation(old_gamma)[:,None])
-                
-                norm_phi = np.dot(flattend_phi.T, exp_Elog_gamma)
-                
-                gamma_sstats = np.squeeze(
-                        exp_Elog_gamma*np.dot(
-                                flattend_phi, count_g/norm_phi
-                        )
-                    ).astype(self.dtype)
-                
-                gamma[g] = self.alpha + gamma_sstats
-                
-                if np.abs(gamma[g] - old_gamma).mean() < self.difference_tol:
-                    break
-            
+            old_gamma = gamma.copy()
             exp_Elog_gamma = np.exp(log_dirichlet_expectation(old_gamma)[:,None])
-            #phi_matrix_unnormalized = flattend_phi*exp_Elog_gamma
-            #phi_matrix = phi_matrix_unnormalized/phi_matrix_unnormalized.sum(0, keepdims = True)
-            #weighted_phi = phi_matrix * count_g.T
-            norm_phi = np.dot(flattend_phi.T, exp_Elog_gamma)
             
-            phi_matrix = np.outer(exp_Elog_gamma, 1/norm_phi)*flattend_phi
-            weighted_phi = phi_matrix * count_g.T
+            gamma_sstats = np.squeeze(
+                    exp_Elog_gamma*np.dot(flattend_phi, count_g/np.dot(flattend_phi.T, exp_Elog_gamma))
+                ).astype(self.dtype)
             
-            for _mutation, _context, _locus, ss in zip(mutation[g], context[g], locus[g], weighted_phi.T):
-                rho_sstats[:, _context, _mutation]+=ss
-                delta_sstats[:, _context]+=ss
-                beta_sstats[_locus]+=ss
+            gamma = self.alpha + gamma_sstats
             
-            weighted_phis.append(weighted_phi)
-            entropy_sstats += -np.sum(weighted_phi * np.where(phi_matrix > 0, np.log(phi_matrix), 0.))
-                # the "phi_matrix" is only needed to calculate the entropy of q(z), so we calculate
-                # the entropy here to save memory
-                              
-        return gamma, rho_sstats, delta_sstats, beta_sstats, entropy_sstats, weighted_phis
+            if np.abs(gamma - old_gamma).mean() < self.difference_tol:
+                break
+        
+        logger.info('Gamma converged in {} steps.'.format(i))
+
+        exp_Elog_gamma = np.exp(log_dirichlet_expectation(old_gamma)[:,None])
+
+        phi_matrix = np.outer(exp_Elog_gamma, 1/np.dot(flattend_phi.T, exp_Elog_gamma))*flattend_phi
+        weighted_phi = phi_matrix * count_g.T
+
+        for _mutation, _context, _locus, ss in zip(mutation, context, locus, weighted_phi.T):
+            rho_sstats[:, _context, _mutation]+=ss
+            delta_sstats[:, _context]+=ss
+            beta_sstats[_locus]+=ss
+        
+        entropy_sstats = -np.sum(weighted_phi * np.where(phi_matrix > 0, np.log(phi_matrix), 0.))
+        # the "phi_matrix" is only needed to calculate the entropy of q(z), so we calculate
+        # the entropy here to save memory
+                            
+        return gamma, rho_sstats, delta_sstats, beta_sstats, entropy_sstats, weighted_phi
+
+    
+    def _inference(self,*,
+            shared_correlates,
+            corpus,
+            gamma,
+        ):
+        
+        self._prebuild_phi_matrix()
+
+        if shared_correlates:
+            self._get_locus_distribution(
+                X_matrix=corpus[0]['X_matrix'], 
+                window_size=corpus[0]['window_size'],
+                shared_correlates=shared_correlates
+            )
+
+        weighted_phis, gammas = [], []
+        rho_sstats = np.zeros_like(self.rho)
+        entropy_sstats = 0
+
+        if shared_correlates:
+            beta_sstats = defaultdict(lambda : np.zeros(self.n_components))
+            delta_sstats = np.zeros_like(self.delta)
+        else:
+            beta_sstats = []
+            delta_sstats = []
+
+        for sample_gamma, sample_rho_sstats, sample_delta_sstats, sample_beta_sstats, \
+            sample_entropy_sstats, sample_weighted_phi in \
+            Parallel(n_jobs = self.n_jobs)(
+                delayed(self._sample_inference)(**sample, gamma = gamma_g,)
+                for gamma_g, sample in zip(gamma, corpus)
+            ):
+
+            gammas.append(sample_gamma)
+            rho_sstats += sample_rho_sstats
+            entropy_sstats += sample_entropy_sstats
+            weighted_phis.append(sample_weighted_phi)
+
+            if shared_correlates: # pile up sstats
+                delta_sstats += sample_delta_sstats
+                for locus, sstats in sample_beta_sstats.items():
+                    beta_sstats[locus] += sstats
+
+            else:
+                delta_sstats.append(sample_delta_sstats)
+                beta_sstats.append(sample_beta_sstats)
+
+
+        return np.array(gamma), rho_sstats, delta_sstats, beta_sstats, entropy_sstats, weighted_phis
     
     
     def _fit(self,*,
-        X_matrix,
-        trinuc_distributions,
-        window_size,
-        mutation,
-        context,
-        locus,
-        count
+        shared_correlates,
+        corpus,
         ):
-
-        kwargs = dict(
-            X_matrix=X_matrix,
-            mutation = mutation,
-            context = context,
-            locus = locus,
-            count = count,
-            trinuc_distributions = trinuc_distributions,
-            window_size = window_size,
-        )
         
-        self.n_locus_features, self.n_loci = X_matrix.shape
+        self.n_locus_features, self.n_loci = corpus[0]['X_matrix'].shape
         self.trained = False
 
         assert self.n_locus_features < self.n_loci, \
@@ -257,7 +326,7 @@ class LocusRegressor(BaseEstimator):
 
         self._init_variables()
         
-        gamma = self._init_doc_variables(len(mutation))
+        gamma = self._init_doc_variables(len(corpus))
         
         self.bounds = []
 
@@ -267,10 +336,10 @@ class LocusRegressor(BaseEstimator):
                 logger.info(' E-step ...')
                 gamma, rho_sstats, delta_sstats, beta_sstats, \
                     entropy_sstats, weighted_phis = self._inference(
+                        shared_correlates=shared_correlates,
+                        corpus= corpus,
                         gamma = gamma,
-                        **kwargs,
                     )
-                
                 
                 logger.info(' M-step delta ...')
                 

@@ -322,7 +322,7 @@ class Dataset:
 
     @property
     def genome_features(self):
-        return self._features
+        return self._features.T
 
     @property
     def feature_names(self):
@@ -330,7 +330,7 @@ class Dataset:
 
     @property
     def trinucleotide_distributions(self):
-        return self._trinuc_distributions#.T
+        return self._trinuc_distributions.T
 
     @property
     def mutations(self):
@@ -350,10 +350,36 @@ class Dataset:
 
     def __iter__(self):
         for samp in self.samples:
-            yield samp
+
+            yield {
+                **samp, 
+                'shared_correlates' : False,
+                'window_size' : self.window_sizes, 
+                'X_matrix' : self.genome_features,
+                'trinuc_distributions' : self.trinucleotide_distributions,
+            }
 
     def __len__(self):
         return len(self.samples)
+
+
+    def _get(self, index):
+        return {
+                **self.samples[index], 
+                'shared_correlates' : False,
+                'window_size' : self.window_sizes, 
+                'X_matrix' : self.genome_features,
+                'trinuc_distributions' : self.trinucleotide_distributions,
+            }
+
+
+    def __getitem__(self, index):
+        if isinstance(index, (list, np.ndarray)):
+            return [self._get(g) for g in index]
+
+        else:
+            return self._get(index)
+        
 
 
 
