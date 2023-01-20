@@ -150,6 +150,7 @@ def M_step_mu_nu(*,beta_mu, window_size,
         ),
         jac = True,
         hess = hess,
+        options={'xtol' : 1e-5}
     ).x
     
     #print(-objective_jac(new)[0] - initial_loss)

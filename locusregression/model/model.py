@@ -29,7 +29,7 @@ class LocusRegressor(BaseEstimator):
         eval_every = 10,
         dtype = np.float32,
         pi_prior = 5,
-        num_epochs = 10000, 
+        num_epochs = 100, 
         difference_tol = 1e-3,
         estep_iterations = 1000,
         bound_tol = 1e-2,
@@ -90,8 +90,7 @@ class LocusRegressor(BaseEstimator):
                               ).astype(self.dtype, copy=False)
 
 
-    def _sample_bound(
-            self,
+    def _sample_bound(self,*,
             shared_correlates,
             X_matrix,
             window_size,
@@ -125,7 +124,6 @@ class LocusRegressor(BaseEstimator):
 
 
     def _bound(self,*,
-            shared_correlates,
             corpus, 
             gamma,
             entropy_sstats,
@@ -136,17 +134,14 @@ class LocusRegressor(BaseEstimator):
         Elog_delta = log_dirichlet_expectation(self.delta)
         Elog_rho = log_dirichlet_expectation(self.rho)
 
-        logweight_matrix = Elog_gamma_g[:,None, None] + Elog_delta[:,:,None] + Elog_rho
-
         elbo = 0
         
         for Elog_gamma_g, sample, weighted_phi in zip(Elog_gamma, corpus, weighted_phis):
             
             elbo += self._sample_bound(
-                **sample,
-                shared_correlates = shared_correlates,
                 weighted_phi = weighted_phi,
-                logweight_matrix = logweight_matrix,
+                logweight_matrix = Elog_gamma_g[:,None, None] + Elog_delta[:,:,None] + Elog_rho,
+                **sample,
             )
         
         elbo += entropy_sstats
@@ -178,8 +173,9 @@ class LocusRegressor(BaseEstimator):
             try:
                 return self._cached_correlates
             except AttributeError:
+                logger.info('Recalculating locus distribution.')
                 pass
-
+        
         locus_logmu = self.beta_mu.dot(X_matrix) # n_topics, n_loci
         locus_logstd = self.beta_nu.dot(X_matrix) # n_topics, n_loci
         
@@ -194,7 +190,12 @@ class LocusRegressor(BaseEstimator):
 
 
     def _clear_locus_cache(self):
-        delattr(self, '_cached_correlates')
+        try:
+            self._cached_correlates
+        except AttributeError:
+            pass
+        else:
+            delattr(self, '_cached_correlates')
 
     
     def _sample_inference(self,
@@ -246,19 +247,6 @@ class LocusRegressor(BaseEstimator):
         else:
             logger.info('E-step did not converge. If this happens frequently, consider increasing "estep_iterations".')
 
-
-        with open('../data/new_matrix_stats.pkl','wb') as b:
-            pickle.dump(
-                {
-                    'flattend_phi' : flattend_phi,
-                    'count' : count,
-                    'context' : context,
-                    'gamma' : gamma,
-                },b
-            )
-
-        assert False
-
         exp_Elog_gamma = np.exp(log_dirichlet_expectation(old_gamma)[:,None])
 
         phi_matrix = np.outer(exp_Elog_gamma, 1/np.dot(flattend_phi.T, exp_Elog_gamma))*flattend_phi
@@ -273,7 +261,8 @@ class LocusRegressor(BaseEstimator):
         # the "phi_matrix" is only needed to calculate the entropy of q(z), so we calculate
         # the entropy here to save memory
                             
-        return gamma, rho_sstats, delta_sstats, beta_sstats, entropy_sstats, weighted_phi
+        return gamma, rho_sstats, delta_sstats, \
+                beta_sstats, entropy_sstats, weighted_phi
 
     
     def _inference(self,*,
@@ -305,7 +294,7 @@ class LocusRegressor(BaseEstimator):
         for sample_gamma, sample_rho_sstats, sample_delta_sstats, sample_beta_sstats, \
             sample_entropy_sstats, sample_weighted_phi in \
             Parallel(n_jobs = self.n_jobs)(
-                delayed(self._sample_inference)(**sample, gamma = gamma_g,)
+                delayed(self._sample_inference)(**sample, gamma = gamma_g)
                 for gamma_g, sample in zip(gamma, corpus)
             ):
 
@@ -325,15 +314,56 @@ class LocusRegressor(BaseEstimator):
 
 
         return np.array(gammas), rho_sstats, delta_sstats, beta_sstats, entropy_sstats, weighted_phis
-    
-    
-    def _fit(self,*,
-        shared_correlates,
-        corpus,
+        
+
+    def _shared_correlates_M_step(self,*,
+        delta_sstats, beta_sstats,
+        trinuc_distributions,
+        window_size,
+        X_matrix
         ):
+
+        def update_parameters(k):
+            
+            new_delta = M_step_delta(
+                delta_sstats = delta_sstats[k,:], 
+                beta_sstats = {l : ss[k] for l,ss in beta_sstats.items()},
+                delta = self.delta[k], 
+                trinuc_distributions = trinuc_distributions
+            ).astype(self.dtype)
+
+
+            new_mu, new_nu = M_step_mu_nu(
+                beta_sstats = {l : ss[k] for l,ss in beta_sstats.items()},
+                beta_mu = self.beta_mu[k],  
+                beta_nu = self.beta_nu[k], 
+                window_size = window_size,
+                X_matrix = X_matrix,
+            )
+
+            return new_delta, new_mu, new_nu
+
+        for k, ( new_delta, new_mu, new_nu ) in enumerate(
+            Parallel(n_jobs = self.n_jobs)(
+                delayed(update_parameters)(k) for k in range(self.n_components)
+                )
+            ):
+
+            self.beta_mu[k] = new_mu.astype(self.dtype)
+            self.beta_nu[k] = new_nu.astype(self.dtype)
+            self.delta[k] = new_delta.astype(self.dtype)
+    
+
+    def _fit(self,corpus):
         
         self.n_locus_features, self.n_loci = corpus[0]['X_matrix'].shape
         self.trained = False
+        self.shared_correlates = corpus[0]['shared_correlates']
+
+        logger.info('Fitting model using {} cores.'.format(self.n_jobs))
+        
+        if self.shared_correlates:
+            logger.info('Sharing genomic correlates between samples for faster inference.')
 
         assert self.n_locus_features < self.n_loci, \
             'The feature matrix should be of shape (N_features, N_loci) where N_features << N_loci. The matrix you provided appears to be in the wrong orientation.'
@@ -350,54 +380,33 @@ class LocusRegressor(BaseEstimator):
                 logger.info(' E-step ...')
                 gamma, rho_sstats, delta_sstats, beta_sstats, \
                     entropy_sstats, weighted_phis = self._inference(
-                        shared_correlates=shared_correlates,
+                        shared_correlates = self.shared_correlates,
                         corpus= corpus,
                         gamma = gamma,
                     )
-
-                print(gamma)
                 
-                logger.info(' M-step delta ...')
+                logger.info(' M-step ...')
                 
-                for k in range(self.n_components):
-                    
-                    self.delta[k] = M_step_delta(
-                        delta_sstats = delta_sstats[k,:], 
-                        beta_sstats = {l : ss[k] for l,ss in beta_sstats.items()},
-                        delta = self.delta[k], 
-                        trinuc_distributions = trinuc_distributions
-                    ).astype(self.dtype)
-                
-                
-                logger.info(' M-step beta ...')
-                
-                for k in range(self.n_components):
-                    
-                    self.beta_mu[k], self.beta_nu[k] = M_step_mu_nu(
-                        beta_sstats = {l : ss[k] for l,ss in beta_sstats.items()},
-                        beta_mu = self.beta_mu[k],  
-                        beta_nu = self.beta_nu[k], 
-                        window_size = window_size,
-                        X_matrix = X_matrix,
+                if self.shared_correlates:
+                    self._shared_correlates_M_step(
+                        trinuc_distributions = corpus[0]['trinuc_distributions'],
+                        window_size = corpus[0]['window_size'],
+                        X_matrix = corpus[0]['X_matrix'],
+                        delta_sstats = delta_sstats,
+                        beta_sstats = beta_sstats,
                     )
-                    
-                    self.beta_mu[k] = self.beta_mu[k].astype(self.dtype)
-                    self.beta_nu[k] = self.beta_nu[k].astype(self.dtype)
-                    
-                '''self.alpha = M_step_alpha(
-                        gamma = gamma,
-                        alpha = self.alpha,  
-                        lr = 1.,
-                    )'''
                 
-                self.rho = rho_sstats + 1. # uniform prior for update
+                # update rho distribution
+                self.rho = rho_sstats + 1.
 
+                self._clear_locus_cache()
+                
                 self.bounds.append(
                     self._bound(
-                        gamma = gamma, 
-                        weighted_phis = weighted_phis,
+                        corpus = corpus, 
+                        gamma = gamma,
                         entropy_sstats = entropy_sstats,
-                        **kwargs,
+                        weighted_phis = weighted_phis, 
                     )
                 )
 
@@ -417,41 +426,44 @@ class LocusRegressor(BaseEstimator):
 
         return self
 
-    @get_corpus_lists
-    def fit(self, **kwargs):
-        return self._fit(**kwargs)
+    
+    def fit(self, corpus):
+        return self._fit(corpus)
 
-    @get_corpus_lists
-    def predict(self,**kwargs):
 
-        n_samples = len(kwargs['mutation'])
+    
+    def predict(self,corpus):
+
+        n_samples = len(corpus)
         
         gamma = self._inference(
             gamma = self._init_doc_variables(n_samples),
-            **kwargs
+            corpus = corpus,
+            shared_correlates = self.shared_correlates,
         )[0]
 
         E_gamma = gamma/gamma.sum(-1, keepdims = True)
         
         return E_gamma
 
-    @get_corpus_lists
-    def score(self,**kwargs):
+    
+    def score(self, corpus):
 
-        n_samples = len(kwargs['mutation'])
+        n_samples = len(corpus)
         
         gamma, _,_,_, entropy_sstats, weighted_phis = \
             self._inference(
                 gamma = self._init_doc_variables(n_samples),
-                **kwargs
+                corpus = corpus,
+                shared_correlates = self.shared_correlates,
             )
 
         return self._bound(
-            gamma = gamma, 
-            weighted_phis = weighted_phis,
-            entropy_sstats = entropy_sstats,
-            **kwargs
-        )
+                corpus = corpus, 
+                gamma = gamma,
+                entropy_sstats = entropy_sstats,
+                weighted_phis = weighted_phis, 
+            )
 
 
     def signature(self, component, 

@@ -348,30 +348,21 @@ class Dataset:
     def counts(self):
         return [sample['count'] for sample in self._samples]
 
-    def __iter__(self):
-        for samp in self.samples:
-
-            yield {
-                **samp, 
-                'shared_correlates' : False,
-                'window_size' : self.window_sizes, 
-                'X_matrix' : self.genome_features,
-                'trinuc_distributions' : self.trinucleotide_distributions,
-            }
-
-    def __len__(self):
-        return len(self.samples)
-
-
     def _get(self, index):
         return {
                 **self.samples[index], 
-                'shared_correlates' : False,
+                'shared_correlates' : True,
                 'window_size' : self.window_sizes, 
                 'X_matrix' : self.genome_features,
                 'trinuc_distributions' : self.trinucleotide_distributions,
             }
 
+    def __iter__(self):
+        for i in range(len(self)):
+            yield self._get(i)
+
+    def __len__(self):
+        return len(self.samples)
 
     def __getitem__(self, index):
         if isinstance(index, (list, np.ndarray)):
