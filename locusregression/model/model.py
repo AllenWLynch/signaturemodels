@@ -334,9 +334,9 @@ class LocusRegressor(BaseEstimator):
 
 
             new_mu, new_nu = M_step_mu_nu(
-                beta_sstats = {l : ss[k] for l,ss in beta_sstats.items()},
                 beta_mu = self.beta_mu[k],  
                 beta_nu = self.beta_nu[k], 
+                beta_sstats = {l : ss[k] for l,ss in beta_sstats.items()},
                 window_size = window_size,
                 X_matrix = X_matrix,
             )
