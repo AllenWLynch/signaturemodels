@@ -1,10 +1,11 @@
 
 import numpy as np
-from .base import M_step_alpha, dirichlet_bound, log_dirichlet_expectation
+from .base import dirichlet_bound, log_dirichlet_expectation
 from collections import defaultdict
 from ..corpus.featurization import COSMIC_SORT_ORDER, SIGNATURE_STRINGS, MUTATION_PALETTE
 from .optim import M_step_delta, M_step_mu_nu
-from ..corpus.interface import get_corpus_lists
+from .optim_correlates import BetaOptimizer
+
 from sklearn.base import BaseEstimator
 import logging
 logger = logging.getLogger('LocusRegressor')
@@ -333,9 +334,10 @@ class LocusRegressor(BaseEstimator):
             ).astype(self.dtype)
 
 
-            new_mu, new_nu = M_step_mu_nu(
-                beta_mu = self.beta_mu[k],  
-                beta_nu = self.beta_nu[k], 
+            new_mu, new_nu = BetaOptimizer.optimize(
+                shared_correlates=True,
+                beta_mu0 = self.beta_mu[k],  
+                beta_nu0 = self.beta_nu[k], 
                 beta_sstats = {l : ss[k] for l,ss in beta_sstats.items()},
                 window_size = window_size,
                 X_matrix = X_matrix,

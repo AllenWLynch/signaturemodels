@@ -188,7 +188,7 @@ class BetaOptimizer:
         F = len(beta_mu0)
         beta_0 = np.concatenate([beta_mu0, beta_nu0])
 
-        if shared_correlates:
+        if not shared_correlates:
             '''
             Each sample is associated with its X_matrix, window_sizes/"marginal sensitivity", and beta suffstats.
             For each sample, calculate the sufficient statistics for the gradient and hessian update,
@@ -247,13 +247,22 @@ class BetaOptimizer:
 
         else:
 
-            objective_jac, hess = BetaOptimizer._get_optim_func(
+            obj_jac_func, hess_func = BetaOptimizer._get_optim_func(
                         beta_mu0=beta_mu0,
                         beta_nu0=beta_nu0,
                         window_size=window_size,
                         X_matrix=X_matrix,
                         beta_sstats=beta_sstats
                     )
+
+            '''
+            The optimizer expects functions with just one argument,
+            So we take "x" and split it into beta_mu, beta_nu
+            '''
+            objective_jac = lambda x : obj_jac_func(x[:F], x[F:])
+
+            hess = lambda x : hess_func(x[:F], x[F:])
+
 
         optim_results = minimize(
             objective_jac, 
