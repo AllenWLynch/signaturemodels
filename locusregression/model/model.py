@@ -337,7 +337,7 @@ class LocusRegressor(BaseEstimator):
             new_mu, new_nu = BetaOptimizer.optimize(
                 shared_correlates=True,
                 beta_mu0 = self.beta_mu[k],  
-                beta_nu0 = self.beta_nu[k], 
+                beta_nu0 = self.beta_nu[k],
                 beta_sstats = {l : ss[k] for l,ss in beta_sstats.items()},
                 window_size = window_size,
                 X_matrix = X_matrix,
@@ -390,14 +390,32 @@ class LocusRegressor(BaseEstimator):
                 logger.info(' M-step ...')
                 
                 if self.shared_correlates:
-                    self._shared_correlates_M_step(
-                        trinuc_distributions = corpus[0]['trinuc_distributions'],
-                        window_size = corpus[0]['window_size'],
-                        X_matrix = corpus[0]['X_matrix'],
-                        delta_sstats = delta_sstats,
-                        beta_sstats = beta_sstats,
+
+                    BetaOptimizer.optimize(
+                        shared_correlates=True,
+                        beta_mu0 = self.beta_mu[k],  
+                        beta_nu0 = self.beta_nu[k],
+                        corpus = corpus,
+                        beta_sstats = {l : ss[k] for l,ss in beta_sstats.items()},
                     )
-                
+
+                else:
+                    
+                    k = 0
+
+                    BetaOptimizer.optimize(
+                        beta_mu0 = self.beta_mu[k],  
+                        beta_nu0 = self.beta_nu[k],
+                        shared_correlates=False,
+                        corpus = corpus,
+                        beta_sstats = [
+                            {l : ss[k] for l,ss in beta_sstats_sample.items()}
+                            for beta_sstats_sample in beta_sstats
+                        ],
+                    )
+
+                    
+                assert False
                 # update rho distribution
                 self.rho = rho_sstats + 1.
 
