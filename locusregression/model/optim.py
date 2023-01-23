@@ -32,6 +32,8 @@ def M_step_delta(*,delta_sstats, beta_sstats, delta, trinuc_distributions):
             - np.squeeze(
                 np.dot(trinuc_distributions, (weighted_phis*1/np.dot(delta, trinuc_distributions)).T) # (w) * ((m)x(m,w) -> w
              ) + marginal_sstats/lamsum
+
+        print('Real', val[0])
             
         return -val, -j
     
@@ -58,10 +60,10 @@ def M_step_delta(*,delta_sstats, beta_sstats, delta, trinuc_distributions):
     
     newdelta = minimize(
         objective_jac, 
-        delta_sstats+1,
-        method = 'tnc',
+        delta,
+        method = 'l-bfgs-b',
         jac = True,
-        bounds = Bounds(1e-30, np.inf, keep_feasible=True),
+        bounds = Bounds(0, np.inf, keep_feasible=True),
     ).x
     
     #improvement = -objective_jac(newdelta)[0] - initial_loss

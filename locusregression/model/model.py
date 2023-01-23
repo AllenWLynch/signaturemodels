@@ -3,8 +3,10 @@ import numpy as np
 from .base import dirichlet_bound, log_dirichlet_expectation
 from collections import defaultdict
 from ..corpus.featurization import COSMIC_SORT_ORDER, SIGNATURE_STRINGS, MUTATION_PALETTE
-from .optim import M_step_delta, M_step_mu_nu
-from .optim_correlates import BetaOptimizer
+from .optim import M_step_delta
+from .optim_beta import BetaOptimizer
+from .optim_lambda import LambdaOptimizer
+import tqdm
 
 from sklearn.base import BaseEstimator
 import logging
@@ -13,8 +15,6 @@ logger.setLevel(logging.INFO)
 import matplotlib.pyplot as plt
 from joblib import Parallel, delayed
 import pickle
-
-
 
 class LocusRegressor(BaseEstimator):
     
@@ -283,77 +283,40 @@ class LocusRegressor(BaseEstimator):
 
         weighted_phis, gammas = [], []
         rho_sstats = np.zeros_like(self.rho)
+        delta_sstats = np.zeros_like(self.delta)
         entropy_sstats = 0
 
         if shared_correlates:
             beta_sstats = defaultdict(lambda : np.zeros(self.n_components))
-            delta_sstats = np.zeros_like(self.delta)
         else:
             beta_sstats = []
-            delta_sstats = []
 
         for sample_gamma, sample_rho_sstats, sample_delta_sstats, sample_beta_sstats, \
             sample_entropy_sstats, sample_weighted_phi in \
             Parallel(n_jobs = self.n_jobs)(
                 delayed(self._sample_inference)(**sample, gamma = gamma_g)
-                for gamma_g, sample in zip(gamma, corpus)
+                for gamma_g, sample in (zip(gamma, corpus) if self.quiet \
+                    else tqdm.tqdm(zip(gamma, corpus), desc = 'Inferring local RVs', total = len(corpus))
+                )
             ):
 
             gammas.append(sample_gamma)
-            rho_sstats += sample_rho_sstats
-            entropy_sstats += sample_entropy_sstats
             weighted_phis.append(sample_weighted_phi)
+            entropy_sstats += sample_entropy_sstats
+            rho_sstats += sample_rho_sstats
+            delta_sstats += sample_delta_sstats
 
             if shared_correlates: # pile up sstats
-                delta_sstats += sample_delta_sstats
+                
                 for locus, sstats in sample_beta_sstats.items():
                     beta_sstats[locus] += sstats
 
             else:
-                delta_sstats.append(sample_delta_sstats)
                 beta_sstats.append(sample_beta_sstats)
 
 
         return np.array(gammas), rho_sstats, delta_sstats, beta_sstats, entropy_sstats, weighted_phis
         
-
-    def _shared_correlates_M_step(self,*,
-        delta_sstats, beta_sstats,
-        trinuc_distributions,
-        window_size,
-        X_matrix
-        ):
-
-        def update_parameters(k):
-            
-            new_delta = M_step_delta(
-                delta_sstats = delta_sstats[k,:], 
-                beta_sstats = {l : ss[k] for l,ss in beta_sstats.items()},
-                delta = self.delta[k], 
-                trinuc_distributions = trinuc_distributions
-            ).astype(self.dtype)
-
-
-            new_mu, new_nu = BetaOptimizer.optimize(
-                shared_correlates=True,
-                beta_mu0 = self.beta_mu[k],  
-                beta_nu0 = self.beta_nu[k],
-                beta_sstats = {l : ss[k] for l,ss in beta_sstats.items()},
-                window_size = window_size,
-                X_matrix = X_matrix,
-            )
-
-            return new_delta, new_mu, new_nu
-
-        for k, ( new_delta, new_mu, new_nu ) in enumerate(
-            Parallel(n_jobs = self.n_jobs)(
-                delayed(update_parameters)(k) for k in range(self.n_components)
-                )
-            ):
-
-            self.beta_mu[k] = new_mu.astype(self.dtype)
-            self.beta_nu[k] = new_nu.astype(self.dtype)
-            self.delta[k] = new_delta.astype(self.dtype)
     
 
     def _fit(self,corpus):
@@ -388,34 +351,39 @@ class LocusRegressor(BaseEstimator):
                     )
                 
                 logger.info(' M-step ...')
-                
-                if self.shared_correlates:
 
-                    BetaOptimizer.optimize(
-                        shared_correlates=True,
+                for k in range(self.n_components):   
+                    
+                    if self.shared_correlates:
+                        window_sizes = [corpus[0]['window_size']]
+                        X_matrices = [corpus[0]['X_matrix']]
+                        trinuc = [corpus[0]['trinuc_distributions']]
+                        update_beta_sstats = [{l : ss[k] for l,ss in beta_sstats.items()}]
+
+                    else:
+                        update_beta_sstats = [
+                                {l : ss[k] for l,ss in beta_sstats_sample.items()}
+                                for beta_sstats_sample in beta_sstats
+                            ]
+                        
+                        window_sizes = map(lambda x : x['window_size'], corpus)
+                        X_matrices = map(lambda x : x['X_matrix'], corpus)
+                        trinuc = map(lambda x : x['trinuc_distributions'], corpus)
+
+                    self.beta_mu[k], self.beta_nu[k] = BetaOptimizer.optimize(
                         beta_mu0 = self.beta_mu[k],  
                         beta_nu0 = self.beta_nu[k],
-                        corpus = corpus,
-                        beta_sstats = {l : ss[k] for l,ss in beta_sstats.items()},
+                        beta_sstats = update_beta_sstats,
+                        window_sizes=window_sizes,
+                        X_matrices=X_matrices,
                     )
 
-                else:
-                    
-                    k = 0
-
-                    BetaOptimizer.optimize(
-                        beta_mu0 = self.beta_mu[k],  
-                        beta_nu0 = self.beta_nu[k],
-                        shared_correlates=False,
-                        corpus = corpus,
-                        beta_sstats = [
-                            {l : ss[k] for l,ss in beta_sstats_sample.items()}
-                            for beta_sstats_sample in beta_sstats
-                        ],
+                    self.delta[k] = LambdaOptimizer.optimize(self.delta[k],
+                        trinuc_distributions = trinuc,
+                        beta_sstats = update_beta_sstats,
+                        delta_sstats = delta_sstats[k],
                     )
 
-                    
-                assert False
                 # update rho distribution
                 self.rho = rho_sstats + 1.
 
