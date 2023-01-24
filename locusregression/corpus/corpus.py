@@ -159,35 +159,53 @@ class Sample:
         )
 
 
-class Dataset:
+class BaseCorpus:
 
     @classmethod
     def load(cls, filename):
         with open(filename, 'rb') as f:
             return pickle.load(f)
 
+    def save(self, filename):
+        with open(filename, 'wb') as f:
+            pickle.dump([x for x in self], f)
+
+
+class Corpus(BaseCorpus):
+
     def __init__(self, 
-            sep = '\t', index = -1, n_jobs = 1,*,
+            sep = '\t', 
+            index = -1, 
+            n_jobs = 1,
+            exposure_file = None,*,
+            correlates_file,
             fasta_file,
             genome_file,
-            bedgraph_mtx,
             vcf_files,
+            regions_file,
         ):
 
         genome = Genome.from_file(genome_file)
 
+        self._windows = self.read_windows(regions_file, genome, sep = sep)
+
+        self._exposures = self.calculate_exposures(
+            self._windows, 
+            self.read_exposure_file(exposure_file, self._windows, sep = sep) \
+                if not exposure_file is None else np.ones(len(self._windows))
+        )
+        
+        self._features, self._feature_names = self.read_correlates(
+            correlates_file, self._windows, required_columns=None)
+
 
         with Fasta(fasta_file) as fa:
 
-            self._windows, self._features, self._feature_names = self.read_bedgraph(
-                bedgraph_mtx, genome, fa, sep = sep
-            )
-
             self._samples = self.collect_vcfs(
-                vcf_files=vcf_files, 
-                fasta_object=fa, 
-                genome_object=genome,
-                window_set= self._windows,
+                vcf_files = vcf_files, 
+                fasta_object = fa, 
+                genome_object = genome,
+                window_set = self._windows,
                 index = index,
                 sep = sep,
             )
@@ -195,45 +213,75 @@ class Dataset:
             self._trinuc_distributions = self.get_trinucleotide_distributions(
                 self._windows, fa, n_jobs=n_jobs
             )
-            
 
-    def save(self, filename):
-        with open(filename, 'wb') as f:
-            pickle.dump(self, f)
 
+    @staticmethod
+    def read_exposure_file(exposure_file, windows):
+        
+        exposures = []
+        with open(exposure_file, 'r') as f:
+
+            for lineno, txt in enumerate(f):
+
+                try:
+                    exposures.append( float(txt.strip()) )
+                except ValueError as err:
+                    raise ValueError('Record {} on line {} could not be converted to float dtype.'.format(
+                        txt, lineno,
+                    )) from err
+
+        assert len(exposures) == len(windows), 'The number of exposures provided in {} does not match the number of specified windows.\n'\
+                'Each window must have correlates provided.'
+
+        assert all([e >= 0. for e in exposures]), 'Exposures must be non-negative.'
+
+        return np.array(exposures)
+                
         
     @staticmethod
-    def read_bedgraph(bedgraph_mtx, genome_object, fasta_object, sep = '\t'):
+    def read_correlates(correlates_file, windows, 
+        required_columns = None, sep = '\t'):
         
         logger.info('Reading genomic features ...')
         
-        windows = []
-        columns = []
         numcols = None
-        with open(bedgraph_mtx, 'r') as f:
+        correlates = []
+        with open(correlates_file, 'r') as f:
             
             for lineno, txt in enumerate(f):
                 
                 line = txt.strip().split(sep)
 
-                if numcols is None:
+                if lineno == 0:
                     numcols = len(line)
                     if not txt[0] == '#':
                         logger.warn(
-                            'The first line of the bedgraph matrix file does not start with colnames prefixed with "#".\n'
+                            'The first line of the tsv file does not start with colnames prefixed with "#".\n'
                             'e.g. #chr\t#start\t#end\t#feature1 ... etc.'
                             'The first line of the file will be treated as column names.'
                             )
 
-                    assert len(line) > 3, 'Cannot run algorithm without at least one feature provided.'
-                    columns = [col.strip('#') for col in columns[3:]] + ['Constant']
+                    assert len(line) >= 1, 'Cannot run algorithm without at least one feature provided.'
+                    columns = [col.strip('#') for col in line]
 
-                elif line[0] in fasta_object:
+                    if required_columns is None:
+                        logger.info('Using correlates: ' + ', '.join(columns))
+                    else:
+                        missing_cols = set(required_columns).difference(columns)
+
+                        if len(missing_cols) > 0:
+                            raise ValueError('The required correlate{} was missing from file: {}.\n All correlates must be specified for all samples'.format(
+                                    's ' + ', '.join(missing_cols) if len(missing_cols) > 1 else ' ' + list(missing_cols)[0], correlates_file
+                                ))
+                        else:
+                            assert columns == required_columns, 'Columns must be provided in the same order for all correlates tsv files.'
+
+                else:
                     assert len(line) == numcols, 'Record {}\non line {} has inconsistent number of columns. Expected {} columns, got {}.'.format(
                             txt, lineno, numcols, len(line)
                         )
                         
-                    if any([f == '.' for f in line[3:]]):
+                    if any([f == '.' for f in line]):
                         raise ValueError('A value was not recorded for window {}: {}'
                                          'If this entry was made by "bedtools map", this means that the genomic feature file did not cover all'
                                          ' of the windows. Consider imputing a feature value or removing those windows.'.format(
@@ -242,24 +290,53 @@ class Dataset:
                                         )
                     try:
                         
-                        windows.append(
-                            Region(*line[:3], annotation= {'features' : [
-                                float(x) for x in line[3:]] + [1.]
-                            }) # add the features of the bedgraph matrix to the annotation for that window
+                        correlates.append(
+                            [float(f) for f in line] + [1.]
                         )
-                        
+
                     except ValueError as err:
                         raise ValueError('Could not ingest line {}: {}'.format(lineno, txt)) from err
 
+        assert len(correlates) == len(windows), 'The number of correlates provided in {} does not match the number of specified windows.\n'\
+                'Each window must have correlates provided.'
+
+        correlates = np.array(correlates)
+
+        correlates = MinMaxScaler().fit_transform(correlates)
+
+        return correlates, columns + ['constant']
+
+
+    @staticmethod
+    def read_windows(regions_file, genome_object, sep = '\t'):
+        
+        logger.info('Reading windows ...')
+        
+        windows = []
+        with open(regions_file, 'r') as f:
+            
+            for lineno, txt in enumerate(f):
+                
+                line = txt.strip().split(sep)
+                assert len(line) >= 3, 'Bed files have three or more columns: chr, start, end, ...'
+
+                if len(line) > 4:
+                    logger.warn(
+                        'The only information ingested from the "regions_file" is the chr, start, end, and name of genomic bins. All other fields are ignored.'
+                    )
+
+                try:
+                    
+                    windows.append(
+                        Region(*line[:3], annotation= {'name' : line[4]} if len(line) > 3 else None)
+                    )
+                    
+                except ValueError as err:
+                    raise ValueError('Could not ingest line {}: {}'.format(lineno, txt)) from err
+
         windows = RegionSet(windows, genome_object)
 
-        features = np.array([
-            w.annotation['features'] for w in windows
-        ])
-        
-        features = MinMaxScaler().fit_transform(features)
-
-        return windows, features, columns
+        return windows
 
 
     @staticmethod
@@ -279,6 +356,11 @@ class Dataset:
         
         logger.info('Done reading VCF files.')
         return samples
+
+
+    @staticmethod
+    def calculate_exposures(windows, exposures):
+        return np.array([[len(w)/10000 for w in windows]]) * exposures[None,:]
 
 
     @staticmethod
@@ -310,7 +392,11 @@ class Dataset:
 
     @property
     def window_sizes(self):
-        return np.array([[len(w)/10000 for w in self._windows]])
+        return self._exposures
+
+    @property
+    def exposures(self):
+        return self._exposures
 
     @property
     def samples(self):
@@ -352,7 +438,7 @@ class Dataset:
         return {
                 **self.samples[index], 
                 'shared_correlates' : True,
-                'window_size' : self.window_sizes, 
+                'window_size' : self.exposures, 
                 'X_matrix' : self.genome_features,
                 'trinuc_distributions' : self.trinucleotide_distributions,
             }
@@ -370,7 +456,98 @@ class Dataset:
 
         else:
             return self._get(index)
+
+
+class MixedCorpus(Corpus):
+    
+    def __init__(self, 
+            sep = '\t', index = -1, n_jobs = 1,*,
+            correlates_files,
+            exposure_files,
+            vcf_files,
+            fasta_file,
+            genome_file,
+            regions_file,
+        ):
+
+        assert len(correlates_files) == len(vcf_files), 'User must provide a VCF file, correlates file, and exposure file for each sample.'
+
+        assert len(exposure_files) in [0,1,len(vcf_files)]
+
+        genome = Genome.from_file(genome_file)
+        self._windows = self.read_windows(regions_file, genome, sep = sep)
+
+        if len(exposure_files) == 0:
+            exposures = np.ones((len(vcf_files), len(self._windows)))
+        elif len(exposure_files) == 1:
+            exposures = np.repeat(
+                self.read_exposure_file(exposure_files[0], self._windows),
+                len(vcf_files), axis = 0
+            )
+        else:
+            exposures = self.collect_exposures(exposure_files, self._windows)
+
+
+        self._exposures = self.calculate_exposures(
+            self._windows, exposures
+        )
         
+        self._features, self._feature_names = self.collect_correlates(
+            correlates_files, self._windows, 
+            required_columns=None, 
+            sep = sep,
+        )
+
+        with Fasta(fasta_file) as fa:
+
+            self._samples = self.collect_vcfs(
+                vcf_files=vcf_files, 
+                fasta_object=fa, 
+                genome_object=genome,
+                window_set= self._windows,
+                index = index,
+                sep = sep,
+            )
+
+            self._trinuc_distributions = self.get_trinucleotide_distributions(
+                self._windows, fa, n_jobs=n_jobs
+            )
 
 
+    @staticmethod
+    def calculate_exposures(windows, exposures):
+        return np.array([[len(w)/10000 for w in windows]]) * exposures
 
+
+    @staticmethod
+    def collect_exposures(exposure_files, windows):
+
+        return np.vstack([
+            MixedCorpus.read_exposure_file(f, windows)[None,:]
+            for f in exposure_files
+        ])
+
+
+    @staticmethod
+    def collect_correlates(correlates_files, windows, sep = '\t'):
+
+        columns = None
+        correlates = []
+
+        for corrs in correlates_files:
+            new_correlates, columns = MixedCorpus.read_correlates(corrs, windows, 
+                required_columns=columns, sep = sep)
+
+            correlates.append(new_correlates)
+
+        return correlates
+
+
+    def _get(self, index):
+        return {
+                **self.samples[index], 
+                'window_size' : self.exposures[index], 
+                'X_matrix' : self.genome_features[index],
+                'trinuc_distributions' : self.trinucleotide_distributions,
+                'shared_correlates' : False,
+            }

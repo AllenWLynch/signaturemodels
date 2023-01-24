@@ -27,7 +27,6 @@ class LocusRegressor(BaseEstimator):
     
     def __init__(self, 
         seed = 0, 
-        eval_every = 10,
         dtype = np.float32,
         pi_prior = 5,
         num_epochs = 100, 
@@ -48,7 +47,6 @@ class LocusRegressor(BaseEstimator):
         self.pi_prior = pi_prior
         self.n_components = n_components
         self.quiet = quiet
-        self.eval_every = eval_every
         self.n_jobs = n_jobs
 
     def save(self, filename):

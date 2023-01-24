@@ -1,24 +1,54 @@
-from . import Dataset
-from . import LocusRegressor
+from .corpus import Corpus, MixedCorpus, BaseCorpus
+from .model import LocusRegressor
 import argparse
+from argparse import ArgumentTypeError
 import os
+import numpy as np
+import sys
 
 def write_dataset(
         sep = '\t', 
         index = -1,*,
         fasta_file,
         genome_file,
+        regions_file,
         vcf_files,
-        bedgraph_matrix,
+        exposure_files,
+        correlates_files,
         save_name
         ):
 
-    dataset = Dataset(
-            fasta_file = fasta_file, 
-            genome_file = genome_file,
-            bedgraph_mtx = bedgraph_matrix,
-            vcf_files = vcf_files,
-           )
+    shared_args = dict(
+        fasta_file = fasta_file, 
+        genome_file = genome_file,
+        regions_file = regions_file,
+        vcf_files = vcf_files,
+        sep = sep, index = index,
+    )
+
+    if len(correlates_files) > 1 or len(exposure_files) > 1:
+        
+        assert len(correlates_files) == len(vcf_files),\
+            'If more than one correlates or exposures file is provided, then the number of correlates files must match the number of VCF files.\n'\
+            'E.g. each VCF file must be associated with a correlates file, in order.'
+
+        assert len(exposure_files) in [0,1, len(vcf_files)],\
+            'User must provide zero, one, or the number of exposure files which matches the number of VCF files.'
+
+
+        dataset = MixedCorpus(
+            **shared_args, 
+            exposure_files = exposure_files,
+            correlates_files = correlates_files,
+        )
+    
+    else:
+
+        dataset = Corpus(
+            **shared_args,
+            exposure_file = None if len(exposure_files) == 0 else exposure_files[0],
+            correlates_file = correlates_files[0]
+        )
 
     dataset.save(save_name)
     
@@ -40,23 +70,23 @@ def train_model(
     model = LocusRegressor(
         seed = seed, 
         eval_every = eval_every,
-        dtype = dtype,
+        dtype = np.float32,
         pi_prior = pi_prior,
         num_epochs = num_epochs, 
         difference_tol = difference_tol,
         estep_iterations = estep_iterations,
-        bound_tol = bounds_tol,
+        bound_tol = bound_tol,
         quiet = quiet,
         num_components = num_components
     )
     
-    dataset = Dataset.load(dataset_file)
+    dataset = BaseCorpus.load(dataset_file)
     
     model.fit(dataset)
     
     model.save(save_name)
     
-    
+
     
 def evaluate_model(*,
         model_file,
@@ -65,7 +95,7 @@ def evaluate_model(*,
     
     model = LocusRegressor.load(model_file)
     
-    dataset = Dataset.load(dataset_file)
+    dataset = BaseCorpus.load(dataset_file)
     
     print(
         model.score(dataset)
@@ -87,7 +117,7 @@ def file_exists(x):
     if os.path.exists(x):
         return x
     else:
-        raise ValueError('File {} does not exist.'.format(x))
+        raise ArgumentTypeError('File {} does not exist.'.format(x))
 
 def valid_path(x):
     if not os.access(x, os.W_OK):
@@ -97,7 +127,7 @@ def valid_path(x):
             os.unlink(x)
             return x
         except OSError as err:
-            raise ValueError('File {} cannot be written. Invalid path.'.format(x)) from err
+            raise ArgumentTypeError('File {} cannot be written. Invalid path.'.format(x)) from err
     
     return x
     
@@ -110,9 +140,39 @@ dataset_sub.add_argument('--index','-i',default = -1,type = int,
                                 'set this to "-1".')
 dataset_sub.add_argument('--fasta-file','-fa', type = file_exists, required = True)
 dataset_sub.add_argument('--genome-file','-g', type = file_exists, required = True)
-dataset_sub.add_argument('--bedgraph-matrix','-b', type = file_exists, required = True)
+dataset_sub.add_argument('--regions-file','-r', type = file_exists, required = True)
+dataset_sub.add_argument('--correlates-files', '-c', type = file_exists, nargs = '+', required=True)
+dataset_sub.add_argument('--exposures-files','-e', type = file_exists, nargs = '+', required=True)
+
 dataset_sub.add_argument('--save-name','-f', type = valid_path, required = True)
 dataset_sub.set_defaults(func = write_dataset)
+
+
+def posint(x):
+    x = int(x)
+
+    if x > 0:
+        return x
+    else:
+        raise ArgumentTypeError('Must be positive integer.')
+
+def posfloat(x):
+    x = float(x)
+    if x > 0:
+        return x
+    else:
+        raise ArgumentTypeError('Must be positive float.')
+
+trainer_sub = subparsers.add_parser('train')
+trainer_sub.add_argument('--num-components','-k', type = posint, required=True)
+trainer_sub.add_argument('--dataset', '-d', type = file_exists, required=True)
+trainer_sub.add_argument('--save-name', type = valid_path, required=True)
+
+trainer_sub.add_argument('--seed', type = posint, default=0)
+trainer_sub.add_argument('--pi-prior','-pi', type = posfloat, default = 1.)
+trainer_sub.add_argument('--num-epochs', type = posint)
+trainer_sub.add_argument('--bound-tol', '-tol', type = posfloat, default=1e-2)
+trainer_sub.set_defaults(func = train_model)
 
 
 def main():
