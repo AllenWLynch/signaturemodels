@@ -1,10 +1,20 @@
-from .corpus import Corpus, MixedCorpus, BaseCorpus
-from .model import LocusRegressor
+from locusregression import Corpus, MixedCorpus, load_corpus, LocusRegressor
 import argparse
 from argparse import ArgumentTypeError
 import os
 import numpy as np
 import sys
+import logging
+
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+
+def write_dataset(
+        sep = '\t', 
+        index = -1,*,
+        fasta_file,
+        ):
+    pass
 
 def write_dataset(
         sep = '\t', 
@@ -55,21 +65,19 @@ def write_dataset(
     
 def train_model(
         seed = 0, 
-        eval_every = 10,
         pi_prior = 5,
         num_epochs = 10000, 
         difference_tol = 1e-3,
         estep_iterations = 1000,
         bound_tol = 1e-2,
         quiet = True,*,
-        num_components,
-        dataset_file,
+        n_components,
+        dataset,
         save_name,
     ):
     
     model = LocusRegressor(
         seed = seed, 
-        eval_every = eval_every,
         dtype = np.float32,
         pi_prior = pi_prior,
         num_epochs = num_epochs, 
@@ -77,10 +85,10 @@ def train_model(
         estep_iterations = estep_iterations,
         bound_tol = bound_tol,
         quiet = quiet,
-        num_components = num_components
+        n_components = n_components
     )
     
-    dataset = BaseCorpus.load(dataset_file)
+    dataset = load_corpus(dataset)
     
     model.fit(dataset)
     
@@ -95,7 +103,7 @@ def evaluate_model(*,
     
     model = LocusRegressor.load(model_file)
     
-    dataset = BaseCorpus.load(dataset_file)
+    dataset = load_corpus(dataset_file)
     
     print(
         model.score(dataset)
@@ -133,7 +141,7 @@ def valid_path(x):
     
 
 dataset_sub = subparsers.add_parser('write-dataset')
-dataset_sub.add_argument('vcf-files', nargs = '+', type = file_exists)
+dataset_sub.add_argument('--vcf-files', '-vcf', nargs = '+', type = file_exists, required = True)
 dataset_sub.add_argument('--sep','-sep',default ='\t',type = str)
 dataset_sub.add_argument('--index','-i',default = -1,type = int, 
                          help = 'Position offset between VCF and Fasta/Bed files. If VCF files were written with 1-based indexing,'
@@ -142,7 +150,7 @@ dataset_sub.add_argument('--fasta-file','-fa', type = file_exists, required = Tr
 dataset_sub.add_argument('--genome-file','-g', type = file_exists, required = True)
 dataset_sub.add_argument('--regions-file','-r', type = file_exists, required = True)
 dataset_sub.add_argument('--correlates-files', '-c', type = file_exists, nargs = '+', required=True)
-dataset_sub.add_argument('--exposures-files','-e', type = file_exists, nargs = '+', required=True)
+dataset_sub.add_argument('--exposure-files','-e', type = file_exists, nargs = '+')
 
 dataset_sub.add_argument('--save-name','-f', type = valid_path, required = True)
 dataset_sub.set_defaults(func = write_dataset)
@@ -164,13 +172,13 @@ def posfloat(x):
         raise ArgumentTypeError('Must be positive float.')
 
 trainer_sub = subparsers.add_parser('train')
-trainer_sub.add_argument('--num-components','-k', type = posint, required=True)
+trainer_sub.add_argument('--n-components','-k', type = posint, required=True)
 trainer_sub.add_argument('--dataset', '-d', type = file_exists, required=True)
 trainer_sub.add_argument('--save-name', type = valid_path, required=True)
 
-trainer_sub.add_argument('--seed', type = posint, default=0)
+trainer_sub.add_argument('--seed', type = posint, default=1776)
 trainer_sub.add_argument('--pi-prior','-pi', type = posfloat, default = 1.)
-trainer_sub.add_argument('--num-epochs', type = posint)
+trainer_sub.add_argument('--num-epochs', type = posint, default = 300)
 trainer_sub.add_argument('--bound-tol', '-tol', type = posfloat, default=1e-2)
 trainer_sub.set_defaults(func = train_model)
 
@@ -187,6 +195,7 @@ def main():
     else:
         
         args = vars(args)
-        args.pop('func')
-        
-        args.func(**args)
+        func = args.pop('func')
+        args = {k.replace('-','_') : v for k,v in args.items()}
+
+        func(**args)

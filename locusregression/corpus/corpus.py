@@ -74,8 +74,6 @@ class Sample:
                         all_sbs += 1
                         if genome_object.contains_region(newregion):
                             sbs_mutations.append(newregion)
-                        
-        
         
         if all_sbs == 0:
             logger.warn('VCF file {} contained no valid SBS mutations.')
@@ -223,12 +221,14 @@ class Corpus(BaseCorpus):
 
             for lineno, txt in enumerate(f):
 
-                try:
-                    exposures.append( float(txt.strip()) )
-                except ValueError as err:
-                    raise ValueError('Record {} on line {} could not be converted to float dtype.'.format(
-                        txt, lineno,
-                    )) from err
+                if not txt[0] == '#':
+
+                    try:
+                        exposures.append( float(txt.strip()) )
+                    except ValueError as err:
+                        raise ValueError('Record {} on line {} could not be converted to float dtype.'.format(
+                            txt, lineno,
+                        )) from err
 
         assert len(exposures) == len(windows), 'The number of exposures provided in {} does not match the number of specified windows.\n'\
                 'Each window must have correlates provided.'
@@ -316,23 +316,31 @@ class Corpus(BaseCorpus):
         with open(regions_file, 'r') as f:
             
             for lineno, txt in enumerate(f):
+
+                if not txt[0] == '#':
                 
-                line = txt.strip().split(sep)
-                assert len(line) >= 3, 'Bed files have three or more columns: chr, start, end, ...'
+                    line = txt.strip().split(sep)
+                    assert len(line) >= 3, 'Bed files have three or more columns: chr, start, end, ...'
 
-                if len(line) > 4:
-                    logger.warn(
-                        'The only information ingested from the "regions_file" is the chr, start, end, and name of genomic bins. All other fields are ignored.'
-                    )
+                    if len(line) > 4:
+                        logger.warn(
+                            'The only information ingested from the "regions_file" is the chr, start, end, and name of genomic bins. All other fields are ignored.'
+                        )
 
-                try:
-                    
-                    windows.append(
-                        Region(*line[:3], annotation= {'name' : line[4]} if len(line) > 3 else None)
-                    )
-                    
-                except ValueError as err:
-                    raise ValueError('Could not ingest line {}: {}'.format(lineno, txt)) from err
+                    try:
+                        
+                        windows.append(
+                            Region(*line[:3], annotation= {'name' : line[4]} if len(line) > 3 else None)
+                        )
+                        
+                    except ValueError as err:
+                        raise ValueError('Could not ingest line {}: {}'.format(lineno, txt)) from err
+
+        last_w = windows[0]
+        for w in windows[1:]:
+            assert w.chromosome >= last_w.chromosome and w.start >= last_w.start,\
+                'Provided windows must be in sorted order! Run "sort -k1,1 -k2,2 <windows>" to sort them.\n'\
+                'IF YOU HAVE ALREADY MADE CORRELATES AND EXPOSURES TSVs, DO NOT FORGET TO REORDER THOSE SO THAT THEY MATCH WITH THE CORRECT WINDOWS!'
 
         windows = RegionSet(windows, genome_object)
 
@@ -366,7 +374,7 @@ class Corpus(BaseCorpus):
     @staticmethod
     def get_trinucleotide_distributions(window_set, fasta_object, n_jobs = 1):
     
-        return np.ones((len(window_set), 32))/32
+        #return np.ones((len(window_set), 32))/32
         
         def count_trinucs(chrom, start, end, fasta_object):
 
@@ -461,14 +469,17 @@ class Corpus(BaseCorpus):
 class MixedCorpus(Corpus):
     
     def __init__(self, 
-            sep = '\t', index = -1, n_jobs = 1,*,
+            sep = '\t', index = -1, n_jobs = 1,
+            exposure_files = None,*,
             correlates_files,
-            exposure_files,
             vcf_files,
             fasta_file,
             genome_file,
             regions_file,
         ):
+
+        if exposure_files is None:
+            exposure_files = []
 
         assert len(correlates_files) == len(vcf_files), 'User must provide a VCF file, correlates file, and exposure file for each sample.'
 
@@ -481,7 +492,7 @@ class MixedCorpus(Corpus):
             exposures = np.ones((len(vcf_files), len(self._windows)))
         elif len(exposure_files) == 1:
             exposures = np.repeat(
-                self.read_exposure_file(exposure_files[0], self._windows),
+                self.read_exposure_file(exposure_files[0], self._windows)[None,:],
                 len(vcf_files), axis = 0
             )
         else:
@@ -494,7 +505,6 @@ class MixedCorpus(Corpus):
         
         self._features, self._feature_names = self.collect_correlates(
             correlates_files, self._windows, 
-            required_columns=None, 
             sep = sep,
         )
 
@@ -538,16 +548,21 @@ class MixedCorpus(Corpus):
             new_correlates, columns = MixedCorpus.read_correlates(corrs, windows, 
                 required_columns=columns, sep = sep)
 
+            columns = columns[:-1]
             correlates.append(new_correlates)
 
-        return correlates
+        return correlates, columns + ['constant']
 
 
     def _get(self, index):
         return {
                 **self.samples[index], 
                 'window_size' : self.exposures[index], 
-                'X_matrix' : self.genome_features[index],
+                'X_matrix' : self.genome_features[index].T,
                 'trinuc_distributions' : self.trinucleotide_distributions,
                 'shared_correlates' : False,
             }
+
+    @property
+    def genome_features(self):
+        return self._features

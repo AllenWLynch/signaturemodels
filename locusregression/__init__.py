@@ -1,3 +1,5 @@
-from .corpus import Sample, Dataset
-from .model import LocusRegressor
+from .corpus import *
+from .model import *
 from .cli import main
+
+__version__ = '0.0.1a'

@@ -2,7 +2,7 @@
 import numpy as np
 from .base import dirichlet_bound, log_dirichlet_expectation
 from collections import defaultdict
-from ..corpus.featurization import COSMIC_SORT_ORDER, SIGNATURE_STRINGS, MUTATION_PALETTE
+from locusregression import COSMIC_SORT_ORDER, SIGNATURE_STRINGS, MUTATION_PALETTE
 from .optim import M_step_delta
 from .optim_beta import BetaOptimizer
 from .optim_lambda import LambdaOptimizer
