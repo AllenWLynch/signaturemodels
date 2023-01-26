@@ -410,7 +410,9 @@ class Corpus:
             for w in tqdm.tqdm(window_set, nrows=30, desc = 'Aggregating trinucleotide content')
         )
 
-        return np.array(trinuc_matrix)
+        trinuc_matrix = np.array(trinuc_matrix)
+
+        return trinuc_matrix/trinuc_matrix.sum(1, keepdims = True)
 
 
 class MixedCorpus(Corpus):
