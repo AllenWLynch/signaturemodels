@@ -31,6 +31,9 @@ def write_dataset(
         sep = sep, index = index,
     )
 
+    if exposure_files is None:
+        exposure_files = []
+
     if len(correlates_files) > 1 or len(exposure_files) > 1:
         
         assert len(correlates_files) == len(vcf_files),\
@@ -39,7 +42,6 @@ def write_dataset(
 
         assert len(exposure_files) in [0,1, len(vcf_files)],\
             'User must provide zero, one, or the number of exposure files which matches the number of VCF files.'
-
 
         dataset = MixedCorpus.create_corpus(
             **shared_args, 

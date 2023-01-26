@@ -30,6 +30,7 @@ Dependencies
 * scipy
 * matplotlib
 * scikit-learn
+* pyfaidx
 * tqdm
 
 
