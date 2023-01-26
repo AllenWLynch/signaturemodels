@@ -1,0 +1,39 @@
+
+LocusRegression
+***************
+
+A statistical model for jointly learning the genomic distribution and signatures of
+mutational processes.
+
+System requirements
+-------------------
+
+* Linux or Mac OS
+* Python >= 3.6
+
+Installation
+------------
+
+First, set up a conda environment in which we can install the model, then 
+install the package using pip:
+
+.. code-block :: bash
+
+    (base) $ conda create --name locusregression -c conda-forge python>=3.6 pip
+    (base) $ conda activate locusregression
+    (locusregression) $ pip install git+https://github.com/AllenWLynch/signaturemodels.git
+
+Dependencies
+------------
+
+* numpy
+* scipy
+* matplotlib
+* scikit-learn
+* tqdm
+
+
+Tutorial
+--------
+
+Please see the `LocusRegression tutorial <docs/tutorial.ipynb>`_.

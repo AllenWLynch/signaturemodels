@@ -1,7 +1,7 @@
 
-from pyfaidx import Fasta
 from .genome_tools import Region, RegionSet, Genome
 from .featurization import CONTEXT_IDX, MUTATIONS_IDX
+from pyfaidx import Fasta
 import numpy as np
 from collections import Counter
 import logging
@@ -10,6 +10,7 @@ from joblib import Parallel, delayed
 import pickle
 from scipy import sparse
 from sklearn.preprocessing import MinMaxScaler
+import types
 
 logger = logging.getLogger('Corpus')
 logger.setLevel(logging.INFO)
@@ -31,7 +32,7 @@ class SbsRegion(Region):
 complement = {'A' : 'T','T' : 'A','G' : 'C','C' : 'G'}
 
 def revcomp(seq):
-        return ''.join(reversed([complement[nuc] for nuc in seq]))
+    return ''.join(reversed([complement[nuc] for nuc in seq]))
 
 def convert_to_mutation(context, alt):
     
@@ -157,21 +158,25 @@ class Sample:
         )
 
 
-class BaseCorpus:
+
+def load_corpus(filename):
+    with open(filename, 'rb') as f:
+        return pickle.load(f)
+
+
+def save_corpus(corpus, filename):
+
+    if isinstance(corpus, types.GeneratorType):
+        corpus = list(corpus)
+
+    with open(filename, 'wb') as f:
+        pickle.dump(corpus, f)
+
+
+class Corpus:
 
     @classmethod
-    def load(cls, filename):
-        with open(filename, 'rb') as f:
-            return pickle.load(f)
-
-    def save(self, filename):
-        with open(filename, 'wb') as f:
-            pickle.dump([x for x in self], f)
-
-
-class Corpus(BaseCorpus):
-
-    def __init__(self, 
+    def create_corpus(cls, 
             sep = '\t', 
             index = -1, 
             n_jobs = 1,
@@ -185,32 +190,42 @@ class Corpus(BaseCorpus):
 
         genome = Genome.from_file(genome_file)
 
-        self._windows = self.read_windows(regions_file, genome, sep = sep)
+        windows = cls.read_windows(regions_file, genome, sep = sep)
 
-        self._exposures = self.calculate_exposures(
-            self._windows, 
-            self.read_exposure_file(exposure_file, self._windows, sep = sep) \
-                if not exposure_file is None else np.ones(len(self._windows))
+        exposures = cls.calculate_exposures(
+            windows, 
+            cls.read_exposure_file(exposure_file, windows, sep = sep) \
+                if not exposure_file is None else np.ones(len(windows))
         )
         
-        self._features, self._feature_names = self.read_correlates(
-            correlates_file, self._windows, required_columns=None)
+        features, feature_names = cls.read_correlates(
+            correlates_file, windows, required_columns=None)
 
 
         with Fasta(fasta_file) as fa:
 
-            self._samples = self.collect_vcfs(
+            samples = cls.collect_vcfs(
                 vcf_files = vcf_files, 
                 fasta_object = fa, 
                 genome_object = genome,
-                window_set = self._windows,
+                window_set = windows,
                 index = index,
                 sep = sep,
             )
 
-            self._trinuc_distributions = self.get_trinucleotide_distributions(
-                self._windows, fa, n_jobs=n_jobs
+            trinuc_distributions = cls.get_trinucleotide_distributions(
+                windows, fa, n_jobs=n_jobs
             )
+
+        for sample in samples:
+            yield {
+                **sample,
+                'shared_correlates' : True,
+                'window_size' : exposures, 
+                'X_matrix' : features.T,
+                'trinuc_distributions' : trinuc_distributions.T,
+                'feature_names' : feature_names
+            }
 
 
     @staticmethod
@@ -398,77 +413,10 @@ class Corpus(BaseCorpus):
         return np.array(trinuc_matrix)
 
 
-    @property
-    def window_sizes(self):
-        return self._exposures
-
-    @property
-    def exposures(self):
-        return self._exposures
-
-    @property
-    def samples(self):
-        return self._samples
-
-    @property
-    def windows(self):
-        return self._windows
-
-    @property
-    def genome_features(self):
-        return self._features.T
-
-    @property
-    def feature_names(self):
-        return self._feature_names
-
-    @property
-    def trinucleotide_distributions(self):
-        return self._trinuc_distributions.T
-
-    @property
-    def mutations(self):
-        return [sample['mutation'] for sample in self._samples]
-    
-    @property
-    def contexts(self):
-        return [sample['context'] for sample in self._samples]
-
-    @property
-    def loci(self):
-        return [sample['locus'] for sample in self._samples]
-
-    @property
-    def counts(self):
-        return [sample['count'] for sample in self._samples]
-
-    def _get(self, index):
-        return {
-                **self.samples[index], 
-                'shared_correlates' : True,
-                'window_size' : self.exposures, 
-                'X_matrix' : self.genome_features,
-                'trinuc_distributions' : self.trinucleotide_distributions,
-            }
-
-    def __iter__(self):
-        for i in range(len(self)):
-            yield self._get(i)
-
-    def __len__(self):
-        return len(self.samples)
-
-    def __getitem__(self, index):
-        if isinstance(index, (list, np.ndarray)):
-            return [self._get(g) for g in index]
-
-        else:
-            return self._get(index)
-
-
 class MixedCorpus(Corpus):
     
-    def __init__(self, 
+    @classmethod
+    def create_corpus(cls, 
             sep = '\t', index = -1, n_jobs = 1,
             exposure_files = None,*,
             correlates_files,
@@ -486,42 +434,53 @@ class MixedCorpus(Corpus):
         assert len(exposure_files) in [0,1,len(vcf_files)]
 
         genome = Genome.from_file(genome_file)
-        self._windows = self.read_windows(regions_file, genome, sep = sep)
+        windows = cls.read_windows(regions_file, genome, sep = sep)
 
         if len(exposure_files) == 0:
-            exposures = np.ones((len(vcf_files), len(self._windows)))
+            exposures = np.ones((len(vcf_files), len(windows)))
         elif len(exposure_files) == 1:
             exposures = np.repeat(
-                self.read_exposure_file(exposure_files[0], self._windows)[None,:],
+                cls.read_exposure_file(exposure_files[0], windows)[None,:],
                 len(vcf_files), axis = 0
             )
         else:
-            exposures = self.collect_exposures(exposure_files, self._windows)
+            exposures = cls.collect_exposures(exposure_files, windows)
 
 
-        self._exposures = self.calculate_exposures(
-            self._windows, exposures
+        exposures = cls.calculate_exposures(
+            windows, exposures
         )
         
-        self._features, self._feature_names = self.collect_correlates(
-            correlates_files, self._windows, 
+        features, feature_names = cls.collect_correlates(
+            correlates_files, windows, 
             sep = sep,
         )
 
         with Fasta(fasta_file) as fa:
 
-            self._samples = self.collect_vcfs(
+            samples = cls.collect_vcfs(
                 vcf_files=vcf_files, 
                 fasta_object=fa, 
                 genome_object=genome,
-                window_set= self._windows,
+                window_set= windows,
                 index = index,
                 sep = sep,
             )
 
-            self._trinuc_distributions = self.get_trinucleotide_distributions(
-                self._windows, fa, n_jobs=n_jobs
+            trinuc_distributions = cls.get_trinucleotide_distributions(
+                windows, fa, n_jobs=n_jobs
             )
+
+        for sample, exposure, X_matrix, trinuc in zip(
+            samples, exposures, features, trinuc_distributions):
+            yield {
+                **sample, 
+                'window_size' : exposure, 
+                'X_matrix' : X_matrix.T,
+                'trinuc_distributions' : trinuc.T,
+                'shared_correlates' : False,
+                'feature_names' : feature_names,
+            }
 
 
     @staticmethod
@@ -552,17 +511,3 @@ class MixedCorpus(Corpus):
             correlates.append(new_correlates)
 
         return correlates, columns + ['constant']
-
-
-    def _get(self, index):
-        return {
-                **self.samples[index], 
-                'window_size' : self.exposures[index], 
-                'X_matrix' : self.genome_features[index].T,
-                'trinuc_distributions' : self.trinucleotide_distributions,
-                'shared_correlates' : False,
-            }
-
-    @property
-    def genome_features(self):
-        return self._features

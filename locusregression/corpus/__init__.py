@@ -1,6 +1,2 @@
-from .corpus import Sample, BaseCorpus, Corpus, MixedCorpus
+from .corpus import Corpus, MixedCorpus, load_corpus, save_corpus
 from .featurization import *
-from .simulation import simulate_corpus
-
-def load_corpus(corpus):
-    return BaseCorpus.load(corpus)

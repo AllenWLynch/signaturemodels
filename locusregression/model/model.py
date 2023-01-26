@@ -2,11 +2,12 @@
 import numpy as np
 from .base import dirichlet_bound, log_dirichlet_expectation
 from collections import defaultdict
-from locusregression import COSMIC_SORT_ORDER, SIGNATURE_STRINGS, MUTATION_PALETTE
+from locusregression.corpus import COSMIC_SORT_ORDER, SIGNATURE_STRINGS, MUTATION_PALETTE
 from .optim import M_step_delta
 from .optim_beta import BetaOptimizer
 from .optim_lambda import LambdaOptimizer
 import tqdm
+import time
 
 from sklearn.base import BaseEstimator
 import logging
@@ -15,6 +16,7 @@ logger.setLevel(logging.INFO)
 import matplotlib.pyplot as plt
 from joblib import Parallel, delayed
 import pickle
+from functools import partial
 
 class LocusRegressor(BaseEstimator):
     
@@ -26,18 +28,32 @@ class LocusRegressor(BaseEstimator):
             return pickle.load(f)
     
     def __init__(self, 
+        n_components = 10,
         seed = 0, 
         dtype = np.float32,
-        pi_prior = 5,
+        pi_prior = 1.,
         num_epochs = 100, 
         difference_tol = 1e-3,
         estep_iterations = 1000,
         bound_tol = 1e-2,
-        n_components = 10,
         quiet = True,
         n_jobs = 1
     ):
-        
+        '''
+        Params
+        ------
+        n_components : int > 0, defuault = 10
+            Number of signatures to find in corpus
+        pi_prior : float > 0, default = 5.,
+            Dirichlet prior parameter - commonly denoted *alpha*.
+        n_jobs : int > 0, default = 1
+            Number of concurrent jobs to run for E-step calculations.
+
+        Returns
+        -------
+        LocusRegressor : instance of model
+
+        '''
         self.seed = seed
         self.difference_tol = difference_tol
         self.estep_iterations = estep_iterations
@@ -48,6 +64,7 @@ class LocusRegressor(BaseEstimator):
         self.n_components = n_components
         self.quiet = quiet
         self.n_jobs = n_jobs
+
 
     def save(self, filename):
         with open(filename, 'wb') as f:
@@ -97,6 +114,7 @@ class LocusRegressor(BaseEstimator):
             context,
             locus,
             count,
+            feature_names,
             trinuc_distributions,
             weighted_phi,
             logweight_matrix,
@@ -172,7 +190,7 @@ class LocusRegressor(BaseEstimator):
             try:
                 return self._cached_correlates
             except AttributeError:
-                logger.info('Recalculating locus distribution.')
+                logger.debug('Recalculating locus distribution.')
                 pass
         
         locus_logmu = self.beta_mu.dot(X_matrix) # n_topics, n_loci
@@ -205,6 +223,7 @@ class LocusRegressor(BaseEstimator):
         context,
         locus,
         count,
+        feature_names,
         trinuc_distributions,
         window_size
     ):
@@ -312,6 +331,7 @@ class LocusRegressor(BaseEstimator):
             else:
                 beta_sstats.append(sample_beta_sstats)
 
+        self._clear_locus_cache()
 
         return np.array(gammas), rho_sstats, delta_sstats, beta_sstats, entropy_sstats, weighted_phis
         
@@ -320,10 +340,22 @@ class LocusRegressor(BaseEstimator):
     def _fit(self,corpus):
         
         self.n_locus_features, self.n_loci = corpus[0]['X_matrix'].shape
+        
         self.trained = False
-        self.shared_correlates = corpus[0]['shared_correlates']
+        self.n_samples = len(corpus)
 
-        logger.info('Fitting model using {} cores.'.format(self.n_jobs))
+        self.shared_correlates = corpus[0]['shared_correlates']
+        self.feature_names = corpus[0]['feature_names']
+        
+        self.genome_trinuc_distribution = np.sum(
+            corpus[0]['trinuc_distributions']*corpus[0]['window_size'],
+            -1, keepdims= True
+        )
+
+        assert self.n_jobs > 0
+
+        if self.n_jobs > 1:
+            logger.warn('Fitting model using {} cores.'.format(self.n_jobs))
         
         if self.shared_correlates:
             logger.info('Sharing genomic correlates between samples for faster inference.')
@@ -338,9 +370,11 @@ class LocusRegressor(BaseEstimator):
         self.bounds = []
 
         try:
-            for epoch in range(self.num_epochs):
+            for epoch in range(1,self.num_epochs+1):
+
+                start_time = time.time()
                 
-                logger.info(' E-step ...')
+                logger.debug(' E-step ...')
                 gamma, rho_sstats, delta_sstats, beta_sstats, \
                     entropy_sstats, weighted_phis = self._inference(
                         shared_correlates = self.shared_correlates,
@@ -348,7 +382,7 @@ class LocusRegressor(BaseEstimator):
                         gamma = gamma,
                     )
                 
-                logger.info(' M-step ...')
+                logger.debug(' M-step ...')
 
                 for k in range(self.n_components):   
                     
@@ -385,8 +419,7 @@ class LocusRegressor(BaseEstimator):
                 # update rho distribution
                 self.rho = rho_sstats + 1.
 
-                logger.info("Estimating evidence lower bound ...")
-                self._clear_locus_cache()
+                logger.debug("Estimating evidence lower bound ...")
                 
                 self.bounds.append(
                     self._bound(
@@ -397,14 +430,18 @@ class LocusRegressor(BaseEstimator):
                     )
                 )
 
-                logger.info(' Bound: {:.2f}'.format(self.bounds[-1]))
+                elapsed_time = time.time() - start_time
+                improvement = self.bounds[-1] - (self.bounds[-2] if epoch > 1 else self.bounds[-1])
+
+                logger.info('  Epoch {:<3} complete. |  Bound: {:<10.2f}, improvement: {:<10.2f}  |  Elapsed time: {:<3.1f} seconds.'\
+                        .format(epoch, self.bounds[-1], improvement, elapsed_time))
 
                 if epoch > 1:
                     if (self.bounds[-1] - self.bounds[-2]) < self.bound_tol:
                         break
 
             else:
-                logger.warning('Model did not converge, consider increasing "estep_iterations" or "num_epochs" parameters.')
+                logger.info('Model did not converge, consider increasing "estep_iterations" or "num_epochs" parameters.')
 
         except KeyboardInterrupt:
             pass
@@ -413,11 +450,42 @@ class LocusRegressor(BaseEstimator):
 
         return self
 
-    
+
     def fit(self, corpus):
+        '''
+        Learn parameters of model from corpus.
+
+        Parameters
+        ----------
+        corpus : locusregression.Corpus, list of dicts
+            Pre-compiled corpus loaded into memory
+
+        Returns
+        -------
+        Model with inferred parameters.
+
+        '''
         return self._fit(corpus)
 
+
     def predict(self,corpus):
+        '''
+        For each sample in corpus, predicts the expectation of the signature compositions.
+
+        Parameters
+        ----------
+        corpus : locusregression.Corpus, list of dicts
+            Pre-compiled corpus loaded into memory
+
+        Returns
+        -------
+        gamma : np.ndarray of shape (n_samples, n_components)
+            Compositions over signatures for each sample
+
+        '''
+
+        if not self.trained:
+            logger.warn('This model was not trained to completion, results may be innaccurate')
 
         n_samples = len(corpus)
         
@@ -433,7 +501,24 @@ class LocusRegressor(BaseEstimator):
 
     
     def score(self, corpus):
+        '''
+        Computes the evidence lower bound score for the corpus.
 
+        Parameters
+        ----------
+        corpus : locusregression.Corpus, list of dicts
+            Pre-compiled corpus loaded into memory
+
+        Returns
+        -------
+        elbo : float
+            Evidence lower bound objective score, higher is better.
+
+        '''
+
+        if not self.trained:
+            logger.warn('This model was not trained to completion, results may be innaccurate')
+            
         n_samples = len(corpus)
         
         gamma, _,_,_, entropy_sstats, weighted_phis = \
@@ -447,13 +532,152 @@ class LocusRegressor(BaseEstimator):
                 corpus = corpus, 
                 gamma = gamma,
                 entropy_sstats = entropy_sstats,
-                weighted_phis = weighted_phis, 
+                weighted_phis = weighted_phis,
+                likelihood_scale=self.n_samples/n_samples
             )
+
+    def get_phi_locus_distribution(self, corpus):
+        '''
+        Each mutation in the corpus is associated with a posterior distribution over components -
+        what is the probability that that mutation was generated by each component of the model.
+
+        For each locus/region, this function return the number of mutations in that locus weighed
+        by the probability that those mutations were generated by each component.
+
+        This basically explains, for component k, where are ther mutations that it generated?
+
+        Parameters
+        ----------
+        corpus : locusregression.Corpus, list of dicts
+            Pre-compiled corpus loaded into memory
+
+        Returns
+        -------
+        np.ndarray of shape (n_components, n_loci), Where the entry for the k^th component and the l^th locus is given by
+        the sum over all mutations which fell in that locus times the probability that mutation was generated by the kth component.
+        
+        '''
+
+        assert corpus[0]['shared_correlates'], 'This function is only available for corpuses with shared genomic correlates.'
+
+        n_samples = len(corpus)
+
+        _, _, _, beta_sstats, _, _ = self._inference(
+                gamma = self._init_doc_variables(n_samples),
+                corpus = corpus,
+                shared_correlates = self.shared_correlates,
+            )
+
+        X_matrix = corpus[0]['X_matrix']
+
+        phis = np.zeros((self.n_components, self.n_loci))
+        for l, ss in beta_sstats.items():
+            phis[:,l] = ss
+
+        return phis
+
+
+    def regress_phi(self, corpus):
+        '''
+        Each mutation is associated with a posterior distribution over components and some 
+        correlates which describe its genomic locus. 
+
+        This function returns a method to plot the association between components and correlates.
+        '''
+
+        def plot_phi_regression(
+            ax = None, figsize = None,*,
+            feature_name, component,
+            phis, X_matrix, feature_names,
+            **plot_kwargs
+        ):
+
+            if ax is None:
+                fig, ax = plt.subplots(1,1,figsize=figsize)
+
+            assert feature_name in feature_names, f'Feature name {feature_name} is not in this corpus.'
+
+            correlate_idx = dict(zip(feature_names, range(len(feature_names))))[feature_name]
+            
+            ax.scatter(
+                X_matrix[correlate_idx, :],
+                phis[component, :],
+                **plot_kwargs
+            )
+
+            ax.set(ylabel = 'Log Phi', xlabel = 'Correlate: ' + feature_name,
+                yscale = 'log')
+
+            for s in ['right','top']:
+                ax.spines[s].set_visible(False)
+
+            ax.axis('equal')
+
+            return ax
+
+        locus_phis = self._get_phi_locus_distribution(corpus)
+        
+        X_matrix = corpus[0]['X_matrix']
+
+        return partial(plot_phi_regression, 
+                    phis = locus_phis, 
+                    X_matrix = X_matrix,
+                    feature_names = corpus[0]['feature_names']
+                )
+
+
+    def get_locus_distribution(self, sample, n_samples = 100):
+        '''
+        For a sample, calculate the psi matrix - For each component, the distribution over loci.
+
+        Parameters
+        ----------
+        sample : dict, entry from a corpus
+            A sample from a corpus
+
+        Returns
+        -------
+        np.ndarray of shape (n_components, n_loci), where the entry for the k^th component at the l^th locus
+            is the probability of sampling that locus given a mutation was generated by component k.
+
+        '''
+
+        X_matrix = corpus[0]['X_matrix']
+        
+        posterior_samples = np.random.randn(self.n_components, self.n_locus_features, n_samples)*self.beta_nu[:,:,None]\
+                 + self.beta_mu[:,:,None]
+
+        psi_unnormalized = np.exp(
+            np.transpose(posterior_samples, [2,0,1]).dot(X_matrix) # n_samples, K, F x F,L -> n_samples,K,L
+        )
+
+        expected_psi = np.mean(psi_unnormalized/psi_unnormalized.sum(-1, keepdims = True), axis = 0) # K,L
+
+        return expected_psi
+        
 
 
     def signature(self, component, 
-            monte_carlo_draws = 10000,
+            monte_carlo_draws = 1000,
             return_error = False):
+        '''
+        Returns the 96-dimensional channel for a component.
+
+        Parameters
+        ----------
+        component : int > 0
+            Which signature to return
+        monte_carlo_draws : int > 0, default = 1000
+            How many monte_carlo draws to use to approximate the posterior distribution of the signature.
+        return_error : boolean, default = False
+            Return 95% confidence interval/highest-density interval on posterior.
+        
+        Returns
+        -------
+        signature : np.ndarray of shape (96,)
+        errors : np.ndarray of shape(96,)
+        
+        '''
 
         assert isinstance(component, int) and 0 <= component < self.n_components
         
@@ -484,6 +708,9 @@ class LocusRegressor(BaseEstimator):
 
 
     def plot_signature(self, component, ax = None, figsize = (6,1.25)):
+        '''
+        Plot signature.
+        '''
 
         mean, error = self.signature(component, return_error=True)
         
@@ -512,11 +739,14 @@ class LocusRegressor(BaseEstimator):
         return ax
 
 
-    def plot_coefficients(self, component, feature_names, 
-        ax = None, figsize = (3,5), error_std_width = 3,
+    def plot_coefficients(self, component, 
+        ax = None, figsize = (3,5), 
+        error_std_width = 3,
         dotsize = 5):
+        '''
+        Plot regression coefficients with 99% confidence interval.
+        '''
 
-        assert len(feature_names) == self.n_locus_features
         assert isinstance(component, int) and 0 <= component < self.n_components
 
         if ax is None:
@@ -526,7 +756,7 @@ class LocusRegressor(BaseEstimator):
 
         ax.scatter(
             x = mu,
-            y=feature_names, 
+            y= self.feature_names, 
             marker='s', s=dotsize, 
             color='black')
 
@@ -537,7 +767,7 @@ class LocusRegressor(BaseEstimator):
         ax.hlines(
             xmax= std_width*nu + mu,
             xmin = -std_width*nu + mu,
-            y = feature_names, 
+            y = self.feature_names, 
             color = 'black'
             )
 

@@ -1,1 +1,1 @@
-from .simulation import simulate_corpus
+from .simulation import SimulatedCorpus
