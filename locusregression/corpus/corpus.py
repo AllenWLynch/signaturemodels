@@ -149,7 +149,7 @@ class Sample:
         unmatched_mask = locus_indices == -1
         
         if unmatched_mask.sum() > 0:
-            logger.warn('{} mutations did not intersect with any provided windows, filtering these out.')
+            logger.warn(f'{int(unmatched_mask.sum())} mutations did not intersect with any provided windows, filtering these out.')
 
         return Sample._aggregate_counts(
             np.array(mutation_indices)[~unmatched_mask], 
@@ -410,7 +410,7 @@ class Corpus:
             for w in tqdm.tqdm(window_set, nrows=30, desc = 'Aggregating trinucleotide content')
         )
 
-        trinuc_matrix = np.array(trinuc_matrix)
+        trinuc_matrix = np.array(trinuc_matrix) + 1 # add a pseudocount
 
         return trinuc_matrix/trinuc_matrix.sum(1, keepdims = True)
 
