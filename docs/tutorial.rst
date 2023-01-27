@@ -90,12 +90,11 @@ to aggregate and map that track data to our windows. We can do the same for the 
         bedtools map -a tutorial/regions.bed -b - -o sum -sorted -null 0.0 | \
         cut -f4 >> tutorial/h3k27ac.tsv
 
-.. note::
 
-    Again, it is very important to keep these data sorted and normalized. Above, 
-    I include the `-sorted` flag in `bedtools map` to ensure ensure this. Also, I
-    set `-null 0.0` so that winows which are not included in the track are still
-    assigned a numerical value.
+|    Again, it is very important to keep these data sorted and normalized. Above, 
+|    I include the `-sorted` flag in `bedtools map` to ensure ensure this. Also, I
+|    set `-null 0.0` so that winows which are not included in the track are still
+|    assigned a numerical value.
     
 
 Finally, we can merge all of these correlates into one file:
@@ -128,8 +127,6 @@ Provide exposures as a single column of positive values (a header is optional an
 
 The exposure file is the only optional input.
 
-.. note:: 
-
     Here, I model genomes from esophogeal cells, which I may assume all have similar genomic features/expression/etc. 
     Thus, I use only one "correlates" file which speeds up model calculation. If you wish to model a heterogeneous 
     collection of cells -biologically or technically- you can provide a sample-specific correlate and exposure file
@@ -154,7 +151,7 @@ the data which is read by the LocusRegression model. For a list of VCF files sto
 This will save the corpus to `tutorial/corpus.pkl`.
 
 
-2. How many processes?
+1. How many processes?
 ----------------------
 
 Choosing the number of mixture components to describe a process is a perenial problem in topic modeling,
