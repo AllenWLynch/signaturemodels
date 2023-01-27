@@ -90,11 +90,13 @@ to aggregate and map that track data to our windows. We can do the same for the 
         bedtools map -a tutorial/regions.bed -b - -o sum -sorted -null 0.0 | \
         cut -f4 >> tutorial/h3k27ac.tsv
 
+..
 
-|    Again, it is very important to keep these data sorted and normalized. Above, 
-|    I include the `-sorted` flag in `bedtools map` to ensure ensure this. Also, I
-|    set `-null 0.0` so that winows which are not included in the track are still
-|    assigned a numerical value.
+    **Note**
+    Again, it is very important to keep these data sorted and normalized. Above, 
+    I include the `-sorted` flag in `bedtools map` to ensure ensure this. Also, I
+    set `-null 0.0` so that winows which are not included in the track are still
+    assigned a numerical value.
     
 
 Finally, we can merge all of these correlates into one file:
@@ -127,6 +129,7 @@ Provide exposures as a single column of positive values (a header is optional an
 
 The exposure file is the only optional input.
 
+    **Note**
     Here, I model genomes from esophogeal cells, which I may assume all have similar genomic features/expression/etc. 
     Thus, I use only one "correlates" file which speeds up model calculation. If you wish to model a heterogeneous 
     collection of cells -biologically or technically- you can provide a sample-specific correlate and exposure file
