@@ -29,7 +29,7 @@ class LocusRegressor(BaseEstimator):
     
     def __init__(self, 
         n_components = 10,
-        seed = 0, 
+        seed = 2, 
         dtype = np.float32,
         pi_prior = 1.,
         num_epochs = 100, 
@@ -37,7 +37,11 @@ class LocusRegressor(BaseEstimator):
         estep_iterations = 1000,
         bound_tol = 1e-2,
         quiet = True,
-        n_jobs = 1
+        n_jobs = 1,
+        locus_subsample = 1,
+        kappa = 0.5,
+        tau = 1,
+        eval_every = 10,
     ):
         '''
         Params
@@ -64,6 +68,10 @@ class LocusRegressor(BaseEstimator):
         self.n_components = n_components
         self.quiet = quiet
         self.n_jobs = n_jobs
+        self.locus_subsample = locus_subsample
+        self.kappa = kappa
+        self.eval_every = eval_every
+        self.tau = tau
 
 
     def save(self, filename):
@@ -116,17 +124,35 @@ class LocusRegressor(BaseEstimator):
             count,
             feature_names,
             trinuc_distributions,
-            weighted_phi,
             logweight_matrix,
+            Elog_gamma,
         ):
-
 
         locus_logmu, _, log_normalizer = self._get_locus_distribution(
                 X_matrix=X_matrix, 
                 window_size=window_size,
                 shared_correlates=shared_correlates
             )
+
+        def _get_phis(Elog_gamma):
+        
+            flattend_phi = trinuc_distributions[context,locus]*\
+                        self.phi_matrix_prebuild[:,context,mutation]*\
+                        1/np.dot(
+                                self.delta/self.delta.sum(axis = 1, keepdims = True), 
+                                trinuc_distributions[:, locus]
+                            )*\
+                        window_size[:, locus] * np.exp( locus_logmu[:, locus] - log_normalizer )
             
+            count_g = np.array(count)[:,None]
+            
+            exp_Elog_gamma = np.exp(Elog_gamma[:,None])
+            phi_matrix = np.outer(exp_Elog_gamma, 1/np.dot(flattend_phi.T, exp_Elog_gamma))*flattend_phi
+            weighted_phi = phi_matrix * count_g.T
+
+            return phi_matrix, weighted_phi
+
+
         flattened_logweight = logweight_matrix[:, context, mutation] + trinuc_distributions[context, locus]
         
         flattened_logweight -= np.log(np.dot(
@@ -135,33 +161,37 @@ class LocusRegressor(BaseEstimator):
             ))
         
         flattened_logweight += np.log(window_size[:, locus]) + locus_logmu[:, locus] - log_normalizer
+
+        phi_matrix, weighted_phi = _get_phis(Elog_gamma)
+
+        entropy_sstats = -np.sum(weighted_phi * np.where(phi_matrix > 0, np.log(phi_matrix), 0.))
         
-        return np.sum(weighted_phi*flattened_logweight)
-        
+        return np.sum(weighted_phi*flattened_logweight) + entropy_sstats
+
 
 
     def _bound(self,*,
             corpus, 
             gamma,
-            entropy_sstats,
-            weighted_phis, 
-            likelihood_scale = 1.):
+            likelihood_scale = 1.
+        ):
         
-        Elog_gamma = log_dirichlet_expectation(gamma)
         Elog_delta = log_dirichlet_expectation(self.delta)
         Elog_rho = log_dirichlet_expectation(self.rho)
+        Elog_gamma = log_dirichlet_expectation(gamma)
 
         elbo = 0
+
+        self._prebuild_phi_matrix()
         
-        for Elog_gamma_g, sample, weighted_phi in zip(Elog_gamma, corpus, weighted_phis):
-            
+        for Elog_gamma_g, sample in zip(Elog_gamma, corpus):
+
             elbo += self._sample_bound(
-                weighted_phi = weighted_phi,
+                Elog_gamma = Elog_gamma_g,
                 logweight_matrix = Elog_gamma_g[:,None, None] + Elog_delta[:,:,None] + Elog_rho,
                 **sample,
             )
         
-        elbo += entropy_sstats
         elbo *= likelihood_scale
         
         elbo += np.sum(-1/2 * (np.square(self.beta_mu) + np.square(self.beta_nu)))
@@ -215,7 +245,9 @@ class LocusRegressor(BaseEstimator):
             delattr(self, '_cached_correlates')
 
     
+
     def _sample_inference(self,
+        likelihood_scale = 1.,*,
         shared_correlates,
         gamma,
         X_matrix,
@@ -257,17 +289,17 @@ class LocusRegressor(BaseEstimator):
                     exp_Elog_gamma*np.dot(flattend_phi, count_g/np.dot(flattend_phi.T, exp_Elog_gamma))
                 ).astype(self.dtype)
             
-            gamma = self.alpha + gamma_sstats
+            gamma = self.alpha + gamma_sstats*likelihood_scale
             
             if np.abs(gamma - old_gamma).mean() < self.difference_tol:
                 logger.debug('E-step converged after {} iterations'.format(i))
                 break
         else:
-            logger.info('E-step did not converge. If this happens frequently, consider increasing "estep_iterations".')
+            logger.debug('E-step did not converge. If this happens frequently, consider increasing "estep_iterations".')
 
-        exp_Elog_gamma = np.exp(log_dirichlet_expectation(old_gamma)[:,None])
 
-        phi_matrix = np.outer(exp_Elog_gamma, 1/np.dot(flattend_phi.T, exp_Elog_gamma))*flattend_phi
+        exp_Elog_gamma = np.exp(log_dirichlet_expectation(gamma)[:,None])
+        phi_matrix = np.outer(exp_Elog_gamma, 1/np.dot(flattend_phi.T, exp_Elog_gamma))*flattend_phi*likelihood_scale
         weighted_phi = phi_matrix * count_g.T
 
         for _mutation, _context, _locus, ss in zip(mutation, context, locus, weighted_phi.T):
@@ -283,7 +315,8 @@ class LocusRegressor(BaseEstimator):
                 beta_sstats, entropy_sstats, weighted_phi
 
     
-    def _inference(self,*,
+    def _inference(self,
+            likelihood_scale = 1.,*,
             shared_correlates,
             corpus,
             gamma,
@@ -292,9 +325,11 @@ class LocusRegressor(BaseEstimator):
         self._prebuild_phi_matrix()
 
         if shared_correlates:
+            first_off = next(iter(corpus))
+
             self._get_locus_distribution(
-                X_matrix=corpus[0]['X_matrix'], 
-                window_size=corpus[0]['window_size'],
+                X_matrix=first_off['X_matrix'], 
+                window_size=first_off['window_size'],
                 shared_correlates=shared_correlates
             )
 
@@ -311,10 +346,8 @@ class LocusRegressor(BaseEstimator):
         for sample_gamma, sample_rho_sstats, sample_delta_sstats, sample_beta_sstats, \
             sample_entropy_sstats, sample_weighted_phi in \
             Parallel(n_jobs = self.n_jobs)(
-                delayed(self._sample_inference)(**sample, gamma = gamma_g)
-                for gamma_g, sample in (zip(gamma, corpus) if self.quiet \
-                    else tqdm.tqdm(zip(gamma, corpus), desc = 'Inferring local RVs', total = len(corpus))
-                )
+                delayed(self._sample_inference)(**sample, gamma = gamma_g, likelihood_scale = likelihood_scale)
+                for gamma_g, sample in zip(gamma, corpus)
             ):
 
             gammas.append(sample_gamma)
@@ -336,9 +369,81 @@ class LocusRegressor(BaseEstimator):
         return np.array(gammas), rho_sstats, delta_sstats, beta_sstats, entropy_sstats, weighted_phis
         
     
+    def _get_subsample_func(self, corpus):
+        
+        logger.debug('Subsampling corpus.')
+
+        n_subsample_loci = int(self.n_loci * self.locus_subsample)
+        sampled_loci = self.random_state.choice(self.n_loci, size = n_subsample_loci)
+        
+        # uniformly sample loci
+        subsample_lookup = dict(zip(sampled_loci, np.arange(n_subsample_loci).astype(int))) 
+
+        shared = False
+        if self.shared_correlates:
+            first_off = next(iter(corpus))
+
+            kwargs = {
+                'window_size' : first_off['window_size'][:,sampled_loci], 
+                'X_matrix' : first_off['X_matrix'][:,sampled_loci],
+                'trinuc_distributions' : first_off['trinuc_distributions'][:,sampled_loci],
+                'shared_correlates' : first_off['shared_correlates'],
+                'feature_names' : first_off['feature_names'],
+            }
+
+            shared = True
+        
+        
+        class subsample:
+            
+
+            def __iter__(self):
+
+                for sample in corpus:
+                    
+                    mask = np.array([x in subsample_lookup for x in sample['locus']])
+
+                    new_sample = {
+                        'mutation' : sample['mutation'][mask],
+                        'context' : sample['context'][mask],
+                        'count' : sample['count'][mask],
+                        'locus' : np.array([subsample_lookup[locus] for locus in sample['locus'][mask]]).astype(int), 
+                        }
+                    
+                    if shared:
+                        yield {
+                            **new_sample, **kwargs
+                        }
+
+
+                    '''new_sample = sample.copy()
+                    new_sample.update({    
+                            'mutation' : sample['mutation'][mask],
+                            'context' : sample['context'][mask],
+                            'count' : sample['count'][mask],
+                            'locus' : sample['locus'][mask],
+                        })
+
+                    yield new_sample'''
+
+        return subsample()
+
+
+    @staticmethod
+    def svi_update(old, new, learning_rate):
+        return (1-learning_rate)*old + learning_rate*new
+
 
     def _fit(self,corpus):
-        
+
+        if self.locus_subsample == 1:
+            learning_rate = 1
+            svi_inference = False
+        else:
+            svi_inference = True
+
+        likelihood_scale = 1/self.locus_subsample
+            
         self.n_locus_features, self.n_loci = corpus[0]['X_matrix'].shape
         
         self.trained = False
@@ -373,23 +478,39 @@ class LocusRegressor(BaseEstimator):
             for epoch in range(1,self.num_epochs+1):
 
                 start_time = time.time()
+
+                if svi_inference:
+                    self._clear_locus_cache()
+                    inner_corpus = self._get_subsample_func(corpus)
+                    learning_rate = (self.tau + epoch)**(-self.kappa)
+                else:
+                    inner_corpus = corpus
+
                 
                 logger.debug(' E-step ...')
-                gamma, rho_sstats, delta_sstats, beta_sstats, \
-                    entropy_sstats, weighted_phis = self._inference(
+                new_gamma, rho_sstats, delta_sstats, beta_sstats, \
+                    _, _ = self._inference(
                         shared_correlates = self.shared_correlates,
-                        corpus= corpus,
+                        corpus= inner_corpus,
                         gamma = gamma,
+                        likelihood_scale = likelihood_scale,
                     )
+
+                gamma = self.svi_update(gamma, new_gamma, learning_rate)
                 
                 logger.debug(' M-step ...')
 
+                new_beta_mu, new_beta_nu, new_delta = \
+                    np.zeros_like(self.beta_mu), np.zeros_like(self.beta_nu), np.zeros_like(self.delta)
+
                 for k in range(self.n_components):   
+
+                    first_off = next(iter(inner_corpus))
                     
                     if self.shared_correlates:
-                        window_sizes = [corpus[0]['window_size']]
-                        X_matrices = [corpus[0]['X_matrix']]
-                        trinuc = [corpus[0]['trinuc_distributions']]
+                        window_sizes = [first_off['window_size']]
+                        X_matrices = [first_off['X_matrix']]
+                        trinuc = [first_off['trinuc_distributions']]
                         update_beta_sstats = [{l : ss[k] for l,ss in beta_sstats.items()}]
 
                     else:
@@ -398,47 +519,58 @@ class LocusRegressor(BaseEstimator):
                                 for beta_sstats_sample in beta_sstats
                             ]
                         
-                        window_sizes = map(lambda x : x['window_size'], corpus)
-                        X_matrices = map(lambda x : x['X_matrix'], corpus)
-                        trinuc = map(lambda x : x['trinuc_distributions'], corpus)
+                        window_sizes = map(lambda x : x['window_size'], inner_corpus)
+                        X_matrices = map(lambda x : x['X_matrix'], inner_corpus)
+                        trinuc = map(lambda x : x['trinuc_distributions'], inner_corpus)
 
-                    self.beta_mu[k], self.beta_nu[k] = BetaOptimizer.optimize(
-                        beta_mu0 = self.beta_mu[k],  
-                        beta_nu0 = self.beta_nu[k],
-                        beta_sstats = update_beta_sstats,
-                        window_sizes=window_sizes,
-                        X_matrices=X_matrices,
-                    )
+                    new_beta_mu[k], new_beta_nu[k] = \
+                        BetaOptimizer.optimize(
+                            beta_mu0 = self.beta_mu[k],  
+                            beta_nu0 = self.beta_nu[k],
+                            beta_sstats = update_beta_sstats,
+                            window_sizes=window_sizes,
+                            X_matrices=X_matrices,
+                        )
 
-                    self.delta[k] = LambdaOptimizer.optimize(self.delta[k],
+                    new_delta[k] = LambdaOptimizer.optimize(self.delta[k],
                         trinuc_distributions = trinuc,
                         beta_sstats = update_beta_sstats,
                         delta_sstats = delta_sstats[k],
                     )
 
+                self.beta_mu = self.svi_update(self.beta_mu, new_beta_mu, learning_rate)
+                self.beta_nu = self.svi_update(self.beta_nu, new_beta_nu, learning_rate)
+                self.delta = self.svi_update(self.delta, new_delta, learning_rate)
+
                 # update rho distribution
-                self.rho = rho_sstats + 1.
+                self.rho = self.svi_update(self.rho, rho_sstats + 1., learning_rate)
 
                 logger.debug("Estimating evidence lower bound ...")
-                
-                self.bounds.append(
-                    self._bound(
-                        corpus = corpus, 
-                        gamma = gamma,
-                        entropy_sstats = entropy_sstats,
-                        weighted_phis = weighted_phis, 
-                    )
-                )
 
                 elapsed_time = time.time() - start_time
-                improvement = self.bounds[-1] - (self.bounds[-2] if epoch > 1 else self.bounds[-1])
+                
+                if epoch % self.eval_every == 0:
+                    
+                    self.bounds.append(
+                        self._bound(
+                            corpus = corpus, 
+                            gamma = gamma,
+                        )
+                    )
 
-                logger.info('  Epoch {:<3} complete. |  Bound: {:<10.2f}, improvement: {:<10.2f}  |  Elapsed time: {:<3.1f} seconds.'\
-                        .format(epoch, self.bounds[-1], improvement, elapsed_time))
+                    if len(self.bounds) > 1:
 
-                if epoch > 1:
-                    if (self.bounds[-1] - self.bounds[-2]) < self.bound_tol:
-                        break
+                        improvement = self.bounds[-1] - (self.bounds[-2] if epoch > 1 else self.bounds[-1])
+
+                        logger.info('  Epoch {:<3} complete. | Elapsed time: {:<3.1f} seconds. | Bound: {:<10.2f}, improvement: {:<10.2f} '\
+                                .format(epoch, elapsed_time, self.bounds[-1], improvement,))
+
+                        if (self.bounds[-1] - self.bounds[-2]) < self.bound_tol and not svi_inference:
+                            break
+
+                else:
+
+                    logger.info('  Epoch {:<3} complete. | Elapsed time: {:<3.1f} seconds.'.format(epoch, elapsed_time))
 
             else:
                 logger.info('Model did not converge, consider increasing "estep_iterations" or "num_epochs" parameters.')
@@ -531,8 +663,6 @@ class LocusRegressor(BaseEstimator):
         return self._bound(
                 corpus = corpus, 
                 gamma = gamma,
-                entropy_sstats = entropy_sstats,
-                weighted_phis = weighted_phis,
                 likelihood_scale=self.n_samples/n_samples
             )
 

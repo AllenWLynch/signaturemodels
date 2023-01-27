@@ -92,7 +92,7 @@ to aggregate and map that track data to our windows. We can do the same for the 
 
 ..
 
-    **Note**
+    **Note:**
     Again, it is very important to keep these data sorted and normalized. Above, 
     I include the `-sorted` flag in `bedtools map` to ensure ensure this. Also, I
     set `-null 0.0` so that winows which are not included in the track are still
@@ -129,7 +129,9 @@ Provide exposures as a single column of positive values (a header is optional an
 
 The exposure file is the only optional input.
 
-    **Note**
+..
+    
+    **Note:**
     Here, I model genomes from esophogeal cells, which I may assume all have similar genomic features/expression/etc. 
     Thus, I use only one "correlates" file which speeds up model calculation. If you wish to model a heterogeneous 
     collection of cells -biologically or technically- you can provide a sample-specific correlate and exposure file

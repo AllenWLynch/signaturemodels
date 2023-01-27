@@ -61,6 +61,7 @@ def write_dataset(
     
     
 def train_model(
+        locus_subsample = 1,
         seed = 0, 
         pi_prior = 1.,
         num_epochs = 10000, 
@@ -75,6 +76,7 @@ def train_model(
     ):
     
     model = LocusRegressor(
+        locus_subsample = locus_subsample,
         seed = seed, 
         dtype = np.float32,
         pi_prior = pi_prior,
@@ -95,6 +97,7 @@ def train_model(
     
 
 def tune(
+    locus_subsample = 0.1,
     pi_prior = 1.,
     num_epochs = 10000, 
     difference_tol = 1e-3,
@@ -106,7 +109,8 @@ def tune(
     max_candidates = 100,
     tune_pi_prior= False,
     factor = 2,
-    target_epochs = 100,
+    target_epochs = 300,
+    min_epochs = 30,
     num_tournaments = 4,*,
     output,
     corpus,
@@ -121,6 +125,7 @@ def tune(
         estep_iterations = estep_iterations,
         bound_tol = bound_tol,
         n_jobs=1,
+        locus_subsample=locus_subsample,
     )
 
     corpus = load_corpus(corpus)
@@ -137,6 +142,7 @@ def tune(
         num_tournaments = num_tournaments,
         factor = factor,
         target_epochs = target_epochs,
+        min_epochs=min_epochs,
     )
 
     print('Best params: ' + str(grid.best_params_))
@@ -233,6 +239,9 @@ trainer_required .add_argument('--output','-o', type = valid_path, required=True
     help = 'Where to save trained model.')
 
 trainer_optional = trainer_sub.add_argument_group('Optional arguments')
+trainer_optional .add_argument('--locus-subsample','-sub', type = posfloat, default = 1,
+    help = 'Whether to use locus subsampling to speed up training via stochastic variational inference.')
+
 trainer_optional.add_argument('--seed', type = posint, default=1776)
 trainer_optional.add_argument('--pi-prior','-pi', type = posfloat, default = 1.,
     help = 'Dirichlet prior over sample mixture compositions. A value > 1 will give more dense compositions, which <1 finds more sparse compositions.')
@@ -261,9 +270,12 @@ tune_required.add_argument('--n-jobs','-j', type = posint, required= True,
 
 tune_optional = tune_sub.add_argument_group('Optional arguments')
 
-tune_optional.add_argument('--target-epochs', type = posint, default = 100,
+tune_optional.add_argument('--target-epochs', type = posint, default = 300,
     help = 'Number of epochs to train for on the last iteration of'
             ' successive halving. This should be set high enough such that the model converges to a solution.')
+tune_optional.add_argument('--min-epochs', type = posint, default = 30,
+    help = 'Minimum number of epochs to train before comparing models')
+
 tune_optional.add_argument('--seed-reps', '-reps', type = posint, default=1,
     help = 'Number of different initialization seeds to try for each parameter combination.')
 
@@ -280,6 +292,8 @@ tune_optional.add_argument('--cv','-cv', type = posint, default=3,
 
 model_options = tune_sub.add_argument_group('Model arguments')
 
+model_options.add_argument('--locus-subsample','-sub', type = posfloat, default = 0.1,
+    help = 'Whether to use locus subsampling to speed up training via stochastic variational inference.')
 model_options.add_argument('--pi-prior','-pi', type = posfloat, default = 1.,
     help = 'Dirichlet prior over sample mixture compositions. A value > 1 will give more dense compositions, which <1 finds more sparse compositions.')
 model_options.add_argument('--bound-tol', '-tol', type = posfloat, default=1e-2,
