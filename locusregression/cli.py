@@ -104,11 +104,11 @@ def tune(
     estep_iterations = 1000,
     bound_tol = 1e-2,
     n_jobs = 1,
-    cv = 3,
+    cv = 1,
     seed_reps = 1,
     max_candidates = 100,
     tune_pi_prior= False,
-    factor = 2,
+    factor = 3,
     target_epochs = 300,
     min_epochs = 30,
     num_tournaments = 4,*,
@@ -245,7 +245,7 @@ trainer_optional .add_argument('--locus-subsample','-sub', type = posfloat, defa
 trainer_optional.add_argument('--seed', type = posint, default=1776)
 trainer_optional.add_argument('--pi-prior','-pi', type = posfloat, default = 1.,
     help = 'Dirichlet prior over sample mixture compositions. A value > 1 will give more dense compositions, which <1 finds more sparse compositions.')
-trainer_optional.add_argument('--num-epochs', '-epochs', type = posint, default = 300,
+trainer_optional.add_argument('--num-epochs', '-epochs', type = posint, default = 1000,
     help = 'Maximum number of epochs to train.')
 trainer_optional.add_argument('--bound-tol', '-tol', type = posfloat, default=1e-2,
     help = 'Early stop criterion, stop training if objective score does not increase by this much after one epoch.')
@@ -281,13 +281,13 @@ tune_optional.add_argument('--seed-reps', '-reps', type = posint, default=1,
 
 tune_optional.add_argument('--num-tournaments','-t', type = posint, default = 4,
     help = 'Number of hyperparameter tournaments to run.')
-tune_optional.add_argument('--factor','-f',type = posint, default = 2,
+tune_optional.add_argument('--factor','-f',type = posint, default = 3,
     help = 'Successive halving reduction factor for each iteration')
 tune_optional.add_argument('--max-candidates','-c', type = posint, default = 100,
     help = 'Maximum number of hyperparameter combinations to try.')
 tune_optional.add_argument('--tune-pi-prior',action = 'store_true', default = False,
     help = 'Tune the dirichlet prior parameter alpha.')
-tune_optional.add_argument('--cv','-cv', type = posint, default=3,
+tune_optional.add_argument('--cv','-cv', type = posint, default=1,
     help= 'Number of folds for cross-validation on training partition.')
 
 model_options = tune_sub.add_argument_group('Model arguments')
@@ -303,6 +303,8 @@ tune_sub.set_defaults(func = tune)
 
 def main():
     #____ Execute commands ___
+
+    logging.basicConfig(level = logging.INFO)
 
     args = parser.parse_args()
 

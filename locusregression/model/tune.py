@@ -12,7 +12,7 @@ def tune_model(model, corpus,
     n_jobs = 1, 
     seed = 0,
     seed_reps=1, 
-    max_candidates = 100,
+    max_candidates = 50,
     cv = 3,
     tune_pi_prior = False,
     num_tournaments = 4,
@@ -31,7 +31,7 @@ def tune_model(model, corpus,
         }    
 
     if tune_pi_prior:
-        param_grid['pi_prior'] = [0.1,0.5,1.,5.,10.]
+        param_grid['pi_prior'] = [0.5,1.,5.]
 
     if cv == 1:
         cv = ShuffleSplit(n_splits=1, train_size=0.7, random_state=seed)
@@ -56,7 +56,7 @@ def tune_model(model, corpus,
             cv = cv, 
             refit = False,
             min_resources= min_epochs,
-            factor=2,
+            factor = factor,
             max_resources= target_epochs,
             n_candidates = max_candidates,
             resource='num_epochs',

@@ -12,7 +12,7 @@ import time
 from sklearn.base import BaseEstimator
 import logging
 logger = logging.getLogger('LocusRegressor')
-logger.setLevel(logging.INFO)
+
 import matplotlib.pyplot as plt
 from joblib import Parallel, delayed
 import pickle
@@ -42,6 +42,7 @@ class LocusRegressor(BaseEstimator):
         kappa = 0.5,
         tau = 1,
         eval_every = 10,
+        time_limit = None,
     ):
         '''
         Params
@@ -72,6 +73,7 @@ class LocusRegressor(BaseEstimator):
         self.kappa = kappa
         self.eval_every = eval_every
         self.tau = tau
+        self.time_limit = time_limit
 
 
     def save(self, filename):
@@ -166,44 +168,51 @@ class LocusRegressor(BaseEstimator):
 
         entropy_sstats = -np.sum(weighted_phi * np.where(phi_matrix > 0, np.log(phi_matrix), 0.))
         
-        return np.sum(weighted_phi*flattened_logweight) + entropy_sstats
+        return np.sum(weighted_phi*flattened_logweight), entropy_sstats
 
 
 
     def _bound(self,*,
             corpus, 
             gamma,
-            likelihood_scale = 1.
+            likelihood_scale = 1.,
+            predictive_probability = False
         ):
         
         Elog_delta = log_dirichlet_expectation(self.delta)
         Elog_rho = log_dirichlet_expectation(self.rho)
         Elog_gamma = log_dirichlet_expectation(gamma)
 
-        elbo = 0
+        predict_prob, entropy = 0,0
 
         self._prebuild_phi_matrix()
         
         for Elog_gamma_g, sample in zip(Elog_gamma, corpus):
 
-            elbo += self._sample_bound(
+            _predictive, _ent = self._sample_bound(
                 Elog_gamma = Elog_gamma_g,
                 logweight_matrix = Elog_gamma_g[:,None, None] + Elog_delta[:,:,None] + Elog_rho,
                 **sample,
             )
-        
-        elbo *= likelihood_scale
-        
-        elbo += np.sum(-1/2 * (np.square(self.beta_mu) + np.square(self.beta_nu)))
-        elbo += np.sum(np.log(self.beta_nu))
-        
-        elbo += sum(dirichlet_bound(self.alpha, gamma, Elog_gamma))
-        
-        elbo += sum(dirichlet_bound(np.ones(self.n_contexts), self.delta, Elog_delta))
-        
-        elbo += np.sum(dirichlet_bound(np.ones((1,3)), self.rho, Elog_rho))
 
-        return elbo
+            predict_prob += _predictive
+            entropy += _ent
+
+        if predictive_probability:
+            return predict_prob
+        
+        predict_prob *= likelihood_scale
+        
+        entropy += np.sum(-1/2 * (np.square(self.beta_mu) + np.square(self.beta_nu)))
+        entropy += np.sum(np.log(self.beta_nu))
+        
+        entropy += sum(dirichlet_bound(self.alpha, gamma, Elog_gamma))
+        
+        entropy += sum(dirichlet_bound(np.ones(self.n_contexts), self.delta, Elog_delta))
+        
+        entropy += np.sum(dirichlet_bound(np.ones((1,3)), self.rho, Elog_rho))
+
+        return predict_prob + entropy
 
 
     def _prebuild_phi_matrix(self):
@@ -398,23 +407,33 @@ class LocusRegressor(BaseEstimator):
             
 
             def __iter__(self):
+                
+                try:
+                    total_mutations = 0
+                    for i, sample in enumerate(corpus):
+                        
+                        mask = np.array([x in subsample_lookup for x in sample['locus']])
 
-                for sample in corpus:
+                        new_sample = {
+                            'mutation' : sample['mutation'][mask],
+                            'context' : sample['context'][mask],
+                            'count' : sample['count'][mask],
+                            'locus' : np.array([subsample_lookup[locus] for locus in sample['locus'][mask]]).astype(int), 
+                            }
+
+                        total_mutations += new_sample['count'].sum()
+                        
+                        if shared:
+                            yield {
+                                **new_sample, **kwargs
+                            }
+
+                finally:
                     
-                    mask = np.array([x in subsample_lookup for x in sample['locus']])
-
-                    new_sample = {
-                        'mutation' : sample['mutation'][mask],
-                        'context' : sample['context'][mask],
-                        'count' : sample['count'][mask],
-                        'locus' : np.array([subsample_lookup[locus] for locus in sample['locus'][mask]]).astype(int), 
-                        }
-                    
-                    if shared:
-                        yield {
-                            **new_sample, **kwargs
-                        }
-
+                    if i > 1 and total_mutations < 10000:
+                        logger.info('A subsampled slice of the dataset for stochastic variational inference should '
+                                'contain at least 10,000 mutations. This slice contains {}.'.format(total_mutations)
+                                )
 
                     '''new_sample = sample.copy()
                     new_sample.update({    
@@ -472,8 +491,9 @@ class LocusRegressor(BaseEstimator):
         
         gamma = self._init_doc_variables(len(corpus))
         
-        self.bounds = []
-
+        self.bounds, self.elapsed_times = [], []
+        total_time = 0
+        
         try:
             for epoch in range(1,self.num_epochs+1):
 
@@ -548,7 +568,9 @@ class LocusRegressor(BaseEstimator):
                 logger.debug("Estimating evidence lower bound ...")
 
                 elapsed_time = time.time() - start_time
-                
+                self.elapsed_times.append(elapsed_time)
+                total_time += elapsed_time
+
                 if epoch % self.eval_every == 0:
                     
                     self.bounds.append(
@@ -572,13 +594,18 @@ class LocusRegressor(BaseEstimator):
 
                     logger.info('  Epoch {:<3} complete. | Elapsed time: {:<3.1f} seconds.'.format(epoch, elapsed_time))
 
+                if not self.time_limit is None and total_time >= self.time_limit:
+                    logger.info('Time limit reached, stopping training.')
+                    break
+
             else:
                 logger.info('Model did not converge, consider increasing "estep_iterations" or "num_epochs" parameters.')
 
+
         except KeyboardInterrupt:
             pass
-        else:
-            self.trained = True
+        
+        self.trained = True
 
         return self
 
@@ -663,7 +690,8 @@ class LocusRegressor(BaseEstimator):
         return self._bound(
                 corpus = corpus, 
                 gamma = gamma,
-                likelihood_scale=self.n_samples/n_samples
+                likelihood_scale=self.n_samples/n_samples,
+                predictive_probability=False,
             )
 
 

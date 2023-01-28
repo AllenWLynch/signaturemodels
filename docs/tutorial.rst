@@ -76,7 +76,7 @@ binned data for expression, replication timing, and H3K27ac in bed files, I can 
 
     $ cat expression.bed | grep -v "NA" | sort -k1,1 -k2,2n | \
         bedtools map -a tutorial/regions.bed -b - -o sum -sorted -null 0.0 | \
-        cut -f4 >> tutorial/expression.tsv
+        cut -f4 > tutorial/expression.tsv
 
 to aggregate and map that track data to our windows. We can do the same for the other correlates:
 
@@ -84,11 +84,11 @@ to aggregate and map that track data to our windows. We can do the same for the 
 
     $ cat replication_timing.bed | grep -v "NA" | sort -k1,1 -k2,2n | \
         bedtools map -a tutorial/regions.bed -b - -o sum -sorted -null 0.0 | \
-        cut -f4 >> tutorial/replication_timing.tsv
+        cut -f4 > tutorial/replication_timing.tsv
 
     $ cat h3k27ac.bed | grep -v "NA" | sort -k1,1 -k2,2n | \
         bedtools map -a tutorial/regions.bed -b - -o sum -sorted -null 0.0 | \
-        cut -f4 >> tutorial/h3k27ac.tsv
+        cut -f4 > tutorial/h3k27ac.tsv
 
 ..
 
@@ -130,7 +130,7 @@ Provide exposures as a single column of positive values (a header is optional an
 The exposure file is the only optional input.
 
 ..
-    
+
     **Note:**
     Here, I model genomes from esophogeal cells, which I may assume all have similar genomic features/expression/etc. 
     Thus, I use only one "correlates" file which speeds up model calculation. If you wish to model a heterogeneous 
@@ -176,9 +176,9 @@ to try each model configuration three times.
 
     $ locusregression tune \    
         --corpus tutorial/corpus.pkl \
-        -o tutorial/grid.tsv \
         -min 3 -max 25 \
         --tune-pi-prior \
         --seed-reps 3 \
-        --n-jobs 5
+        --n-jobs 5 \
+        -o tutorial/grid.tsv \
 

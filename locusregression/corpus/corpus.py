@@ -7,10 +7,9 @@ from collections import Counter
 import logging
 import tqdm
 from joblib import Parallel, delayed
-import pickle
 from scipy import sparse
-from sklearn.preprocessing import MinMaxScaler
-import types
+from sklearn.preprocessing import StandardScaler
+import h5py
 
 logger = logging.getLogger('Corpus')
 logger.setLevel(logging.INFO)
@@ -158,19 +157,28 @@ class Sample:
         )
 
 
-
-def load_corpus(filename):
-    with open(filename, 'rb') as f:
-        return pickle.load(f)
-
-
 def save_corpus(corpus, filename):
 
-    if isinstance(corpus, types.GeneratorType):
-        corpus = list(corpus)
+    with h5py.File(filename,'w') as f:
+        
+        for i, sample in enumerate(corpus):
+            for key, arr in sample.items():
+                f.create_dataset(f'data/{i}/{key}', data = arr)
 
-    with open(filename, 'wb') as f:
-        pickle.dump(corpus, f)
+
+def load_corpus(filename):
+    
+    corpus = []
+    with h5py.File(filename, 'r') as f:
+        
+        for sample in f['data'].keys():
+            
+            corpus.append({
+                key : f[f'data/{sample}/{key}'][...]
+                for key in f['data'][sample]
+            })
+
+    return corpus       
 
 
 class Corpus:
@@ -217,15 +225,18 @@ class Corpus:
                 windows, fa, n_jobs=n_jobs
             )
 
-        for sample in samples:
-            yield {
-                **sample,
-                'shared_correlates' : True,
-                'window_size' : exposures, 
-                'X_matrix' : features.T,
-                'trinuc_distributions' : trinuc_distributions.T,
-                'feature_names' : feature_names
+        
+        return [
+            {
+            **sample,
+            'shared_correlates' : True,
+            'window_size' : exposures, 
+            'X_matrix' : features.T,
+            'trinuc_distributions' : trinuc_distributions.T,
+            'feature_names' : feature_names
             }
+            for sample in samples
+        ]
 
 
     @staticmethod
@@ -317,7 +328,7 @@ class Corpus:
 
         correlates = np.array(correlates)
 
-        correlates = MinMaxScaler().fit_transform(correlates)
+        correlates = StandardScaler().fit_transform(correlates)
 
         return correlates, columns + ['constant']
 
@@ -473,16 +484,19 @@ class MixedCorpus(Corpus):
                 windows, fa, n_jobs=n_jobs
             )
 
+        out = []
         for sample, exposure, X_matrix, trinuc in zip(
             samples, exposures, features, trinuc_distributions):
-            yield {
+            out.append({
                 **sample, 
                 'window_size' : exposure, 
                 'X_matrix' : X_matrix.T,
                 'trinuc_distributions' : trinuc.T,
                 'shared_correlates' : False,
                 'feature_names' : feature_names,
-            }
+            })
+
+        return out
 
 
     @staticmethod
