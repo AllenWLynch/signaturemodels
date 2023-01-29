@@ -63,7 +63,7 @@ def write_dataset(
 def train_model(
         locus_subsample = 1,
         seed = 0, 
-        pi_prior = 1.,
+        pi_prior = 5.,
         num_epochs = 10000, 
         difference_tol = 1e-3,
         estep_iterations = 1000,
@@ -98,7 +98,7 @@ def train_model(
 
 def tune(
     locus_subsample = 0.1,
-    pi_prior = 1.,
+    pi_prior = 5.,
     num_epochs = 10000, 
     difference_tol = 1e-3,
     estep_iterations = 1000,

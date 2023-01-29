@@ -9,7 +9,7 @@ import tqdm
 from joblib import Parallel, delayed
 from scipy import sparse
 from sklearn.preprocessing import StandardScaler
-import h5py
+import pickle
 
 logger = logging.getLogger('Corpus')
 logger.setLevel(logging.INFO)
@@ -157,7 +157,7 @@ class Sample:
         )
 
 
-def save_corpus(corpus, filename):
+'''def save_corpus(corpus, filename):
 
     with h5py.File(filename,'w') as f:
         
@@ -178,7 +178,18 @@ def load_corpus(filename):
                 for key in f['data'][sample]
             })
 
-    return corpus       
+    return corpus      '''
+
+def save_corpus(corpus, filename):
+
+    with open(filename, 'wb') as f:
+        pickle.dump(corpus, f)
+
+
+def load_corpus(filename):
+
+    with open(filename, 'rb') as f:
+        return pickle.load(f)
 
 
 class Corpus:
