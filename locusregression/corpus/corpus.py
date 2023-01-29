@@ -339,7 +339,7 @@ class Corpus:
 
         correlates = np.array(correlates)
 
-        correlates = StandardScaler().fit_transform(correlates)
+        #correlates = StandardScaler().fit_transform(correlates)
 
         return correlates, columns + ['constant']
 
