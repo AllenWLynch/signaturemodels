@@ -889,7 +889,11 @@ class LocusRegressor(BaseEstimator):
                 size = monte_carlo_draws
             ).T, 1)
 
-        signature_posterior = (lambda_posterior*eps_posterior).reshape(-1, monte_carlo_draws)
+        signature_posterior = (lambda_posterior*eps_posterior).reshape(-1, monte_carlo_draws)\
+                * self.genome_trinuc_distribution[:,None]
+                
+        signature_posterior = signature_posterior/signature_posterior.sum(0, keepdims = True)
+
         error = 1.5*signature_posterior.std(-1)
 
         posterior_dict = dict(zip( SIGNATURE_STRINGS, zip(signature_posterior.mean(-1), error) ))
