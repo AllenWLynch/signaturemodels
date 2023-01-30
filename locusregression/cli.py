@@ -1,5 +1,5 @@
 from .corpus import Corpus, MixedCorpus, load_corpus, save_corpus
-from .model import LocusRegressor, tune_model
+from .model import LocusRegressor, tune_model, load_model
 import argparse
 from argparse import ArgumentTypeError
 import os
@@ -62,11 +62,15 @@ def write_dataset(
     
 def train_model(
         locus_subsample = 1,
+        time_limit = None,
+        tau = 1,
+        kappa = 0.5,
         seed = 0, 
         pi_prior = 5.,
         num_epochs = 10000, 
         difference_tol = 1e-3,
         estep_iterations = 1000,
+        eval_every = 10,
         bound_tol = 1e-2,
         quiet = True,
         n_jobs = 1,*,
@@ -87,6 +91,10 @@ def train_model(
         quiet = quiet,
         n_components = n_components,
         n_jobs= n_jobs,
+        time_limit=time_limit,
+        eval_every = eval_every,
+        tau = tau,
+        kappa = kappa,
     )
     
     dataset = load_corpus(corpus)
@@ -98,6 +106,7 @@ def train_model(
 
 def tune(
     locus_subsample = 0.1,
+    time_limit = None,
     pi_prior = 5.,
     num_epochs = 10000, 
     difference_tol = 1e-3,
@@ -126,6 +135,7 @@ def tune(
         bound_tol = bound_tol,
         n_jobs=1,
         locus_subsample=locus_subsample,
+        time_limit=time_limit,
     )
 
     corpus = load_corpus(corpus)
@@ -239,9 +249,15 @@ trainer_required .add_argument('--output','-o', type = valid_path, required=True
     help = 'Where to save trained model.')
 
 trainer_optional = trainer_sub.add_argument_group('Optional arguments')
-trainer_optional .add_argument('--locus-subsample','-sub', type = posfloat, default = 1,
-    help = 'Whether to use locus subsampling to speed up training via stochastic variational inference.')
 
+trainer_optional.add_argument('--locus-subsample','-sub', type = posfloat, default = 1,
+    help = 'Whether to use locus subsampling to speed up training via stochastic variational inference.')
+trainer_optional.add_argument('--time-limit','-time', type = posint, default = None,
+    help = 'Time limit in seconds for model training.')
+trainer_optional.add_argument('--tau', type = posint, default = 1)
+trainer_optional.add_argument('--kappa', type = posfloat, default=0.5)
+trainer_optional.add_argument('--eval-every', '-eval', type = posint, default = 10,
+    help = 'Evaluate the bound after every this many epochs')
 trainer_optional.add_argument('--seed', type = posint, default=1776)
 trainer_optional.add_argument('--pi-prior','-pi', type = posfloat, default = 1.,
     help = 'Dirichlet prior over sample mixture compositions. A value > 1 will give more dense compositions, which <1 finds more sparse compositions.')
@@ -294,12 +310,30 @@ model_options = tune_sub.add_argument_group('Model arguments')
 
 model_options.add_argument('--locus-subsample','-sub', type = posfloat, default = 0.1,
     help = 'Whether to use locus subsampling to speed up training via stochastic variational inference.')
+model_options.add_argument('--time-limit','-time', type = posint, default = None,
+    help = 'Time limit in seconds for model training.')
 model_options.add_argument('--pi-prior','-pi', type = posfloat, default = 1.,
     help = 'Dirichlet prior over sample mixture compositions. A value > 1 will give more dense compositions, which <1 finds more sparse compositions.')
 model_options.add_argument('--bound-tol', '-tol', type = posfloat, default=1e-2,
     help = 'Early stop criterion, stop training if objective score does not increase by this much after one epoch.')
 
 tune_sub.set_defaults(func = tune)
+
+
+def score(*,model, corpus):
+
+    dataset = load_corpus(corpus)
+    model = load_model(model)
+
+    print(model.score(dataset))
+
+
+score_args = subparsers.add_parser('score')
+score_args.add_argument('--model','-m', type = file_exists, required=True)
+score_args.add_argument('--corpus','-d',type= file_exists, required=True)
+score_args.set_defaults(func = score)
+
+
 
 def main():
     #____ Execute commands ___

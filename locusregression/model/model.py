@@ -972,8 +972,9 @@ class LocusRegressor(BaseEstimator):
             color = 'black'
             )
 
+        
         ax.set(ylabel = 'Feature', xlabel = 'Coefficient',
-               title = 'Component ' + str(component)
+               title = 'Component ' + str(component),
                )
 
         for s in ['left','right','top']:
