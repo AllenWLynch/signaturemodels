@@ -169,51 +169,44 @@ class LocusRegressor(BaseEstimator):
 
         entropy_sstats = -np.sum(weighted_phi * np.where(phi_matrix > 0, np.log(phi_matrix), 0.))
         
-        return np.sum(weighted_phi*flattened_logweight), entropy_sstats
+        return np.sum(weighted_phi*flattened_logweight) + entropy_sstats
 
 
 
     def _bound(self,*,
             corpus, 
             gamma,
-            likelihood_scale = 1.,
-            predictive_probability = False
+            likelihood_scale = 1.
         ):
         
         Elog_delta = log_dirichlet_expectation(self.delta)
         Elog_rho = log_dirichlet_expectation(self.rho)
         Elog_gamma = log_dirichlet_expectation(gamma)
 
-        predict_prob, entropy = 0,0
+        elbo = 0
 
         self._prebuild_phi_matrix()
         
         for Elog_gamma_g, sample in zip(Elog_gamma, corpus):
 
-            _predictive, _ent = self._sample_bound(
+            elbo += self._sample_bound(
                 Elog_gamma = Elog_gamma_g,
                 logweight_matrix = Elog_gamma_g[:,None, None] + Elog_delta[:,:,None] + Elog_rho,
                 **sample,
             )
+        
+        elbo *= likelihood_scale
+        
+        elbo += np.sum(-1/2 * (np.square(self.beta_mu) + np.square(self.beta_nu)))
+        elbo += np.sum(np.log(self.beta_nu))
+        
+        elbo += sum(dirichlet_bound(self.alpha, gamma, Elog_gamma))
+        
+        elbo += sum(dirichlet_bound(np.ones(self.n_contexts), self.delta, Elog_delta))
+        
+        elbo += np.sum(dirichlet_bound(np.ones((1,3)), self.rho, Elog_rho))
 
-            predict_prob += _predictive
-            entropy += _ent
-
-        if predictive_probability:
-            return predict_prob
-        
-        predict_prob *= likelihood_scale
-        
-        entropy += np.sum(-1/2 * (np.square(self.beta_mu) + np.square(self.beta_nu)))
-        entropy += np.sum(np.log(self.beta_nu))
-        
-        entropy += sum(dirichlet_bound(self.alpha, gamma, Elog_gamma))
-        
-        entropy += sum(dirichlet_bound(np.ones(self.n_contexts), self.delta, Elog_delta))
-        
-        entropy += np.sum(dirichlet_bound(np.ones((1,3)), self.rho, Elog_rho))
-
-        return predict_prob + entropy
+        return elbo
 
 
     def _prebuild_phi_matrix(self):
@@ -692,7 +685,6 @@ class LocusRegressor(BaseEstimator):
                 corpus = corpus, 
                 gamma = gamma,
                 likelihood_scale=self.n_samples/n_samples,
-                predictive_probability=False,
             )
 
 
