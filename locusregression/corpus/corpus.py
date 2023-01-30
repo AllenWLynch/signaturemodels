@@ -375,8 +375,9 @@ class Corpus:
 
         last_w = windows[0]
         for w in windows[1:]:
-            assert w.chromosome >= last_w.chromosome and w.start >= last_w.start,\
-                'Provided windows must be in sorted order! Run "sort -k1,1 -k2,2 <windows>" to sort them.\n'\
+            assert w.chromosome > last_w.chromosome or (w.chromosome == last_w.chromosome) and w.start > last_w.start,\
+                'Provided windows must be in sorted order! Run "sort -k1,1 -k2,2n <windows>" to sort them.\n'\
+                f'Last window: {last_w.chromosome}-{last_w.start}, next window: {w.chromosome}-{w.start}\n'\
                 'IF YOU HAVE ALREADY MADE CORRELATES AND EXPOSURES TSVs, DO NOT FORGET TO REORDER THOSE SO THAT THEY MATCH WITH THE CORRECT WINDOWS!'
 
         windows = RegionSet(windows, genome_object)
