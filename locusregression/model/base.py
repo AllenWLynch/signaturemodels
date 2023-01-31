@@ -66,9 +66,13 @@ def update_dir_prior(prior, N, logphat, rho = 0.05,
     return prior
 
 
-def M_step_alpha(*, alpha, gamma, lr):
+def update_tau(mu, nu):
+    return np.sqrt(2*np.pi) * np.sum(mu**2 + nu**2, axis = -1)
+
+
+def M_step_alpha(alpha, gamma):
     
     N = gamma.shape[0]
     log_phat = log_dirichlet_expectation(gamma).mean(-2)
     
-    return update_dir_prior(alpha, N, log_phat, rho = lr)
+    return update_dir_prior(alpha, N, log_phat, rho = 0.1)

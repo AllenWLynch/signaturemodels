@@ -41,12 +41,12 @@ class BetaOptimizer:
 
 
     @staticmethod
-    def _objective_jac_regularization(beta_mu, beta_nu):
-        
-        objective = -1/2*np.sum(np.square(beta_mu) + np.square(beta_nu)) + np.sum(np.log(beta_nu))
+    def _objective_jac_regularization(beta_mu, beta_nu, tau):
+        tau_sq = tau**2
+        objective = -1/(2*tau_sq)*np.sum( np.square(beta_mu) + np.square(beta_nu) ) + np.sum(np.log(beta_nu))
 
-        mu_jac = -beta_mu
-        std_jac = -beta_nu + 1/beta_nu
+        mu_jac = -1/tau_sq * beta_mu
+        std_jac = -1/tau_sq* beta_nu + 1/beta_nu
 
         return -objective, -np.concatenate([mu_jac, std_jac])
 
@@ -117,7 +117,7 @@ class BetaOptimizer:
 
     
     @staticmethod
-    def optimize(*, 
+    def optimize(tau = 1.,*, 
             beta_mu0, 
             beta_nu0,
             window_sizes,
@@ -128,7 +128,6 @@ class BetaOptimizer:
         F = len(beta_mu0)
         beta_0 = np.concatenate([beta_mu0, beta_nu0])
 
-        
         '''
         Each sample is associated with its X_matrix, window_sizes/"marginal sensitivity", and beta suffstats.
         For each sample, calculate the sufficient statistics for the gradient update,
@@ -141,14 +140,13 @@ class BetaOptimizer:
                     beta_nu0=beta_nu0,
                     window_size=_window,
                     X_matrix=_X,
-                    beta_sstats=beta_sstats_sample
+                    beta_sstats=beta_sstats_sample,
                 )
                 for _window, _X, beta_sstats_sample in \
                     zip(window_sizes, X_matrices, beta_sstats)
             ]
 
             #hess = lambda x : hess_func(x[:F], x[F:])
-
 
         def reduce_objective_jac(x):
             '''
@@ -167,7 +165,7 @@ class BetaOptimizer:
                 obj+=_obj
                 jac+=_jac
 
-            _obj_reg, _jac_reg = BetaOptimizer._objective_jac_regularization(beta_mu, beta_nu)
+            _obj_reg, _jac_reg = BetaOptimizer._objective_jac_regularization(beta_mu, beta_nu, tau)
 
             obj+=_obj_reg
             jac+=_jac_reg
@@ -218,5 +216,6 @@ class BetaOptimizer:
         new_beta = optim_results.x
 
         beta_logger.debug('Update converged after {} iterations.'.format(optim_results.nfev))
+
 
         return new_beta[:F], new_beta[F:]

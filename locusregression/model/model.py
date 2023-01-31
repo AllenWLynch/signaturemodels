@@ -1,9 +1,10 @@
 
 import numpy as np
-from .base import dirichlet_bound, log_dirichlet_expectation
+from .base import dirichlet_bound, log_dirichlet_expectation, \
+        M_step_alpha, update_tau
 from collections import defaultdict
 from locusregression.corpus import COSMIC_SORT_ORDER, SIGNATURE_STRINGS, MUTATION_PALETTE
-from .optim import M_step_delta
+
 from .optim_beta import BetaOptimizer
 from .optim_lambda import LambdaOptimizer
 import tqdm
@@ -44,6 +45,7 @@ class LocusRegressor(BaseEstimator):
         tau = 1,
         eval_every = 10,
         time_limit = None,
+        empirical_bayes = True,
     ):
         '''
         Params
@@ -75,6 +77,7 @@ class LocusRegressor(BaseEstimator):
         self.eval_every = eval_every
         self.tau = tau
         self.time_limit = time_limit
+        self.empirical_bayes = empirical_bayes
 
 
     def save(self, filename):
@@ -197,7 +200,7 @@ class LocusRegressor(BaseEstimator):
         
         elbo *= likelihood_scale
         
-        elbo += np.sum(-1/2 * (np.square(self.beta_mu) + np.square(self.beta_nu)))
+        elbo += np.sum(1/(self.param_tau * np.sqrt(np.pi * 2))) + np.sum(-1/(2*self.param_tau[:,None]**2) * (np.square(self.beta_mu) + np.square(self.beta_nu)))
         elbo += np.sum(np.log(self.beta_nu))
         
         elbo += sum(dirichlet_bound(self.alpha, gamma, Elog_gamma))
@@ -470,6 +473,8 @@ class LocusRegressor(BaseEstimator):
             -1, keepdims= True
         )
 
+        self.param_tau = np.ones(self.n_components)
+
         assert self.n_jobs > 0
 
         if self.n_jobs > 1:
@@ -544,6 +549,7 @@ class LocusRegressor(BaseEstimator):
                             beta_sstats = update_beta_sstats,
                             window_sizes=window_sizes,
                             X_matrices=X_matrices,
+                            tau = self.param_tau[k]
                         )
 
                     new_delta[k] = LambdaOptimizer.optimize(self.delta[k],
@@ -558,6 +564,18 @@ class LocusRegressor(BaseEstimator):
 
                 # update rho distribution
                 self.rho = self.svi_update(self.rho, rho_sstats + 1., learning_rate)
+
+                if self.empirical_bayes:
+
+                    self.alpha = self.svi_update(
+                        self.alpha, 
+                        M_step_alpha(self.alpha, gamma),
+                        learning_rate    
+                    )
+
+                    self.param_tau = self.svi_update(
+                        self.param_tau, update_tau(self.beta_mu, self.beta_nu), learning_rate
+                    )
 
                 logger.debug("Estimating evidence lower bound ...")
 
