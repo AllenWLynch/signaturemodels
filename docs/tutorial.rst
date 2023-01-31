@@ -211,7 +211,7 @@ for the dataset:
     ax.set(ylabel = 'Score', xlabel = 'N components')
 
 .. image:: images/tuning.svg
-    :width: 600
+    :width: 400
 
 The SuccessiveHalving bandit runs "tournaments", where models are trained for a certain number of 
 epochs, then tested. The best performing models are promoted to the next iteration and trained 
@@ -260,13 +260,16 @@ Then, plot a signature like so:
     model.plot_signature(1)
 
 .. image:: docs/images/signature_example.svg
-    ::width: 400
+    :width: 400
 
 And to see the signature's genomic correlate regression coefficients:
 
 .. code-block:: python
 
     model.plot_coefficients(1)
+
+.. image:: docs/images/coefs.svg
+    :width: 400
 
 This component is very anticorrelated with expressed genes, and looks something like
 COSMIC signature SBS17b.
@@ -331,8 +334,8 @@ of the mutations are plotted as rug on the bottom plot.
     ax[2].set(ylabel = 'Mutation rate')
     sns.despine()
 
-.. image:: docs/images/mutation_rate.png
-    ::width: 800
+.. image:: docs/images/mutation_rate.svg
+    :width: 800
 
 Some areas of high mutational density are accounted for, but clearly more feature are needed to 
 get a better fit.
