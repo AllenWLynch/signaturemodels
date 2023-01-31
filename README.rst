@@ -37,4 +37,4 @@ Dependencies
 Tutorial
 --------
 
-Please see the `LocusRegression tutorial <docs/tutorial.ipynb>`_.
+Please see the `LocusRegression tutorial <docs/tutorial.rst>`_ for usage, and the `methods doc <docs/methods.pdf>`_ for information on the model.
