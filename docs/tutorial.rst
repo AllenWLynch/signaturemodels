@@ -184,6 +184,7 @@ model configurations.
         --corpus tutorial/corpus.pkl \
         -min 3 -max 12 \
         --n-jobs 5 \
+        --seed-reps 3 \
         -o tutorial/grid.tsv \
 
 We can plot the results in the *tutorial/grid.tsv* file to see which values for *n_components* make sense
