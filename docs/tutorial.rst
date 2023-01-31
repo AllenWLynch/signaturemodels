@@ -188,13 +188,13 @@ model configurations.
 We can plot the results in the *tutorial/grid.tsv* file to see which values for *n_components* make sense
 for the dataset:
 
-.. code-block::python
+.. code-block:: python
 
     import pandas as pd
     import matplotlib.pyplot as plt
     import seaborn as sns
 
-    grid = pd.read_csv('data/tutorial/grid2.tsv', sep = '\t')
+    grid = pd.read_csv('tutorial/grid.tsv', sep = '\t')
 
     sns.scatterplot(
         data = grid,
@@ -216,7 +216,7 @@ The SuccessiveHalving bandit runs "tournaments", where models are trained for a 
 epochs, then tested. The best performing models are promoted to the next iteration and trained 
 for more epochs. This process repeats until a group of winners is chosen.
 
-Here, five or ten components gives a good fit for the dataset - I chose to use ten.
+Here, five components gives a good fit for the dataset.
 
 3. Training the model
 ---------------------
