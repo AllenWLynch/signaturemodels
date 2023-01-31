@@ -259,7 +259,7 @@ Then, plot a signature like so:
 
     model.plot_signature(1)
 
-.. image:: docs/images/signature_example.svg
+.. image:: images/signature_example.svg
     ::width: 400
 
 And to see the signature's genomic correlate regression coefficients:
@@ -331,7 +331,7 @@ of the mutations are plotted as rug on the bottom plot.
     ax[2].set(ylabel = 'Mutation rate')
     sns.despine()
 
-.. image:: docs/images/mutation_rate.png
+.. image:: images/mutation_rate.png
     ::width: 800
 
 Some areas of high mutational density are accounted for, but clearly more feature are needed to 
