@@ -16,7 +16,7 @@ In this tutorial, I will explain how to:
 3. Infer parameters of the generative model
 4. Analyze the results
 
-To start, you need to have the `locusregression` package and `bedtools` installed in a conda environemnt. You can check this
+To start, you need to have the *locusregression* package and *bedtools* installed in a conda environemnt. You can check this
 quickly by running:
 
 .. code-block:: bash
@@ -67,6 +67,14 @@ Next, we can make our windows using the convenient command from bedtools:
 
         $ sort -k1,1 -k2,2n --check tutorial/regions.bed
 
+Another good idea is to remove regions of the genome which are hard to map or are known to caused biased signals. For instance, you could
+remove ENCODE blacklist regions from your region set:
+
+.. code-block:: bash
+
+    $ bedtools intersect -v -a tutorial/regions.bed -b encode.blacklist.bed > tutorial/filtered_regions.bed \
+        && mv tutorial/filtered_regions.bed tutorial/regions.bed
+
 **Correlates**
 
 Next, we need to associate each of our windows with values for some interesting genomic correlates. For example, if I have 1-kilobase
@@ -98,6 +106,8 @@ to aggregate and map that track data to our windows. We can do the same for the 
     set `-null 0.0` so that winows which are not included in the track are still
     assigned a numerical value.
     
+**The *locusregression* software will not adjust the features you provide, so
+be sure to standardize them beforehand.**
 
 Finally, we can merge all of these correlates into one file:
 
@@ -153,7 +163,7 @@ the data which is read by the LocusRegression model. For a list of VCF files sto
         --correlates-file tutorial/correlates.tsv \
         -o tutorial/corpus.pkl
 
-This will save the corpus to `tutorial/corpus.pkl`.
+This will save the corpus to *tutorial/corpus.pkl*.
 
 
 1. How many processes?
@@ -164,21 +174,175 @@ LocusRegression notwithstanding. Here, I employ random search of the model hyper
 with a Successive Halving bandit to find the number of components which produces a descriptive but 
 generalizeable model. This process can be parallelized for faster tuning.
 
-To run the `tune` command, you have to give the path to corpus, as well as the minimum and maximum
+To run the *tune* command, you have to give the path to corpus, as well as the minimum and maximum
 bounds on the number of components to try. This command outputs a *tsv* file of scores for different
 model configurations.
-
-Additionally, I provided the `--tune-pi-prior` flag, which tells the tuner to try different values
-for the dirichlet over mixtures for each sample, the I set `--seed-reps` to 3, which tells the tuner
-to try each model configuration three times.
 
 .. code-block:: bash
 
     $ locusregression tune \    
         --corpus tutorial/corpus.pkl \
-        -min 3 -max 25 \
-        --tune-pi-prior \
-        --seed-reps 3 \
+        -min 3 -max 12 \
         --n-jobs 5 \
         -o tutorial/grid.tsv \
+
+We can plot the results in the *tutorial/grid.tsv* file to see which values for *n_components* make sense
+for the dataset:
+
+.. code-block::python
+
+    import pandas as pd
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+
+    grid = pd.read_csv('data/tutorial/grid2.tsv', sep = '\t')
+
+    sns.scatterplot(
+        data = grid,
+        x = 'param_n_components',
+        y = 'mean_test_score',
+        hue = 'iter',
+        palette='coolwarm',
+        s = 50,
+        edgecolor = 'black',
+        ax = ax,
+    )
+    sns.despine()
+    ax.set(ylabel = 'Score', xlabel = 'N components')
+
+.. image:: images/tuning.svg
+    :width: 600
+
+The SuccessiveHalving bandit runs "tournaments", where models are trained for a certain number of 
+epochs, then tested. The best performing models are promoted to the next iteration and trained 
+for more epochs. This process repeats until a group of winners is chosen.
+
+Here, five or ten components gives a good fit for the dataset - I chose to use ten.
+
+3. Training the model
+---------------------
+
+To train the representative model for the dataset, provide paths for the corpus and output, then
+specify the chosen number of components using the "-k" argument:
+
+.. code-block:: bash
+
+    $ locusregression train-model \
+        -d tutorial/corpus.pkl \
+        -o tutorial/model.pkl \
+        -k 10
+
+4. Analysis
+-----------
+
+For this section, it is most natural to use an interactive tool like Jupyter notebooks to explore
+the model and data. First, let's import some packages:
+
+.. code-block:: python
+
+    import locusregression
+    import seaborn as sns
+    import matplotlib.pylot as plt
+
+The first thing we can do with a trained model is to see what signatures were uncovered and 
+what genomic correlates they were associated with.
+
+Load the model:
+
+.. code-block:: python
+
+    model = locusregression.load('tutorial/model.pkl')
+
+Then, plot a signature like so:
+
+.. code-block:: python
+
+    model.plot_signature(1)
+
+.. image:: docs/images/signature_example.svg
+    ::width: 400
+
+And to see the signature's genomic correlate regression coefficients:
+
+.. code-block:: python
+
+    model.plot_coefficients(1)
+
+This component is very anticorrelated with expressed genes, and looks something like
+COSMIC signature SBS17b.
+
+The locusregression model computes a posterior distribution for each
+mutation which describes the probability that it was generated by each component/process. 
+The model also calculates a mutation rate for each sample which is conditioned on the 
+processes defining it.
+
+We can compute and visualize these locus-based attributes of the data:
+
+.. code-block:: bash
+
+    corpus = locusregression.load_corpus('tutorial/corpus.pkl') # load corpus
+
+    phi = model.get_phi_locus_distribution(corpus) # compute posterior over components for each mutation
+
+    mutation_rate = model.get_expected_mutation_rate(corpus[2]) # get mutation rate for a sample
+
+Now, we can plot. The top plot shows the probability that each mutation was generated by process 1. Next,
+I plot the expression correlate. Last, I show the expected mutation rate across loci. The true loci
+of the mutations are plotted as rug on the bottom plot. 
+
+.. code-block:: bash
+
+    fig, ax = plt.subplots(3,1,figsize=(20,4), sharex=True)
+    
+    sns.scatterplot(
+        x = range(model.n_loci),
+        y = phi[1], # plot first process
+        s = 1,
+        ax = ax[0],
+        color = sns.color_palette("Set1")[0],
+    )
+
+    sns.scatterplot(
+        x = range(model.n_loci),
+        y = corpus[0]['X_matrix'][0,:],
+        s = 1,
+        ax = ax[1],
+        color = sns.color_palette("Set1")[1],
+    )
+
+
+    sns.scatterplot(
+        x = range(model.n_loci),
+        y = mutation_rate,
+        color = sns.color_palette("Set1")[2],
+        s = 1,
+        ax = ax[2],
+    )
+
+    sns.rugplot(
+        x = corpus[0]['locus'],
+        ax = ax[2],
+        height=0.1,
+        alpha = 0.1,
+        color = 'black',
+    )
+    ax[0].set(ylabel = 'P(z=1 | m, l)')
+    ax[1].set(ylabel = 'Expression')
+    ax[2].set(ylabel = 'Mutation rate')
+    sns.despine()
+
+.. image:: docs/images/mutation_rate.png
+    ::width: 800
+
+Some areas of high mutational density are accounted for, but clearly more feature are needed to 
+get a better fit.
+
+Finally, to get the posterior distribution over processes for each sample, you can use:
+
+.. code-block:: bash
+
+    processes = model.predict(corpus)
+
+
+
 
