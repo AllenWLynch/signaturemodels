@@ -61,7 +61,7 @@ def write_dataset(
     
     
 def train_model(
-        locus_subsample = 1,
+        locus_subsample = 0.125,
         time_limit = None,
         tau = 1,
         kappa = 0.5,
@@ -105,7 +105,7 @@ def train_model(
     
 
 def tune(
-    locus_subsample = 0.1,
+    locus_subsample = 0.125,
     time_limit = None,
     pi_prior = 5.,
     num_epochs = 10000, 
@@ -250,7 +250,7 @@ trainer_required .add_argument('--output','-o', type = valid_path, required=True
 
 trainer_optional = trainer_sub.add_argument_group('Optional arguments')
 
-trainer_optional.add_argument('--locus-subsample','-sub', type = posfloat, default = 1,
+trainer_optional.add_argument('--locus-subsample','-sub', type = posfloat, default = 0.125,
     help = 'Whether to use locus subsampling to speed up training via stochastic variational inference.')
 trainer_optional.add_argument('--time-limit','-time', type = posint, default = None,
     help = 'Time limit in seconds for model training.')
@@ -308,7 +308,7 @@ tune_optional.add_argument('--cv','-cv', type = posint, default=1,
 
 model_options = tune_sub.add_argument_group('Model arguments')
 
-model_options.add_argument('--locus-subsample','-sub', type = posfloat, default = 0.1,
+model_options.add_argument('--locus-subsample','-sub', type = posfloat, default = 0.125,
     help = 'Whether to use locus subsampling to speed up training via stochastic variational inference.')
 model_options.add_argument('--time-limit','-time', type = posint, default = None,
     help = 'Time limit in seconds for model training.')

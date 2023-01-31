@@ -40,7 +40,7 @@ class LocusRegressor(BaseEstimator):
         bound_tol = 1e-2,
         quiet = True,
         n_jobs = 1,
-        locus_subsample = 1,
+        locus_subsample = 0.125,
         kappa = 0.5,
         tau = 1,
         eval_every = 10,
@@ -894,13 +894,16 @@ class LocusRegressor(BaseEstimator):
             for j in range(32)
         ])
 
-        lambda_posterior = np.expand_dims(
+        lambda_posterior = \
             np.random.dirichlet(
                 self.delta[component], 
                 size = monte_carlo_draws
-            ).T, 1)
+            ).T # 32 x M
 
-        signature_posterior = (lambda_posterior*eps_posterior).reshape(-1, monte_carlo_draws)
+        lambda_posterior = lambda_posterior*self.genome_trinuc_distribution/\
+                np.sum(lambda_posterior*self.genome_trinuc_distribution, axis = 0)
+
+        signature_posterior = (np.expand_dims(lambda_posterior,1)*eps_posterior).reshape(-1, monte_carlo_draws)
                 
         signature_posterior = signature_posterior/signature_posterior.sum(0, keepdims = True)
 

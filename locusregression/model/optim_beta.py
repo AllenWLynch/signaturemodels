@@ -46,7 +46,7 @@ class BetaOptimizer:
         objective = -1/(2*tau_sq)*np.sum( np.square(beta_mu) + np.square(beta_nu) ) + np.sum(np.log(beta_nu))
 
         mu_jac = -1/tau_sq * beta_mu
-        std_jac = -1/tau_sq* beta_nu + 1/beta_nu
+        std_jac = -1/tau_sq * beta_nu + 1/beta_nu
 
         return -objective, -np.concatenate([mu_jac, std_jac])
 
