@@ -104,7 +104,7 @@ to aggregate and map that track data to our windows. We can do the same for the 
     set `-null 0.0` so that winows which are not included in the track are still
     assigned a numerical value.
     
-**The *locusregression* software will not adjust the features you provide, so
+**The locusregression software will not adjust the features you provide, so
 be sure to standardize them beforehand.**
 
 Finally, we can merge all of these correlates into one file:
