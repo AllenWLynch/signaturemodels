@@ -30,8 +30,6 @@ Next, for data you will need:
 * A fasta file of your organism's genome (e.g. h19.fa)
 * A chromsizes file of your organism's genome (e.g. hg19.chrom.sizes)
 
-Fasta and chromsizes annotations can be found at the `UCSC data repository <https://genome.ucsc.edu/cgi-bin/hgGateway>_`
-
 
 1. Data preparation
 -------------------
