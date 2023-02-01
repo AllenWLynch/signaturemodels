@@ -17,14 +17,12 @@
 
 \section{Introduction}
 
-\section{Generative Model}
-
-The generative model explains the observed mutations in a dataset of $G$ genomes, where mutations in a genome are composed of a 
+The generative model explains the observed mutations in a dataset $\mathbb{D}$ of $G$ genomes, where mutations in a genome are composed of a 
 distribution over $K$ signatures, or processes, each of which has a characteristic bias with respect to which genomic loci and nucleotides it affects. 
 Mutations in genome $g$ are expressed as tuples of $(m,\ell)$, where $m \in \{ m \in \mathbb{Z} | 1 \leq m \leq 96\}$ is the trinucleotide context and the mutation (of which there are 96 possibilities)
 and $\ell \in \{ \ell \in \mathbb{Z} | 1 \leq \ell \leq L \}$ is the genomic locus or window at which that mutation occurred, with $L$ possible windows. 
 In the generative process outlined below, $\pi_g \in \mathbb{R}_{(0,1)}^K, \sum_{k=1}^K \pi_{gk} = 1$ is the composition over processes that generated the mutations in a genome $g$,
-$N_g$ is the number of mutations in $g$, and $z$ is an indicator variable which describes which process generated the $i^{th}$ mutation:
+$N_g$ is the number of mutations in $g$, and $z$ is an indicator variable which describes which process generated the $gi^{th}$ mutation:
 
 \begin{algorithm}
 \caption{Generative Process}
@@ -33,16 +31,17 @@ $N_g$ is the number of mutations in $g$, and $z$ is an indicator variable which 
   \FORALL{$g \in {1...G}$}
   	\STATE $ \pi_g \sim \textrm{Dirichlet}( \alpha ) $
   	\FORALL{$i \in {1...N_g}$}
-  		\STATE $ z_{gi} \sim \textrm{Categorical}( \pi_g ) $
-  		\STATE $ \ell_{gi} \sim \textrm{Categorical}( \theta_{z_{gi},g} ) $
-  		\STATE $ m_{gi} \sim \textrm{Categorical}( \psi_{z_{gi},\ell_{gi}} ) $
+  		\STATE $ z \sim \textrm{Categorical}( \pi_g ) $
+  		\STATE $ \ell \sim \textrm{Categorical}( \theta^{(g)}_{z} ) $
+  		\STATE $ m \sim \textrm{Categorical}( \psi^{(\ell)}_z ) $
+  		\STATE \textbf{yield} $(m,\ell)$
   	\ENDFOR
   \ENDFOR
 \end{algorithmic}
 \end{algorithm}
 
 Like the closely-related process for generating a textual corpus utilized by Latent Dirichlet Allocation (LDA), we sample the mutations in a genome by
-iteratively choosing a process ($z$), then a locus ($\ell$) and a mutation ($m$) from categorical distributions. Unlike LDA, however, the distribution over loci $\theta$ 
+iteratively choosing a process ($z$), then a mutation ($m$, $\ell$) from categorical distributions. Unlike LDA, however, the distribution over loci $\theta$ 
 is conditioned on both process \emph{and} sample effects - for a given process, the distribution over loci may be different across samples. For example, a process which
 affects nucleotides in heterochromatin will have a different distribution over loci for two samples with different epigenetic states. Learning a distribution over loci for 
 each process in each sample by estimating $\theta$ for each $z,g$ would have extremely high variance.
@@ -61,7 +60,7 @@ distribution in terms of a simpler model of process-dependent mutation rates. We
 p(\ell | z, g) = (\theta_{z,g})_\ell \propto l_\ell  \textrm{exp}(\sum_{f=1}^{F}\beta_{zf} X^{(g)}_{f\ell}) = l_\ell \textrm{exp}(\beta_z^T X^{(g)}_\ell)
 \end{equation}
 
-Above, $l_\ell$ is the length in nucleotides for that window, but this parameter can also represent user-specified "exposure" variables. For instance, $\ell$ may adjust for technical effects which influence the sensitivity to call mutations within a window independent of the mutation rate.
+Above, $l_\ell$ is the length in nucleotides for that window, but this fixed value can also represent user-specified "exposure" variables. For instance, $l$ may adjust for technical effects which influence the sensitivity to call mutations within a window independent of the mutation rate.
 
 Notably, the features $X$ are dependent on the sample $g$, while $\beta$ only depends on the process. In this way, this parameterization can capture jointly process and sample-specific variation in mutation rate across the genome using few parameters. To specify a valid probability distribution over $\ell$, we must introduce some multiplicative normalizer to the mutation rate model. That normalizer is the sum of predicted mutation rates across all loci:
 
@@ -76,6 +75,7 @@ Finally, to regularize the coefficients and address uncertainty in the posterior
 \beta_{zf} \sim \textrm{Normal}(0,\tau^2_z)
 \end{equation}
 
+We estimate the value of $\tau_z$ empirically during parameter inference.
 
 \section{Parameterizing $\psi$}
 
@@ -94,25 +94,27 @@ Assuming the reserve of contexts cannot be depleted, the portion of mutated cont
 \begin{equation}
 p(c | z, \ell) = \frac{\lambda_{zc}t_{\ell c}}{\sum_{c'\in \mathbb{C}} \lambda_{zc'}t^{T}_{c' \ell}} 
 \end{equation}
-
-Given a context and a process, the distribution over alternative nucleotides is:
-
-\begin{equation}
-p(a | z, c) = \rho_{zca}, \sum_{a \in \mathbb{A}_c} \rho_{zca} = 1
-\end{equation}
-
-We treat $\lambda \in \mathbb{R}^{K \times |\mathbb{C}|}_{(0,1)}$ as a collection of Gamma-distributed random variables. Above, we cast the problem as inferring absolute rates, which is impossible from the data. If instead, we infer relative rates:
+ 
+Above, we cast the problem as inferring absolute rates, which is impossible from the data. If instead we treat $\lambda \in \mathbb{R}^{K \times |\mathbb{C}|}_{(0,1)}$ as a collection of Gamma-distributed random variables, and we infer relative rates:
 
 \begin{equation}
 p(c | z, \ell) = 
 \left( \frac{\frac{1}{\sum_{c'=1}^{C} \lambda_{zc'}}}{\frac{1}{\sum_{c'=1}^{C} \lambda_{zc'}}} \right) \cdot \frac{\lambda_{zc}t_{\ell c}}{\sum_{c'=1}^{C} \lambda_{zc'}t^{T}_{c' \ell}} 
 \end{equation}
 
-Then the random variable $\frac{\lambda_{zc}}{\sum_{c'=1}^{C} \lambda_{zc'}} \forall c \in \{1 ... |\mathbb{C}|\}$ is Dirichlet-distributed under the condition the underlying Gamma distributions share the same rate variable. 
+Then the random variable $\frac{\lambda_{zc}}{\sum_{c'=1}^{C} \lambda_{zc'}} \forall c \in \{1 ... |\mathbb{C}|\}$ is Dirichlet-distributed under the condition the underlying Gamma distributions share the same rate variable. Therefore, we assume that $\lambda_z$ is a compositional random variable with prior $\mathrm{Dirichlet}(\mathbf{1})$.
+
+Finally, given a context and a process, the distribution over alternative nucleotides is:
+
+\begin{equation}
+p(a | z, c) = \rho_{zca}, \sum_{a \in \mathbb{A}_c} \rho_{zca} = 1
+\end{equation}
+
+where $\rho_{zc}$ is another compositional random variable with prior $\mathrm{Dirichlet}(\mathbf{1})$
 
 \section{Variational inference}
 
-For a corpus of genomes with mutations, each genome has a composition over mutational processes $\pi_g\forall g \in \{1...G\}$ drawn from a Dirichlet prior: $\pi_g \sim \mathrm{Dir}(\alpha)$. Each genome has mutations $m_{gi}$ at loci $\ell_{gi}$ associated with a hidden process variable $z_{gi} \forall i \in \{1...N_g\}$. Finally, the random variables associated with the nucleotide signature of each mutational process, $\rho$ and $\lambda$, are drawn from uniform Dirichlet priors, and the random variable $\beta$ is drawn from prior parameterized by the parameter $\tau$. Altogether, the joint PDF of the model is:
+For a corpus of genomes with mutations, each genome has a composition over mutational processes $\pi_g\forall g \in \{1...G\}$ drawn from a Dirichlet prior: $\pi_g \sim \mathrm{Dir}(\alpha)$. Each genome has mutations $m_{gi}$ at a locus $\ell_{gi}$ associated with a hidden process variable $z_{gi} \forall i \in \{1...N_g\}$. Finally, the random variables associated with the nucleotide signature of each mutational process, $\rho$ and $\lambda$, are drawn from uniform Dirichlet priors, and the random variable $\beta$ is drawn from a prior parameterized by the parameter $\tau$. Altogether, the joint PDF of the model is:
 
 \begin{align*}
 p_{\alpha,\tau}(m,l,z,\beta,\pi,\lambda,\rho) = p(\lambda | \textbf{1})p(\rho | \textbf{1})p(\beta | \tau) \\
@@ -147,7 +149,7 @@ Or equivalently:
 \Omega^* = \mathrm{argmax}_{\Omega} E_{q(.;\Omega)}[\log p_{\alpha,\tau}(m,l, \pi, \lambda, \beta, z)] + \mathcal{H}(q(.;\Omega))
 \end{equation}
 
-Expanding the terms in \eqref{1}, we define the objective function:
+Expanding the terms in \eqref{1}, we define the objective function ($\mathcal{H}$ is the entropy):
 
 \begin{equation} \label{L}
 \begin{split}
@@ -183,11 +185,11 @@ Via Jensen's inequality, we lower bound the objective function:
 \begin{equation}
 \begin{split}
 \Lagr^{(\beta)} \geq \sum_{k=1}^K \sum_{f=1}^F -\frac{1}{2\tau^2}\left(\mu_{kf}^2 + \nu_{kf}^2 \right) + \log \nu_{kf} + \\
-	\sum_{g=1}^G \sum_{i=1}^{N_g} \sum_{k=1}^K  \phi_{gik} \left[ \mu_k^T X^{(g)}_{[\ell]_{gi}} - \log{\sum_{\ell'=1}^L l_{\ell'} \textrm{exp}\{ \mu_k^T X^{(g)}_{\ell'} + \frac{1}{2}(\nu_k^T X^{(i)}_{\ell'})^2\}} \right]
+	\sum_{g=1}^G \sum_{i=1}^{N_g} \sum_{k=1}^K  \phi_{gik} \left[ \mu_k^T X^{(g)}_{[\ell]_{gi}} - \log{\sum_{\ell'=1}^L l_{\ell'} \textrm{exp}\left( \mu_k^T X^{(g)}_{\ell'} + \frac{1}{2}(\nu_k^T X^{(g)}_{\ell'})^2\right) } \right]
 \end{split}
 \end{equation}
 
-We cannot find optimal values for $\mu$,$\nu$ analytically, so we use gradient descent. Again, we define a lower-bound on the objective with the introduction of the $\zeta \in \mathbb{R}^K$ parameter. This removes the $\sum\exp$ term from the $\log$ and greatly simplifies calculation of the derivative. Below, we consider the scenario where every sample has the same genomic correlates (all samples have homogenous gene expression, chromatin accessibility, etc.), which simplifies the calculations. 
+We cannot find optimal values for $\mu$,$\nu$ analytically, so we use gradient descent. We define another  lower-bound on the objective with the introduction of the $\zeta \in \mathbb{R}^K$ parameter, which removes the $\sum\exp$ term from the $\log$ and greatly simplifies calculation of the derivative. Below, we consider the scenario where every sample has the same genomic correlates (all samples have homogenous gene expression, chromatin accessibility, etc.), which further simplifies the calculations. 
 
 \begin{equation} \label{obj}
 \begin{split}
@@ -197,7 +199,7 @@ We cannot find optimal values for $\mu$,$\nu$ analytically, so we use gradient d
 \end{split}
 \end{equation}
 
-The first line of \eqref{obj} serves to regularize the values of $\mu$ and $\nu$. Intuitively, the regularizer of $\nu$ is a concave function defined over the positive reals with a maximum at $\nu = \tau$. 
+The first line of \eqref{obj} is $E_{\beta \sim q}[\log p(\beta | \tau)]+\mathcal{H}(q(\beta))$, and serves to regularize the values of $\mu$ and $\nu$. Intuitively, the regularizer of $\nu$ is a concave function defined over the positive reals with a maximum at $\nu = \tau$. 
 
 \begin{figure}[h]
 \caption{Function $-\frac{1}{2\tau^2}\nu^2 + \log\nu$ for decreasing values of $\tau$}
@@ -205,7 +207,7 @@ The first line of \eqref{obj} serves to regularize the values of $\mu$ and $\nu$
 \includegraphics[scale=0.65]{nu_regularization.pdf}
 \end{figure}
 
-The second line of \eqref{obj} shows the sufficient statistics to update the variational parameters of $\beta$ are the number of mutations that fall within each locus weighted by the probability that mutation was generated by process $k$. To optimize, we first update $\zeta$:
+The second line of \eqref{obj} shows the sufficient statistics to update the variational parameters of $\beta$ are the number of mutations that fall within each locus weighted by the probability that mutation was generated by process $k$. To optimize, we first set $\zeta$:
 
 \begin{equation}
 \zeta_k = \sum_{\ell'=1}^L l_{\ell'}\textrm{exp} \left\{ \mu_k^T X_{\ell'} + \frac{1}{2}(\nu_k^T X_{\ell'})^2 \right\}
@@ -216,11 +218,13 @@ then provide $\surrB$ and analytical derivatives $\frac{\partial\surrB}{\partial
 
 \subsection{M-step: optimization of $\delta$, $\omega$ }
 
+Work in progress!
+
 $ E_q [\log{p(m | \ell, z, \lambda, \rho})] = E_{\rho \sim q(.;\omega)} [\log p(a|z,c,\omega)] + E_{\lambda \sim q(.;\delta)} [\log p(c|z,\ell,\lambda) ]$
 
 $\Lagr^{(\delta)} = E_{\lambda \sim q(.;\delta)} [\log p(c|z,\ell,\lambda)] + \mathcal{H}(q(\lambda; \delta)) $
 
-\begin{equation}
+\begin{equation} \label{surragate}
 \begin{split}
 \Lagr^{(\delta)} \geq \sum_{k=1}^K \sum_{c=1}^{|\mathbb{C}|} \left(\sum_{g=1}^G\sum_{i=1}^{N_g} \phi_{gik} \mathbb{I}_{[c]_gi = c}\right) \left( \Psi(\delta_{kc}) - 		\Psi(\sum_{c'=1}^{|\mathbb{C}|} \delta_{kc'}) \right) 
 	\\ - \sum_{\ell=1}^L \left(\sum_{g=1}^G\sum_{i=1}^{N_g} \phi_{gik} \mathbb{I}_{[\ell]_{gi} = \ell} \right) \log{\sum_{c'=1}^{|\mathbb{C}|} \lambda_{kc'}(\sum \lambda_k)^{-1} t_{c'\ell}} \\
@@ -236,17 +240,126 @@ $\Lagr^{(\delta)} = E_{\lambda \sim q(.;\delta)} [\log p(c|z,\ell,\lambda)] + \m
 
 \subsection{E-step: Optimization of $\gamma$, $\phi$}
 
+The $\phi$ parameter represents the posterior distribution over generative processes for each mutation $p(z=k | m, l)$, and is given by:
+
+\begin{equation}
+\begin{split}
+\phi_k \propto \textrm{exp} \left( E_q[\log p(m|\ell,z=k,\lambda,\rho)] + E_q[\log p(\ell|\beta, z=k)] + E_q [\log p(z | \pi ) ] \right)
+\end{split}
+\end{equation}
+
+To update $\gamma$:
+
+\begin{equation}
+\gamma_gk = \alpha_k + \sum_{i=1}^{N_g} \phi_{gik}
+\end{equation}
+
+Because the $\phi$ update depends on $\gamma$, and vice versa, these two parameters are optimized iteratively until $\gamma$ converges to a stable value.
 
 
-\subsection{Stochastic Variational Inference}
+\begin{algorithm} \label{Inference}
+\caption{Inference}
+\begin{algorithmic}
+  \scriptsize
+  \STATE initialize $\Omega = \{\delta, \omega, \mu, \nu, \gamma, \phi\}$
+  \STATE initialize parameters $\alpha, \tau$
+  \WHILE{$\Omega$ not converged}
+  	\STATE \textbf{E-step:}
+  	\FORALL{$g \in {1...G}$}
+  		\WHILE {$\gamma_g$ not converged}
+  			\STATE update $\phi_{gi} \forall i \in \{1, ..., N_g\}$
+  			\STATE update $\gamma_g$ with $\phi_g$
+  		\ENDWHILE
+  	\ENDFOR
+  	\STATE \textbf{M-step:}
+  	\STATE update $\mu,\nu$ with $\phi$
+  	\STATE update $\delta, \rho$ with $\phi$
+  	\IF{empirical Bayes:}
+  		\STATE update $\alpha, \tau$
+  	\ENDIF
+  \ENDWHILE
+  
+  \RETURN $\Omega, \alpha, \tau$
+\end{algorithmic}
+\end{algorithm}
 
 
-\begin{figure}[h]
+\section{Stochastic Variational Inference}
+
+The procedure outlined in \textbf{Algorithm 2} converges to a stable fixed point local optimum over many iterations through the dataset. The most time-consuming step of each iteration  is the update of the $\beta$ distribution's variational parameters, since computation of the gradient of \eqref{surragate} requires the summation of $E_q[\beta^T X]$ over all loci for each iteration of gradient descent. 
+
+In this section, we derive a stochastic variational update step which linearly reduces the time to iterate through the dataset, leads to faster convergence, and produces models with greater marginal likelihoods.
+
+Stochastic variational inference involves iteratively randomly downsampling the original dataset, finding optimal parameters on that subset as if the entire dataset had the same distribution, then updating a dataset-level copy of each parameter based on a weighted combination of each subsets' optimal parameters. Usually, this algorithm works by downsampling along the samples axis to calculate the updates, but here, we randomly downsample the number of \emph{loci} to model in each update. Importantly, each parameter update equation derived above is an unbiased estimator for the data-level paramter value when calculated on a subset of loci in the dataset. 
+
+Stochastic variational inference will likewise converged to a stable fixed point local optimum with respect to \eqref{obj} if the dataset-level parameters, for example, $\lambda$, are updated at the $t^{th}$ iteration according to: 
+
+\begin{equation}
+\lambda^t = (1-d(t))\lambda^{t-1} + d(t)\cdot\hat{\lambda^t}
+\end{equation}
+
+where $\hat{\lambda^t}$ is the optimal value calculated from the downsampled dataset at iteration $t$, and $d(t)$ is a the learning rate at epoch $t$: $d(t) = t^{-0.5}$. 
+
+\begin{algorithm}
+\caption{Stochastic Variational Inference}
+\begin{algorithmic}
+  \scriptsize
+  \STATE initialize dataset-level $\Omega = \{\delta, \omega, \mu, \nu, \gamma, \phi\}$
+  \STATE initialize parameters $\alpha, \tau$
+  \STATE set $\textrm{t}=1$
+  \STATE set subsample $=0.1$
+  \WHILE{$\Omega$ not converged}
+  	\STATE $\hat{\mathbb{D}} = \textrm{downsampleLoci}(\mathbb{D}, $ subsample $)$
+  	\STATE $\hat{\Omega} = \textrm{inference}(\hat{\mathbb{D}}, \Omega, \alpha, \tau)$ 
+  	\STATE set $\Omega = (1-d(t))\Omega + d(t)\hat{\Omega}$
+  	\STATE set $t=t+1$
+  	\IF{empirical Bayes:}
+  		\STATE update $\alpha, \tau$
+  	\ENDIF
+  \ENDWHILE
+\end{algorithmic}
+\end{algorithm}
+
+In practice, the SVI procedure (\textbf{Algorithm 3}) not only coverges a magnitude faster, but produces models with superior marginal likelihoods and test set generalization than standard variational inference (\textbf{Figure 2}). This may be because stochastic subsampling regularizes and smooths the objective space, which allows the model to avoid shallow local optima.
+
+\begin{figure}[!htb] \label{svi_fig}
 \caption{Bound convergence on training samples for PCAWG Esophogeal Adenocarcinoma Chr1 mutations dataset, colored by locus sampling rate (1 is no downsampling.)}
 \centering
-\includegraphics[scale=0.65]{svi_subsampling.pdf}
+\includegraphics[scale=0.5]{svi_subsampling.pdf}
 \end{figure}
 
+\section{Future Directions}
 
+A key limitation of the current generative model is that the local mutation rate for each process $z$ in each locus $\ell$ is modeled as proportional to $\textrm{exp}(\beta_z^T X_\ell)$, which assumes that the mutation rate for each locus is independent. There are some work-arounds that can be achieved even within the framework outlined here. The easiest solution is to model the genomic correlates at multiple resolutions (e.g. 10Kb, 100Kb, 1Mb), which can capture attributes about the wider regulatory neighborhood. Another option is to model the correlates using a convolutional kernel, where coefficients are learned to weight features not just in the current locus, but neighboring loci as well:
+
+\begin{equation}
+\lambda_{z\ell} \propto \textrm{exp}] \left( \sum_{j=-w}^w \sum_{f=1}^F \beta_{zjf} X_{(\ell+j),f} \right)
+\end{equation}
+
+The convolutional kernel above learns a coefficient $\beta$ for each feature at each locus which is within $w$ windows upstream or downstream of $\ell$. This model is equivalent to a one-layer Bayesian convolutional neural network. Generalizing this convolutional kernel to include nonlinearities, one could use the "kernel trick": 
+
+\begin{equation}
+\begin{split}
+\lambda_{z\ell} \propto \textrm{exp} \left( \sum_{\ell'=1}^L \beta_{zl} \cdot \mathrm{K}(X_\ell, X_{\ell'}) \right) \\
+	\mathrm{K}(X_\ell, X_{\ell'}) = \textrm{exp}\left(  \sum_{j=-w}^w \sum_{f=1}^F \left(X_{(\ell + j),f} - X_{(\ell'+j),f} \right)^2 \right)
+\end{split}
+\end{equation} 
+
+The kernel matrix $\mathrm{K}$ is an L$\times$L matrix, but this dimensionality could be reduced by Nystrom kernel approximation. More broadly, one could substitute a complex model (kernels, deep CNNs, transformers, etc.) which maximizes:
+
+\begin{equation}
+\begin{split}
+\Lagr^{(\beta)} \geq E_q [ p(. | \textrm{prior}) ] + \mathcal{H}(q) + \\
+	\sum_{g=1}^G \sum_{i=1}^{N_g} \sum_{k=1}^K  \phi_{gik} \left[ E_{\lambda_k \sim q(.|X^{(g)}, z=k)} [ \log \lambda_{k[\ell]_{gi}}] - \log{\sum_{\ell'=1}^L l_{\ell'}  E_{\lambda_k \sim q(.;X^{(g)}, z=k)}[\lambda_{k\ell'}]} \right]
+\end{split}
+\end{equation}
+
+The more general form above shows that the posterior distribution over mutation rates must be defined for both an expectation and log expectation in each window. This suggests the model for mutation rate at locus $\ell$ may be parameterized by:
+
+\begin{equation}
+\lambda_{z\ell} \sim \mathrm{Gamma}(a(X_\ell), b(X_\ell))
+\end{equation}
+
+Where $a, b$ are functions which predict the parameters of the Gamma distribution using the features of the locus. This direct inference of uncertainty at each locus admits a negative binomial distribution over mutations at each locus, and an overdispersed dirichlet-multinomial distribution across all loci.
 
 \end{document}

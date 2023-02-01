@@ -36,11 +36,6 @@ def tune_model(model, corpus,
     if cv == 1:
         cv = ShuffleSplit(n_splits=1, train_size=0.7, random_state=seed)
 
-    #possible_combinations = np.prod([len(k) for k in param_grid.values()])
-    #num_initial_candidates = min(possible_combinations, max_candidates)
-    #num_tournaments = min( num_tournaments, int(np.log(num_initial_candidates/n_jobs)/np.log(factor)) + 1 )
-    #logger.info('Running {} tournaments for tuning.'.format(num_tournaments))
-
     min_epochs = max(min_epochs, int( target_epochs*(1/factor)**(num_tournaments-1) ) )
     
     reglogger = logging.getLogger("LocusRegressor")

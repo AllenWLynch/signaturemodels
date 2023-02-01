@@ -432,15 +432,6 @@ class LocusRegressor(BaseEstimator):
                                 'contain at least 10,000 mutations. This slice contains {}.'.format(total_mutations)
                                 )
 
-                    '''new_sample = sample.copy()
-                    new_sample.update({    
-                            'mutation' : sample['mutation'][mask],
-                            'context' : sample['context'][mask],
-                            'count' : sample['count'][mask],
-                            'locus' : sample['locus'][mask],
-                        })
-
-                    yield new_sample'''
 
         return subsample()
 
@@ -567,15 +558,15 @@ class LocusRegressor(BaseEstimator):
 
                 if self.empirical_bayes:
 
-                    self.alpha = self.svi_update(
-                        self.alpha, 
-                        M_step_alpha(self.alpha, gamma),
-                        learning_rate    
-                    )
+                    self.alpha = M_step_alpha(self.alpha, gamma)#self.svi_update(
+                        #self.alpha, 
+                        #M_step_alpha(self.alpha, gamma),
+                        #learning_rate    
+                    #)
 
-                    self.param_tau = self.svi_update(
-                        self.param_tau, update_tau(self.beta_mu, self.beta_nu), learning_rate
-                    )
+                    self.param_tau = 1e-30 + update_tau(self.beta_mu, self.beta_nu)#self.svi_update(
+                    #    self.param_tau, update_tau(self.beta_mu, self.beta_nu), learning_rate
+                    #)
 
                 logger.debug("Estimating evidence lower bound ...")
 
@@ -618,6 +609,7 @@ class LocusRegressor(BaseEstimator):
             pass
         
         self.trained = True
+        self._clear_locus_cache()
 
         return self
 
@@ -906,7 +898,6 @@ class LocusRegressor(BaseEstimator):
         signature_posterior = (np.expand_dims(lambda_posterior,1)*eps_posterior).reshape(-1, monte_carlo_draws)
                 
         signature_posterior = signature_posterior/signature_posterior.sum(0, keepdims = True)
-
         error = 1.5*signature_posterior.std(-1)
 
         posterior_dict = dict(zip( SIGNATURE_STRINGS, zip(signature_posterior.mean(-1), error) ))
