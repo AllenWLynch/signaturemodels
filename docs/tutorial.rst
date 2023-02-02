@@ -30,8 +30,6 @@ Next, for data you will need:
 * A fasta file of your organism's genome (e.g. h19.fa)
 * A chromsizes file of your organism's genome (e.g. hg19.chrom.sizes)
 
-Fasta and chromsizes annotations can be found at the `UCSC data repository <https://genome.ucsc.edu/cgi-bin/hgGateway>_`
-
 
 1. Data preparation
 -------------------
@@ -106,7 +104,7 @@ to aggregate and map that track data to our windows. We can do the same for the 
     set `-null 0.0` so that winows which are not included in the track are still
     assigned a numerical value.
     
-**The *locusregression* software will not adjust the features you provide, so
+**The locusregression software will not adjust the features you provide, so
 be sure to standardize them beforehand.**
 
 Finally, we can merge all of these correlates into one file:
@@ -184,18 +182,19 @@ model configurations.
         --corpus tutorial/corpus.pkl \
         -min 3 -max 12 \
         --n-jobs 5 \
+        --seed-reps 3 \
         -o tutorial/grid.tsv \
 
 We can plot the results in the *tutorial/grid.tsv* file to see which values for *n_components* make sense
 for the dataset:
 
-.. code-block::python
+.. code-block:: python
 
     import pandas as pd
     import matplotlib.pyplot as plt
     import seaborn as sns
 
-    grid = pd.read_csv('data/tutorial/grid2.tsv', sep = '\t')
+    grid = pd.read_csv('tutorial/grid.tsv', sep = '\t')
 
     sns.scatterplot(
         data = grid,
@@ -217,7 +216,7 @@ The SuccessiveHalving bandit runs "tournaments", where models are trained for a 
 epochs, then tested. The best performing models are promoted to the next iteration and trained 
 for more epochs. This process repeats until a group of winners is chosen.
 
-Here, five or ten components gives a good fit for the dataset - I chose to use ten.
+Here, five components gives a good fit for the dataset.
 
 3. Training the model
 ---------------------
