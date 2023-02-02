@@ -7,7 +7,6 @@ from locusregression.corpus import COSMIC_SORT_ORDER, SIGNATURE_STRINGS, MUTATIO
 
 from .optim_beta import BetaOptimizer
 from .optim_lambda import LambdaOptimizer
-import tqdm
 import time
 
 
@@ -100,6 +99,8 @@ class LocusRegressor(BaseEstimator):
         self.random_state = np.random.RandomState(self.seed)
 
         self.alpha = self.pi_prior * np.ones(self.n_components).astype(self.dtype, copy=False)
+
+        self.param_tau = np.ones(self.n_components)
 
         self.delta = self.random_state.gamma(100, 1/100, 
                                                (self.n_components, self.n_contexts),
@@ -200,7 +201,8 @@ class LocusRegressor(BaseEstimator):
         
         elbo *= likelihood_scale
         
-        elbo += np.sum(1/(self.param_tau * np.sqrt(np.pi * 2))) + np.sum(-1/(2*self.param_tau[:,None]**2) * (np.square(self.beta_mu) + np.square(self.beta_nu)))
+        elbo += np.sum(1/(self.param_tau * np.sqrt(np.pi * 2)))
+        elbo +=  np.sum(-1/(2*self.param_tau[:,None]**2) * (np.square(self.beta_mu) + np.square(self.beta_nu)))
         elbo += np.sum(np.log(self.beta_nu))
         
         elbo += sum(dirichlet_bound(self.alpha, gamma, Elog_gamma))
@@ -389,16 +391,17 @@ class LocusRegressor(BaseEstimator):
         if self.shared_correlates:
             first_off = next(iter(corpus))
 
-            kwargs = {
+            shared_attrs = {
                 'window_size' : first_off['window_size'][:,sampled_loci], 
                 'X_matrix' : first_off['X_matrix'][:,sampled_loci],
                 'trinuc_distributions' : first_off['trinuc_distributions'][:,sampled_loci],
-                'shared_correlates' : first_off['shared_correlates'],
                 'feature_names' : first_off['feature_names'],
+                'shared_correlates' : True,
             }
 
             shared = True
-        
+        else:
+            raise NotImplemented('Mixed genomic correlates are not supported with locus subsampling - yet!')
         
         class subsample:
             
@@ -422,7 +425,8 @@ class LocusRegressor(BaseEstimator):
                         
                         if shared:
                             yield {
-                                **new_sample, **kwargs
+                                **new_sample,
+                                **shared_attrs
                             }
 
                 finally:
@@ -441,7 +445,7 @@ class LocusRegressor(BaseEstimator):
         return (1-learning_rate)*old + learning_rate*new
 
 
-    def _fit(self,corpus):
+    def _fit(self,corpus, reinit = True):
 
         if self.locus_subsample == 1:
             learning_rate = 1
@@ -451,20 +455,18 @@ class LocusRegressor(BaseEstimator):
 
         likelihood_scale = 1/self.locus_subsample
             
-        self.n_locus_features, self.n_loci = corpus[0]['X_matrix'].shape
+        self.n_locus_features, self.n_loci = next(iter(corpus))['X_matrix'].shape
         
         self.trained = False
         self.n_samples = len(corpus)
 
-        self.shared_correlates = corpus[0]['shared_correlates']
-        self.feature_names = corpus[0]['feature_names']
+        self.shared_correlates = next(iter(corpus))['shared_correlates']
+        self.feature_names = next(iter(corpus))['feature_names']
         
         self.genome_trinuc_distribution = np.sum(
-            corpus[0]['trinuc_distributions']*corpus[0]['window_size'],
+            next(iter(corpus))['trinuc_distributions']*next(iter(corpus))['window_size'],
             -1, keepdims= True
         )
-
-        self.param_tau = np.ones(self.n_components)
 
         assert self.n_jobs > 0
 
@@ -477,15 +479,24 @@ class LocusRegressor(BaseEstimator):
         assert self.n_locus_features < self.n_loci, \
             'The feature matrix should be of shape (N_features, N_loci) where N_features << N_loci. The matrix you provided appears to be in the wrong orientation.'
 
-        self._init_variables()
-        
+        if not reinit:
+            try:
+                self.param_tau
+            except AttributeError:
+                reinit = True
+
+        if reinit:
+            self._init_variables()
+            self.bounds, self.elapsed_times = [], []
+            total_time = 0
+            self.epochs_trained = 0
+        else:
+            total_time = np.cumsum(self.elapsed_times)
+
         gamma = self._init_doc_variables(len(corpus))
         
-        self.bounds, self.elapsed_times = [], []
-        total_time = 0
-        
         try:
-            for epoch in range(1,self.num_epochs+1):
+            for epoch in range(self.epochs_trained, self.num_epochs+1):
 
                 start_time = time.time()
 
@@ -558,21 +569,24 @@ class LocusRegressor(BaseEstimator):
 
                 if self.empirical_bayes:
 
-                    self.alpha = M_step_alpha(self.alpha, gamma)#self.svi_update(
-                        #self.alpha, 
-                        #M_step_alpha(self.alpha, gamma),
-                        #learning_rate    
-                    #)
+                    self.alpha = self.svi_update(
+                        self.alpha, 
+                        M_step_alpha(self.alpha, new_gamma),
+                        learning_rate    
+                    )
 
-                    self.param_tau = 1e-30 + update_tau(self.beta_mu, self.beta_nu)#self.svi_update(
-                    #    self.param_tau, update_tau(self.beta_mu, self.beta_nu), learning_rate
-                    #)
+                    self.param_tau = self.svi_update(
+                        self.param_tau, 
+                        update_tau(new_beta_mu, new_beta_nu), 
+                        learning_rate
+                    )
 
                 logger.debug("Estimating evidence lower bound ...")
 
                 elapsed_time = time.time() - start_time
                 self.elapsed_times.append(elapsed_time)
                 total_time += elapsed_time
+                self.epochs_trained+=1
 
                 if epoch % self.eval_every == 0:
                     
@@ -629,6 +643,10 @@ class LocusRegressor(BaseEstimator):
 
         '''
         return self._fit(corpus)
+
+
+    def partial_fit(self, corpus):
+        return self._fit(corpus, reinit=False)
 
 
     def predict(self,corpus):
@@ -723,7 +741,7 @@ class LocusRegressor(BaseEstimator):
         if isinstance(corpus, dict):
             corpus = [corpus]
         else:
-            assert isinstance(corpus, list) and (len(corpus) == 0 or corpus[0]['shared_correlates']), \
+            assert isinstance(corpus, list) and (len(corpus) == 0 or next(iter(corpus))['shared_correlates']), \
                 'This function is only available for corpuses with shared genomic correlates.'
 
         n_samples = len(corpus)
@@ -781,12 +799,12 @@ class LocusRegressor(BaseEstimator):
 
         locus_phis = self.get_phi_locus_distribution(corpus)
         
-        X_matrix = corpus[0]['X_matrix']
+        X_matrix = next(iter(corpus))['X_matrix']
 
         return partial(plot_phi_regression, 
                     phis = locus_phis, 
                     X_matrix = X_matrix,
-                    feature_names = corpus[0]['feature_names']
+                    feature_names = next(iter(corpus))['feature_names']
                 )
 
 
@@ -809,10 +827,10 @@ class LocusRegressor(BaseEstimator):
         if isinstance(corpus, dict):
             corpus = [corpus]
         else:
-            assert len(corpus) == 1 or corpus[0]['shared_correlates'], \
+            assert len(corpus) == 1 or next(iter(corpus))['shared_correlates'], \
                 'This function is only available for corpuses with shared genomic correlates, or for single records from a corpus.'
 
-        X_matrix = corpus[0]['X_matrix']
+        X_matrix = next(iter(corpus))['X_matrix']
         
         posterior_samples = np.random.randn(self.n_components, self.n_locus_features, n_samples)*self.beta_nu[:,:,None]\
                  + self.beta_mu[:,:,None]

@@ -1,4 +1,4 @@
-from .corpus import Corpus, MixedCorpus, load_corpus, save_corpus
+from .corpus import CorpusReader, MixedReader, load_corpus, save_corpus
 from .model import LocusRegressor, tune_model, load_model
 import argparse
 from argparse import ArgumentTypeError
@@ -6,6 +6,7 @@ import os
 import numpy as np
 import sys
 import logging
+import json
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -43,7 +44,7 @@ def write_dataset(
         assert len(exposure_files) in [0,1, len(vcf_files)],\
             'User must provide zero, one, or the number of exposure files which matches the number of VCF files.'
 
-        dataset = MixedCorpus.create_corpus(
+        dataset = MixedReader.create_corpus(
             **shared_args, 
             exposure_files = exposure_files,
             correlates_files = correlates_files,
@@ -51,7 +52,7 @@ def write_dataset(
     
     else:
 
-        dataset = Corpus.create_corpus(
+        dataset = CorpusReader.create_corpus(
             **shared_args,
             exposure_file = None if len(exposure_files) == 0 else exposure_files[0],
             correlates_file = correlates_files[0]
@@ -108,59 +109,41 @@ def tune(
     locus_subsample = 0.125,
     time_limit = None,
     pi_prior = 5.,
-    num_epochs = 10000, 
-    difference_tol = 1e-3,
-    estep_iterations = 1000,
     bound_tol = 1e-2,
     n_jobs = 1,
-    cv = 1,
-    seed_reps = 1,
-    max_candidates = 100,
-    tune_pi_prior= False,
     factor = 3,
-    target_epochs = 300,
-    min_epochs = 30,
-    num_tournaments = 4,*,
+    train_size = 0.7,
+    max_epochs = 300,
+    successive_halving = False,*,
     output,
     corpus,
     min_components, 
     max_components,
 ):
 
-    model = LocusRegressor(
+    model_params = dict(
         pi_prior = pi_prior,
-        num_epochs = num_epochs, 
-        difference_tol = difference_tol,
-        estep_iterations = estep_iterations,
         bound_tol = bound_tol,
-        n_jobs=1,
         locus_subsample=locus_subsample,
-        time_limit=time_limit,
+        time_limit=time_limit
     )
 
     corpus = load_corpus(corpus)
 
     grid = tune_model(
-        model, corpus,
+        corpus,
         n_jobs = n_jobs,
-        cv = cv,
-        seed_reps=seed_reps,
-        max_candidates = max_candidates,
+        train_size = train_size,
         min_components = min_components,
         max_components = max_components,
-        tune_pi_prior = tune_pi_prior,
-        num_tournaments = num_tournaments,
         factor = factor,
-        target_epochs = target_epochs,
-        min_epochs=min_epochs,
+        max_epochs=max_epochs,
+        successive_halving=successive_halving,
+        **model_params,
     )
 
-    print('Best params: ' + str(grid.best_params_))
-
     with open(output,'w') as f:
-        print(*grid.cv_results_.keys(), file = f, sep = '\t')
-        for row in zip(*grid.cv_results_.values()):
-            print(*row, file = f, sep = '\t')
+        json.dump(grid, f)
     
 
 parser = argparse.ArgumentParser(
@@ -286,25 +269,11 @@ tune_required.add_argument('--n-jobs','-j', type = posint, required= True,
 
 tune_optional = tune_sub.add_argument_group('Optional arguments')
 
-tune_optional.add_argument('--target-epochs', type = posint, default = 300,
+tune_optional.add_argument('--max-epochs', type = posint, default = 300,
     help = 'Number of epochs to train for on the last iteration of'
-            ' successive halving. This should be set high enough such that the model converges to a solution.')
-tune_optional.add_argument('--min-epochs', type = posint, default = 30,
-    help = 'Minimum number of epochs to train before comparing models')
-
-tune_optional.add_argument('--seed-reps', '-reps', type = posint, default=1,
-    help = 'Number of different initialization seeds to try for each parameter combination.')
-
-tune_optional.add_argument('--num-tournaments','-t', type = posint, default = 4,
-    help = 'Number of hyperparameter tournaments to run.')
+            ' successive halving/Hyperband. This should be set high enough such that the model converges to a solution.')
 tune_optional.add_argument('--factor','-f',type = posint, default = 3,
     help = 'Successive halving reduction factor for each iteration')
-tune_optional.add_argument('--max-candidates','-c', type = posint, default = 100,
-    help = 'Maximum number of hyperparameter combinations to try.')
-tune_optional.add_argument('--tune-pi-prior',action = 'store_true', default = False,
-    help = 'Tune the dirichlet prior parameter alpha.')
-tune_optional.add_argument('--cv','-cv', type = posint, default=1,
-    help= 'Number of folds for cross-validation on training partition.')
 
 model_options = tune_sub.add_argument_group('Model arguments')
 

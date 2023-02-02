@@ -1,8 +1,7 @@
 import numpy as np
-#from sklearn.preprocessing import OneHotEncoder, StandardScaler
-from locusregression.corpus.corpus import Sample
+from locusregression.corpus.readers import Sample
+from locusregression.corpus.corpus import Corpus
 from locusregression.corpus.featurization import CONTEXT_IDX, MUTATIONS_IDX
-import tqdm
 
 TRANSITION_MATRIX = np.array([
     [0.99, 0.005, 0.005],
@@ -103,11 +102,11 @@ class SimulatedCorpus:
             raise NotImplementedError()
 
 
-        corpus = []
-        for pi, n_mutations in tqdm.tqdm(zip(cell_pi, cell_n_mutations), 
-            total = n_cells, desc = 'Simulating cells'):
+        samples = []
+        for pi, n_mutations in zip(cell_pi, cell_n_mutations):
 
-            sample = SimulatedCorpus.simulate_sample(
+            samples.append(
+                SimulatedCorpus.simulate_sample(
                     randomstate, 
                     psi_matrix=psi_matrix,
                     trinuc_distributions=trinuc_distributions,
@@ -115,15 +114,15 @@ class SimulatedCorpus:
                     pi = pi, 
                     n_mutations= n_mutations
                 )
-
-            corpus.append({
-                **sample,
-                'shared_correlates' : True,
-                'window_size' : exposures, 
-                'X_matrix' : signals,
-                'trinuc_distributions' : trinuc_distributions,
-                'feature_names' : [f'Signal {i}' for i in range(num_states)]
-            })
+            )
+        
+        corpus = Corpus(
+                samples = samples,
+                window_size = exposures, 
+                X_matrix = signals,
+                trinuc_distributions = trinuc_distributions,
+                feature_names = [f'Signal {i}' for i in range(num_states)]
+        )
 
         generative_parameters = {
             'states' : states,
@@ -154,14 +153,15 @@ class SimulatedCorpus:
 
     @staticmethod
     def get_signals(randomstate,*, state, signal_means, signal_std):
-
-        state_as_onehot = OneHotEncoder().fit_transform(state[:,None]).toarray() # L, S
+        
+        n_loci, n_features = len(state), len(signal_means)
+        state_as_onehot = np.zeros(( n_loci, n_features ))
+        state_as_onehot[ np.arange(n_loci), state] = np.ones(n_loci).astype(int)
 
         signals = signal_means[:,None]*state_as_onehot.T \
                 + signal_std[:,None]*randomstate.randn(len(signal_means), len(state)) # S, L
 
-        return StandardScaler().fit_transform(signals.T).T
-
+        return (signals - signals.mean(-1, keepdims = True))/signals.std(-1, keepdims = True)
 
 
     @staticmethod

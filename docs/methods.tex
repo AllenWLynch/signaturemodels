@@ -45,10 +45,10 @@ iteratively choosing a process ($z$), then a mutation ($m$, $\ell$) from categor
 is conditioned on both process \emph{and} sample effects - for a given process, the distribution over loci may be different across samples. For example, a process which
 affects nucleotides in heterochromatin will have a different distribution over loci for two samples with different epigenetic states. Learning a distribution over loci for 
 each process in each sample by estimating $\theta$ for each $z,g$ would have extremely high variance.
-Therefore, we estimate $\theta$ using a data efficient parameterization which describes how a process acts across loci and samples with respect to genomic correlates (see section \textbf{3}).
+Therefore, we estimate $\theta$ using a data efficient parameterization which describes how a process acts across loci and samples with respect to genomic correlates (see section \textbf{2}).
 
 Likewise, the distribution over mutations, $\psi$, is conditioned on the process \emph{and} the locus, since different genomic windows may have different 
-distributions over trinucleotide contexts on which a process acts. Again, we must construct a data-efficient parameterization for this distribution (see section \textbf{4}).
+distributions over trinucleotide contexts on which a process acts. Again, we must construct a data-efficient parameterization for this distribution (see section \textbf{3}).
 
 
 \section{Parameterizing $\theta$}
@@ -336,16 +336,13 @@ A key limitation of the current generative model is that the local mutation rate
 \lambda_{z\ell} \propto \textrm{exp}] \left( \sum_{j=-w}^w \sum_{f=1}^F \beta_{zjf} X_{(\ell+j),f} \right)
 \end{equation}
 
-The convolutional kernel above learns a coefficient $\beta$ for each feature at each locus which is within $w$ windows upstream or downstream of $\ell$. This model is equivalent to a one-layer Bayesian convolutional neural network. Generalizing this convolutional kernel to include nonlinearities, one could use the "kernel trick": 
+The convolutional kernel above learns a coefficient $\beta$ for each feature at each locus which is within $w$ windows upstream or downstream of $\ell$. This model is equivalent to a one-layer Bayesian convolutional neural network, and can be constructed with no change to the model presented here by defining the feature matrix $X$ such that $X_\ell$, the features for locus $\ell$, are $X_{(\ell+j),f}\forall j\in\{-w, ..., w\}, f \in \{1...F\}$. Furthermore, nonlinearities and interaction terms can be encoded by polynomial expansion of the terms in $X$. Finally, it may be of interest to compare mutation rates and locus biases across samples. For example, to determine if the same process (in terms of mutational signature) affects expressed loci at different rates for two groups of samples, $\mathbb{S}_1$ and $\mathbb{S}_2$, we can construct a mixed effects model:
 
 \begin{equation}
-\begin{split}
-\lambda_{z\ell} \propto \textrm{exp} \left( \sum_{\ell'=1}^L \beta_{zl} \cdot \mathrm{K}(X_\ell, X_{\ell'}) \right) \\
-	\mathrm{K}(X_\ell, X_{\ell'}) = \textrm{exp}\left(  \sum_{j=-w}^w \sum_{f=1}^F \left(X_{(\ell + j),f} - X_{(\ell'+j),f} \right)^2 \right)
-\end{split}
-\end{equation} 
+\lambda^{(g)}_{z\ell} \propto \textrm{exp}\left( \beta_{z,1} X^{(g)}_{\ell,\textrm{expression}} \mathbb{I}_{g\in\mathbb{S}_1} + \beta_{z,2} X^{(g)}_{\ell,\textrm{expression}} \mathbb{I}_{g\in\mathbb{S}_2} \right)
+\end{equation}
 
-The kernel matrix $\mathrm{K}$ is an L$\times$L matrix, but this dimensionality could be reduced by Nystrom kernel approximation. More broadly, one could substitute a complex model (kernels, deep CNNs, transformers, etc.) which maximizes:
+More broadly, one could substitute a complex model (kernels, deep CNNs, transformers, etc.) which maximizes:
 
 \begin{equation}
 \begin{split}
@@ -361,5 +358,14 @@ The more general form above shows that the posterior distribution over mutation 
 \end{equation}
 
 Where $a, b$ are functions which predict the parameters of the Gamma distribution using the features of the locus. This direct inference of uncertainty at each locus admits a negative binomial distribution over mutations at each locus, and an overdispersed dirichlet-multinomial distribution across all loci.
+
+\section{To do}
+
+\begin{itemize}
+  \item Prove that $\beta$ update is positive semi-definite - I have the Hessian worked out.
+  \item Write code to automatically evaluate a trained model against the generative parameters of a simulation - The forward simulation is done.
+  \item Currently, exposures only affect the distribution over loci, in the future, need to add ingestion and adjustment for 
+  	different sensitivities to CpG / others. This will not require changes to the model.
+\end{itemize}
 
 \end{document}
