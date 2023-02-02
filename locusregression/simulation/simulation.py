@@ -2,6 +2,8 @@ import numpy as np
 from locusregression.corpus.readers import Sample
 from locusregression.corpus.corpus import Corpus
 from locusregression.corpus.featurization import CONTEXT_IDX, MUTATIONS_IDX
+import json
+import os
 
 TRANSITION_MATRIX = np.array([
     [0.99, 0.005, 0.005],
@@ -24,6 +26,10 @@ TRINUC_PRIORS = np.array([
 
 SIGNAL_MEANS = np.array([1.,1.,1.])
 SIGNAL_STD = np.array([0.3, 0.25, 0.5])
+
+
+with open(os.path.join(os.path.dirname(__file__), 'cosmic.json'),'r') as f:
+    COSMIC_SIGS = json.load(f)
 
 
 class SimulatedCorpus:
@@ -57,8 +63,13 @@ class SimulatedCorpus:
         signal_means = SIGNAL_MEANS.copy(),
         signal_std = SIGNAL_STD.copy(),
         shared_correlates = True,*,
-        signatures,
+        cosmic_sigs,
     ):
+
+        signatures = np.vstack([
+            np.expand_dims(SimulatedCorpus.cosmic_sig_to_matrix(COSMIC_SIGS[sig_id]), 0)
+            for sig_id in cosmic_sigs
+        ])
 
         num_states = state_transition_matrix.shape[0]
         assert state_transition_matrix.shape == (num_states, num_states)

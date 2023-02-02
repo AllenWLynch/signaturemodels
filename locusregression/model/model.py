@@ -384,12 +384,17 @@ class LocusRegressor(BaseEstimator):
         n_subsample_loci = int(self.n_loci * self.locus_subsample)
         sampled_loci = self.random_state.choice(self.n_loci, size = n_subsample_loci)
         
+        bool_array = np.zeros(self.n_loci).astype(bool)
+        bool_array[sampled_loci] = True
+
+
         # uniformly sample loci
         subsample_lookup = dict(zip(sampled_loci, np.arange(n_subsample_loci).astype(int))) 
 
         shared = False
+        first_off = next(iter(corpus))
+
         if self.shared_correlates:
-            first_off = next(iter(corpus))
 
             shared_attrs = {
                 'window_size' : first_off['window_size'][:,sampled_loci], 
@@ -398,10 +403,16 @@ class LocusRegressor(BaseEstimator):
                 'feature_names' : first_off['feature_names'],
                 'shared_correlates' : True,
             }
-
             shared = True
+
         else:
-            raise NotImplemented('Mixed genomic correlates are not supported with locus subsampling - yet!')
+            shared_attrs = {
+                'trinuc_distributions' : first_off['trinuc_distributions'][:,sampled_loci],
+                'feature_names' : first_off['feature_names'],
+                'shared_correlates' : False,
+            }
+
+        
         
         class subsample:
             
@@ -410,9 +421,11 @@ class LocusRegressor(BaseEstimator):
                 
                 try:
                     total_mutations = 0
+
                     for i, sample in enumerate(corpus):
                         
-                        mask = np.array([x in subsample_lookup for x in sample['locus']])
+                        #mask = np.array([x in subsample_lookup for x in sample['locus']])
+                        mask = bool_array[sample['locus']]
 
                         new_sample = {
                             'mutation' : sample['mutation'][mask],
@@ -428,13 +441,21 @@ class LocusRegressor(BaseEstimator):
                                 **new_sample,
                                 **shared_attrs
                             }
+                        else:
+
+                            yield {
+                                **new_sample,
+                                'window_size' : sample['window_size'][:,sampled_loci], 
+                                'X_matrix' : sample['X_matrix'][:,sampled_loci],
+                                **shared_attrs
+                            }
 
                 finally:
-                    
-                    if i > 1 and total_mutations < 10000:
-                        logger.info('A subsampled slice of the dataset for stochastic variational inference should '
-                                'contain at least 10,000 mutations. This slice contains {}.'.format(total_mutations)
-                                )
+                    pass
+                    #if i > 1 and total_mutations < 10000:
+                    #    logger.info('A subsampled slice of the dataset for stochastic variational inference should '
+                    #            'contain at least 10,000 mutations. This slice contains {}.'.format(total_mutations)
+                    #            )
 
 
         return subsample()
@@ -463,11 +484,6 @@ class LocusRegressor(BaseEstimator):
         self.shared_correlates = next(iter(corpus))['shared_correlates']
         self.feature_names = next(iter(corpus))['feature_names']
         
-        self.genome_trinuc_distribution = np.sum(
-            next(iter(corpus))['trinuc_distributions']*next(iter(corpus))['window_size'],
-            -1, keepdims= True
-        )
-
         assert self.n_jobs > 0
 
         if self.n_jobs > 1:
@@ -524,31 +540,31 @@ class LocusRegressor(BaseEstimator):
                 new_beta_mu, new_beta_nu, new_delta = \
                     np.zeros_like(self.beta_mu), np.zeros_like(self.beta_nu), np.zeros_like(self.delta)
 
-                for k in range(self.n_components):   
+                    
+                if self.shared_correlates:
 
                     first_off = next(iter(inner_corpus))
-                    
-                    if self.shared_correlates:
-                        window_sizes = [first_off['window_size']]
-                        X_matrices = [first_off['X_matrix']]
-                        trinuc = [first_off['trinuc_distributions']]
-                        update_beta_sstats = [{l : ss[k] for l,ss in beta_sstats.items()}]
+                    window_sizes = [first_off['window_size']]
+                    X_matrices = [first_off['X_matrix']]
+                    trinuc = [first_off['trinuc_distributions']]
+                    update_beta_sstats = lambda k : [{l : ss[k] for l,ss in beta_sstats.items()}]
 
-                    else:
-                        update_beta_sstats = [
-                                {l : ss[k] for l,ss in beta_sstats_sample.items()}
-                                for beta_sstats_sample in beta_sstats
-                            ]
-                        
-                        window_sizes = map(lambda x : x['window_size'], inner_corpus)
-                        X_matrices = map(lambda x : x['X_matrix'], inner_corpus)
-                        trinuc = map(lambda x : x['trinuc_distributions'], inner_corpus)
+                else:
+                    
+                    window_sizes = [x['window_size'] for x in inner_corpus]
+                    X_matrices = [x['X_matrix'] for x in inner_corpus]
+                    trinuc = [x['trinuc_distributions'] for x in inner_corpus]
+
+                    update_beta_sstats = lambda k : [{l : ss[k] for l,ss in beta_sstats_sample.items()} for beta_sstats_sample in beta_sstats]
+                    
+
+                for k in range(self.n_components):   
 
                     new_beta_mu[k], new_beta_nu[k] = \
                         BetaOptimizer.optimize(
                             beta_mu0 = self.beta_mu[k],  
                             beta_nu0 = self.beta_nu[k],
-                            beta_sstats = update_beta_sstats,
+                            beta_sstats = update_beta_sstats(k),
                             window_sizes=window_sizes,
                             X_matrices=X_matrices,
                             tau = self.param_tau[k]
@@ -556,7 +572,7 @@ class LocusRegressor(BaseEstimator):
 
                     new_delta[k] = LambdaOptimizer.optimize(self.delta[k],
                         trinuc_distributions = trinuc,
-                        beta_sstats = update_beta_sstats,
+                        beta_sstats = update_beta_sstats(k),
                         delta_sstats = delta_sstats[k],
                     )
 
@@ -623,6 +639,7 @@ class LocusRegressor(BaseEstimator):
             pass
         
         self.trained = True
+
         self._clear_locus_cache()
 
         return self
@@ -714,6 +731,19 @@ class LocusRegressor(BaseEstimator):
                 gamma = gamma,
                 likelihood_scale=self.n_samples/n_samples,
             )
+
+
+    def calc_signature_sstats(self, corpus):
+
+        self._weighted_trinuc_dists = self._get_weighted_trinuc_distribution(corpus)
+
+        self._genome_trinuc_distribution = np.sum(
+            self._pop_corpus(corpus)['trinuc_distributions']*\
+                self._pop_corpus(corpus)['window_size'],
+            -1, keepdims= True
+        )
+
+        self._genome_trinuc_distribution/=self._genome_trinuc_distribution.sum()
 
 
     def get_phi_locus_distribution(self, corpus):
@@ -844,6 +874,38 @@ class LocusRegressor(BaseEstimator):
         return expected_psi
 
 
+    def _pop_corpus(self, corpus):
+        return next(iter(corpus))
+
+    def _check_shared(self, corpus):
+        return self._pop_corpus(corpus)['shared_correlates']
+
+
+    def _get_weighted_trinuc_distribution(self, corpus):
+
+        if self._check_shared(corpus):
+
+            psi_matrix = self.get_locus_distribution(self._pop_corpus(corpus)) #K, L
+            trinuc_dist = self._pop_corpus(corpus)['trinuc_distributions'] # C, L
+            window_size = self._pop_corpus(corpus)['window_size'] # 1, L
+
+            return psi_matrix.dot((trinuc_dist * window_size).T) # K, C
+
+        else:
+
+            trinuc_dists = []
+
+            for sample in corpus:
+
+                psi_matrix = self.get_locus_distribution(sample) #K, L
+                trinuc_dist = sample['trinuc_distributions']
+                window_size = sample['window_size']
+
+                trinuc_dists.append(psi_matrix.dot((trinuc_dist * window_size).T)) # G,K,L
+
+            return np.mean(trinuc_dists, axis = 0)
+
+
     def get_expected_mutation_rate(self, corpus, n_samples = 100):
         '''
         For a sample, calculate the expected mutation rate. First, we infer the mixture of 
@@ -877,7 +939,9 @@ class LocusRegressor(BaseEstimator):
 
     def signature(self, component, 
             monte_carlo_draws = 1000,
-            return_error = False):
+            return_error = False,
+            normalization = 'local',
+            raw = False):
         '''
         Returns the 96-dimensional channel for a component.
 
@@ -899,6 +963,17 @@ class LocusRegressor(BaseEstimator):
 
         assert isinstance(component, int) and 0 <= component < self.n_components
         
+        try:
+            if normalization == 'local':
+                norm_frequencies = self._weighted_trinuc_dists[component][:,None]
+            elif normalization == 'global':
+                norm_frequencies = self._genome_trinuc_distribution
+            else:
+                raise ValueError(f'Normalization option {normalization} does not exist.')
+        except AttributeError as err:
+            raise AttributeError('User must run "model.calc_signature_sstats(corpus)" before extracting signatures from data.') from err
+
+
         eps_posterior = np.concatenate([
             np.expand_dims(np.random.dirichlet(self.rho[component, j], size = monte_carlo_draws).T, 0)
             for j in range(32)
@@ -910,15 +985,20 @@ class LocusRegressor(BaseEstimator):
                 size = monte_carlo_draws
             ).T # 32 x M
 
-        lambda_posterior = lambda_posterior*self.genome_trinuc_distribution/\
-                np.sum(lambda_posterior*self.genome_trinuc_distribution, axis = 0)
+        lambda_posterior = lambda_posterior*norm_frequencies/ \
+                np.sum(lambda_posterior*norm_frequencies, axis = 0)
 
         signature_posterior = (np.expand_dims(lambda_posterior,1)*eps_posterior).reshape(-1, monte_carlo_draws)
                 
         signature_posterior = signature_posterior/signature_posterior.sum(0, keepdims = True)
-        error = 1.5*signature_posterior.std(-1)
 
-        posterior_dict = dict(zip( SIGNATURE_STRINGS, zip(signature_posterior.mean(-1), error) ))
+        error = 1.5*signature_posterior.std(-1)
+        mean = signature_posterior.mean(-1)
+
+        if raw:
+            return mean
+
+        posterior_dict = dict(zip( SIGNATURE_STRINGS, zip(mean, error) ))
 
         mean, error = list(zip(
             *[posterior_dict[mut] for mut in COSMIC_SORT_ORDER]
@@ -930,12 +1010,13 @@ class LocusRegressor(BaseEstimator):
             return mean
 
 
-    def plot_signature(self, component, ax = None, figsize = (6,1.25)):
+    def plot_signature(self, component, ax = None, figsize = (6,1.25), normalization = 'local'):
         '''
         Plot signature.
         '''
 
-        mean, error = self.signature(component, return_error=True)
+        mean, error = self.signature(component, return_error=True, 
+            normalization = normalization)
         
         if ax is None:
             fig, ax = plt.subplots(1,1,figsize= figsize)

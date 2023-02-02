@@ -78,7 +78,8 @@ class LambdaOptimizer:
                     beta_sstats = beta_sstats_sample, 
                 )
                 for trinuc, beta_sstats_sample in \
-                    zip(trinuc_distributions, beta_sstats)
+                    zip(trinuc_distributions, beta_sstats) \
+                    if len(beta_sstats_sample) > 0
             ]
 
 

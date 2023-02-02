@@ -36,8 +36,7 @@ class BetaOptimizer:
                 'X_matrix' : X_matrix,
                 }
 
-        return partial(BetaOptimizer._objective_jac_sample, **optim_kwargs)#, \
-                #partial(BetaOptimizer._hess_sample, **optim_kwargs)
+        return partial(BetaOptimizer._objective_jac_sample, **optim_kwargs)
 
 
     @staticmethod
@@ -83,6 +82,19 @@ class BetaOptimizer:
     
 
     @staticmethod
+    def _hess_regularization(beta_mu, beta_nu, tau):
+
+        F = len(beta_mu)
+
+        return np.diag(
+            np.concatenate([
+                np.ones(F) * -1/(tau**2),
+                np.ones(F) * -1/(tau**2)  - 1/np.square(beta_nu)
+            ])
+        )
+
+
+    @staticmethod
     def _hess_sample(
             beta_mu, 
             beta_nu,*,
@@ -96,18 +108,15 @@ class BetaOptimizer:
             K_weights
         ):
 
-        F = beta_mu.size
-
         std_inner = np.dot(beta_nu, X_matrix)
         locus_expectation = window_size * np.exp(np.dot(beta_mu, X_matrix) + 1/2*np.square(std_inner))*X_matrix # L,F
         
-        dmu_dmu = -np.diag(np.ones(F)) - K_weights/normalizer*np.dot(locus_expectation, X_matrix.T) # (F,F) + (F,L)x(L,F) --> (F,F)
+        dmu_dmu = -K_weights/normalizer*np.dot(locus_expectation, X_matrix.T) # (F,F) + (F,L)x(L,F) --> (F,F)
         
         dmu_dstd = -K_weights/normalizer*np.dot(locus_expectation * std_inner, X_matrix.T)
         
-        dstd_dstd = -np.diag(np.ones(F)) - K_weights/normalizer*np.dot(locus_expectation * (np.square(std_inner) + 1), X_matrix.T) \
-            - np.diag(1/np.square(beta_nu))
-        
+        dstd_dstd = -K_weights/normalizer*np.dot(locus_expectation * (np.square(std_inner) + 1), X_matrix.T)
+
         hess_matrix = np.vstack([
             np.hstack([dmu_dmu, dmu_dstd]), 
             np.hstack([dmu_dstd.T, dstd_dstd])
@@ -143,10 +152,10 @@ class BetaOptimizer:
                     beta_sstats=beta_sstats_sample,
                 )
                 for _window, _X, beta_sstats_sample in \
-                    zip(window_sizes, X_matrices, beta_sstats)
+                    zip(window_sizes, X_matrices, beta_sstats) \
+                    if len(beta_sstats_sample) > 0
             ]
 
-            #hess = lambda x : hess_func(x[:F], x[F:])
 
         def reduce_objective_jac(x):
             '''

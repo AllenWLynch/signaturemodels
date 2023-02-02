@@ -15,6 +15,7 @@
 \begin{document}
 \maketitle
 
+
 \section{Introduction}
 
 The generative model explains the observed mutations in a dataset $\mathbb{D}$ of $G$ genomes, where mutations in a genome are composed of a 
@@ -339,7 +340,7 @@ A key limitation of the current generative model is that the local mutation rate
 The convolutional kernel above learns a coefficient $\beta$ for each feature at each locus which is within $w$ windows upstream or downstream of $\ell$. This model is equivalent to a one-layer Bayesian convolutional neural network, and can be constructed with no change to the model presented here by defining the feature matrix $X$ such that $X_\ell$, the features for locus $\ell$, are $X_{(\ell+j),f}\forall j\in\{-w, ..., w\}, f \in \{1...F\}$. Furthermore, nonlinearities and interaction terms can be encoded by polynomial expansion of the terms in $X$. Finally, it may be of interest to compare mutation rates and locus biases across samples. For example, to determine if the same process (in terms of mutational signature) affects expressed loci at different rates for two groups of samples, $\mathbb{S}_1$ and $\mathbb{S}_2$, we can construct a mixed effects model:
 
 \begin{equation}
-\lambda^{(g)}_{z\ell} \propto \textrm{exp}\left( \beta_{z,1} X^{(g)}_{\ell,\textrm{expression}} \mathbb{I}_{g\in\mathbb{S}_1} + \beta_{z,2} X^{(g)}_{\ell,\textrm{expression}} \mathbb{I}_{g\in\mathbb{S}_2} \right)
+\lambda^{(g)}_{z\ell} \propto \textrm{exp}\left( \beta_{z,1} X^{(g)}_{\ell,\textrm{expression}} + \beta_{z,2} X^{(g)}_{\ell,\textrm{expression}} \mathbb{I}_{g\in\mathbb{S}_1} + \beta_{z,3} X^{(g)}_{\ell,\textrm{expression}} \mathbb{I}_{g\in\mathbb{S}_2} \right)
 \end{equation}
 
 More broadly, one could substitute a complex model (kernels, deep CNNs, transformers, etc.) which maximizes:
