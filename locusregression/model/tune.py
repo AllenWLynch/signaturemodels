@@ -4,9 +4,9 @@ from math import ceil
 logger = logging.getLogger('Tuner')
 logger.setLevel(logging.INFO)
 from math import log, floor, ceil
+import tqdm
 from joblib import Parallel, delayed
 from functools import partial
-from itertools import product
 from locusregression.model.model import LocusRegressor
 
 
@@ -76,8 +76,10 @@ def hyperband(random_model_func, trial_func,
                 print(f'\tStarting rung {i} with {len(models)} remaining models')
                 
                 losses, models = list(zip(*\
-                    Parallel(n_jobs = n_jobs, verbose = 3)\
-                    (delayed(trial_func)(model, r_i) for model in models)
+                    Parallel(n_jobs = n_jobs, verbose = 0)\
+                    (delayed(trial_func)(model, r_i) 
+                    for model in tqdm.tqdm(models, desc='\tStarting trials', ncols = 100)
+                    )
                 ))
                 
                 top_n = max(floor(n_i/factor), n_jobs)

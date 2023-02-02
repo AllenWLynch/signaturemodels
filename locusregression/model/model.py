@@ -2,13 +2,14 @@
 import numpy as np
 from .base import dirichlet_bound, log_dirichlet_expectation, \
         M_step_alpha, update_tau
+
 from collections import defaultdict
 from locusregression.corpus import COSMIC_SORT_ORDER, SIGNATURE_STRINGS, MUTATION_PALETTE
 
 from .optim_beta import BetaOptimizer
 from .optim_lambda import LambdaOptimizer
 import time
-
+import warnings
 
 from sklearn.base import BaseEstimator
 import logging
@@ -511,132 +512,135 @@ class LocusRegressor(BaseEstimator):
 
         gamma = self._init_doc_variables(len(corpus))
         
-        try:
-            for epoch in range(self.epochs_trained, self.num_epochs+1):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
 
-                start_time = time.time()
+            try:
+                for epoch in range(self.epochs_trained, self.num_epochs+1):
 
-                if svi_inference:
-                    self._clear_locus_cache()
-                    inner_corpus = self._get_subsample_func(corpus)
-                    learning_rate = (self.tau + epoch)**(-self.kappa)
-                else:
-                    inner_corpus = corpus
+                    start_time = time.time()
 
-                
-                logger.debug(' E-step ...')
-                new_gamma, rho_sstats, delta_sstats, beta_sstats, \
-                    _, _ = self._inference(
-                        shared_correlates = self.shared_correlates,
-                        corpus= inner_corpus,
-                        gamma = gamma,
-                        likelihood_scale = likelihood_scale,
-                    )
-
-                gamma = self.svi_update(gamma, new_gamma, learning_rate)
-                
-                logger.debug(' M-step ...')
-
-                new_beta_mu, new_beta_nu, new_delta = \
-                    np.zeros_like(self.beta_mu), np.zeros_like(self.beta_nu), np.zeros_like(self.delta)
+                    if svi_inference:
+                        self._clear_locus_cache()
+                        inner_corpus = self._get_subsample_func(corpus)
+                        learning_rate = (self.tau + epoch)**(-self.kappa)
+                    else:
+                        inner_corpus = corpus
 
                     
-                if self.shared_correlates:
-
-                    first_off = next(iter(inner_corpus))
-                    window_sizes = [first_off['window_size']]
-                    X_matrices = [first_off['X_matrix']]
-                    trinuc = [first_off['trinuc_distributions']]
-                    update_beta_sstats = lambda k : [{l : ss[k] for l,ss in beta_sstats.items()}]
-
-                else:
-                    
-                    window_sizes = [x['window_size'] for x in inner_corpus]
-                    X_matrices = [x['X_matrix'] for x in inner_corpus]
-                    trinuc = [x['trinuc_distributions'] for x in inner_corpus]
-
-                    update_beta_sstats = lambda k : [{l : ss[k] for l,ss in beta_sstats_sample.items()} for beta_sstats_sample in beta_sstats]
-                    
-
-                for k in range(self.n_components):   
-
-                    new_beta_mu[k], new_beta_nu[k] = \
-                        BetaOptimizer.optimize(
-                            beta_mu0 = self.beta_mu[k],  
-                            beta_nu0 = self.beta_nu[k],
-                            beta_sstats = update_beta_sstats(k),
-                            window_sizes=window_sizes,
-                            X_matrices=X_matrices,
-                            tau = self.param_tau[k]
-                        )
-
-                    new_delta[k] = LambdaOptimizer.optimize(self.delta[k],
-                        trinuc_distributions = trinuc,
-                        beta_sstats = update_beta_sstats(k),
-                        delta_sstats = delta_sstats[k],
-                    )
-
-                self.beta_mu = self.svi_update(self.beta_mu, new_beta_mu, learning_rate)
-                self.beta_nu = self.svi_update(self.beta_nu, new_beta_nu, learning_rate)
-                self.delta = self.svi_update(self.delta, new_delta, learning_rate)
-
-                # update rho distribution
-                self.rho = self.svi_update(self.rho, rho_sstats + 1., learning_rate)
-
-                if self.empirical_bayes:
-
-                    self.alpha = self.svi_update(
-                        self.alpha, 
-                        M_step_alpha(self.alpha, new_gamma),
-                        learning_rate    
-                    )
-
-                    self.param_tau = self.svi_update(
-                        self.param_tau, 
-                        update_tau(new_beta_mu, new_beta_nu), 
-                        learning_rate
-                    )
-
-                logger.debug("Estimating evidence lower bound ...")
-
-                elapsed_time = time.time() - start_time
-                self.elapsed_times.append(elapsed_time)
-                total_time += elapsed_time
-                self.epochs_trained+=1
-
-                if epoch % self.eval_every == 0:
-                    
-                    self.bounds.append(
-                        self._bound(
-                            corpus = corpus, 
+                    logger.debug(' E-step ...')
+                    new_gamma, rho_sstats, delta_sstats, beta_sstats, \
+                        _, _ = self._inference(
+                            shared_correlates = self.shared_correlates,
+                            corpus= inner_corpus,
                             gamma = gamma,
+                            likelihood_scale = likelihood_scale,
                         )
-                    )
 
-                    if len(self.bounds) > 1:
+                    gamma = self.svi_update(gamma, new_gamma, learning_rate)
+                    
+                    logger.debug(' M-step ...')
 
-                        improvement = self.bounds[-1] - (self.bounds[-2] if epoch > 1 else self.bounds[-1])
+                    new_beta_mu, new_beta_nu, new_delta = \
+                        np.zeros_like(self.beta_mu), np.zeros_like(self.beta_nu), np.zeros_like(self.delta)
 
-                        logger.info('  Epoch {:<3} complete. | Elapsed time: {:<3.1f} seconds. | Bound: {:<10.2f}, improvement: {:<10.2f} '\
-                                .format(epoch, elapsed_time, self.bounds[-1], improvement,))
+                        
+                    if self.shared_correlates:
 
-                        if (self.bounds[-1] - self.bounds[-2]) < self.bound_tol and not svi_inference:
-                            break
+                        first_off = next(iter(inner_corpus))
+                        window_sizes = [first_off['window_size']]
+                        X_matrices = [first_off['X_matrix']]
+                        trinuc = [first_off['trinuc_distributions']]
+                        update_beta_sstats = lambda k : [{l : ss[k] for l,ss in beta_sstats.items()}]
+
+                    else:
+                        
+                        window_sizes = [x['window_size'] for x in inner_corpus]
+                        X_matrices = [x['X_matrix'] for x in inner_corpus]
+                        trinuc = [x['trinuc_distributions'] for x in inner_corpus]
+
+                        update_beta_sstats = lambda k : [{l : ss[k] for l,ss in beta_sstats_sample.items()} for beta_sstats_sample in beta_sstats]
+                        
+
+                    for k in range(self.n_components):   
+
+                        new_beta_mu[k], new_beta_nu[k] = \
+                            BetaOptimizer.optimize(
+                                beta_mu0 = self.beta_mu[k],  
+                                beta_nu0 = self.beta_nu[k],
+                                beta_sstats = update_beta_sstats(k),
+                                window_sizes=window_sizes,
+                                X_matrices=X_matrices,
+                                tau = self.param_tau[k]
+                            )
+
+                        new_delta[k] = LambdaOptimizer.optimize(self.delta[k],
+                            trinuc_distributions = trinuc,
+                            beta_sstats = update_beta_sstats(k),
+                            delta_sstats = delta_sstats[k],
+                        )
+
+                    self.beta_mu = self.svi_update(self.beta_mu, new_beta_mu, learning_rate)
+                    self.beta_nu = self.svi_update(self.beta_nu, new_beta_nu, learning_rate)
+                    self.delta = self.svi_update(self.delta, new_delta, learning_rate)
+
+                    # update rho distribution
+                    self.rho = self.svi_update(self.rho, rho_sstats + 1., learning_rate)
+
+                    if self.empirical_bayes:
+
+                        self.alpha = self.svi_update(
+                            self.alpha, 
+                            M_step_alpha(self.alpha, new_gamma),
+                            learning_rate    
+                        )
+
+                        self.param_tau = self.svi_update(
+                            self.param_tau, 
+                            update_tau(new_beta_mu, new_beta_nu), 
+                            learning_rate
+                        )
+
+                    logger.debug("Estimating evidence lower bound ...")
+
+                    elapsed_time = time.time() - start_time
+                    self.elapsed_times.append(elapsed_time)
+                    total_time += elapsed_time
+                    self.epochs_trained+=1
+
+                    if epoch % self.eval_every == 0:
+                        
+                        self.bounds.append(
+                            self._bound(
+                                corpus = corpus, 
+                                gamma = gamma,
+                            )
+                        )
+
+                        if len(self.bounds) > 1:
+
+                            improvement = self.bounds[-1] - (self.bounds[-2] if epoch > 1 else self.bounds[-1])
+
+                            logger.info('  Epoch {:<3} complete. | Elapsed time: {:<3.1f} seconds. | Bound: {:<10.2f}, improvement: {:<10.2f} '\
+                                    .format(epoch, elapsed_time, self.bounds[-1], improvement,))
+
+                            if (self.bounds[-1] - self.bounds[-2]) < self.bound_tol and not svi_inference:
+                                break
+
+                    else:
+
+                        logger.info('  Epoch {:<3} complete. | Elapsed time: {:<3.1f} seconds.'.format(epoch, elapsed_time))
+
+                    if not self.time_limit is None and total_time >= self.time_limit:
+                        logger.info('Time limit reached, stopping training.')
+                        break
 
                 else:
-
-                    logger.info('  Epoch {:<3} complete. | Elapsed time: {:<3.1f} seconds.'.format(epoch, elapsed_time))
-
-                if not self.time_limit is None and total_time >= self.time_limit:
-                    logger.info('Time limit reached, stopping training.')
-                    break
-
-            else:
-                logger.info('Model did not converge, consider increasing "estep_iterations" or "num_epochs" parameters.')
+                    logger.info('Model did not converge, consider increasing "estep_iterations" or "num_epochs" parameters.')
 
 
-        except KeyboardInterrupt:
-            pass
+            except KeyboardInterrupt:
+                pass
         
         self.trained = True
 

@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.24 (TeX Live 2022) (preloaded format=pdflatex 2022.12.24)  2 FEB 2023 13:52
+This is pdfTeX, Version 3.141592653-2.6-1.40.24 (TeX Live 2022) (preloaded format=pdflatex 2022.12.24)  2 FEB 2023 16:44
 entering extended mode
  restricted \write18 enabled.
  %&-line parsing enabled.
@@ -202,7 +202,7 @@ File: umsb.fd 2013/01/14 v3.01 AMS symbols B
 
 {/usr/local/texlive/2022/texmf-var/fonts/map/pdftex/updmap/pdftex.map}] [2] [3]
 
-Overfull \hbox (37.0468pt too wide) in paragraph at lines 141--142
+Overfull \hbox (37.0468pt too wide) in paragraph at lines 145--146
 []\OT1/cmr/m/n/10 To in-fer the op-ti-mal val-ues of the vari-a-tional pa-ram-e
 -ters, $
 [] = \OMS/cmsy/m/n/10 f\OML/cmm/m/it/10 ^^N[]; ![]; ^^V[]; ^^W[]; ^^M[]; ^^^[]\
@@ -210,7 +210,7 @@ OMS/cmsy/m/n/10 g$\OT1/cmr/m/n/10 ,
  []
 
 [4]
-Overfull \hbox (16.53908pt too wide) detected at line 182
+Overfull \hbox (16.53908pt too wide) detected at line 186
 []
  []
 
@@ -219,10 +219,10 @@ Overfull \hbox (16.53908pt too wide) detected at line 182
 File: ./figures//nu_regularization.pdf Graphic file (type pdf)
 <use ./figures//nu_regularization.pdf>
 Package pdftex.def Info: ./figures//nu_regularization.pdf  used on input line 2
-08.
+12.
 (pdftex.def)             Requested size: 183.54073pt x 178.88034pt.
  [6 <./figures//nu_regularization.pdf>]
-Overfull \hbox (7.88332pt too wide) detected at line 239
+Overfull \hbox (7.88332pt too wide) detected at line 243
 [][][]\OML/cmm/m/it/10 E[]\OT1/cmr/m/n/10 [[] \OML/cmm/m/it/10 p\OT1/cmr/m/n/10
  (\OML/cmm/m/it/10 a\OMS/cmsy/m/n/10 j\OML/cmm/m/it/10 z; c; !\OT1/cmr/m/n/10 )
 ] + \OMS/cmsy/m/n/10 H\OT1/cmr/m/n/10 (\OML/cmm/m/it/10 q\OT1/cmr/m/n/10 (\OML/
@@ -234,19 +234,15 @@ cmm/m/it/10 ^^Z\OT1/cmr/m/n/10 ; \OML/cmm/m/it/10 !\OT1/cmr/m/n/10 )) = [] [] [
 <./figures//svi_subsampling.pdf, id=74, 421.86201pt x 282.02615pt>
 File: ./figures//svi_subsampling.pdf Graphic file (type pdf)
 <use ./figures//svi_subsampling.pdf>
-Package pdftex.def Info: ./figures//svi_subsampling.pdf  used on input line 329
+Package pdftex.def Info: ./figures//svi_subsampling.pdf  used on input line 333
 .
 (pdftex.def)             Requested size: 210.93048pt x 141.01273pt.
  [8] [9 <./figures//svi_subsampling.pdf>]
-Overfull \hbox (0.49232pt too wide) detected at line 353
+Overfull \hbox (0.49232pt too wide) detected at line 357
 []
  []
 
-[10] (./methods.aux)
-
-LaTeX Warning: Label(s) may have changed. Rerun to get cross-references right.
-
- ) 
+[10] [11] (./methods.aux) ) 
 Here is how much of TeX's memory you used:
  2473 strings out of 478268
  38276 string characters out of 5846346
@@ -255,32 +251,33 @@ Here is how much of TeX's memory you used:
  480290 words of font info for 70 fonts, out of 8000000 for 9000
  1141 hyphenation exceptions out of 8191
  55i,19n,62p,906b,597s stack positions out of 10000i,1000n,20000p,200000b,200000s
-{/usr/local/texlive/2022/texmf-dist/fonts/enc/dvips/cm-super/cm-super-ts1.enc
-}</usr/local/texlive/2022/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx10.pfb>
-</usr/local/texlive/2022/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx12.pfb><
-/usr/local/texlive/2022/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx7.pfb></u
-sr/local/texlive/2022/texmf-dist/fonts/type1/public/amsfonts/cm/cmex10.pfb></us
-r/local/texlive/2022/texmf-dist/fonts/type1/public/amsfonts/cmextra/cmex7.pfb><
-/usr/local/texlive/2022/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi10.pfb></
-usr/local/texlive/2022/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi12.pfb></u
-sr/local/texlive/2022/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi5.pfb></usr
-/local/texlive/2022/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi7.pfb></usr/l
-ocal/texlive/2022/texmf-dist/fonts/type1/public/amsfonts/cm/cmr10.pfb></usr/loc
-al/texlive/2022/texmf-dist/fonts/type1/public/amsfonts/cm/cmr12.pfb></usr/local
-/texlive/2022/texmf-dist/fonts/type1/public/amsfonts/cm/cmr17.pfb></usr/local/t
-exlive/2022/texmf-dist/fonts/type1/public/amsfonts/cm/cmr5.pfb></usr/local/texl
-ive/2022/texmf-dist/fonts/type1/public/amsfonts/cm/cmr7.pfb></usr/local/texlive
-/2022/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy10.pfb></usr/local/texlive/
-2022/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy5.pfb></usr/local/texlive/20
-22/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy7.pfb></usr/local/texlive/2022
-/texmf-dist/fonts/type1/public/amsfonts/cm/cmti10.pfb></usr/local/texlive/2022/
-texmf-dist/fonts/type1/public/amsfonts/symbols/msbm10.pfb></usr/local/texlive/2
-022/texmf-dist/fonts/type1/public/amsfonts/symbols/msbm7.pfb></usr/local/texliv
-e/2022/texmf-dist/fonts/type1/public/cm-super/sfrm1000.pfb>
-Output written on methods.pdf (10 pages, 295550 bytes).
+{/usr/local/texlive/2022/texmf-dist/fonts/enc/dvips/
+cm-super/cm-super-ts1.enc}</usr/local/texlive/2022/texmf-dist/fonts/type1/publi
+c/amsfonts/cm/cmbx10.pfb></usr/local/texlive/2022/texmf-dist/fonts/type1/public
+/amsfonts/cm/cmbx12.pfb></usr/local/texlive/2022/texmf-dist/fonts/type1/public/
+amsfonts/cm/cmbx7.pfb></usr/local/texlive/2022/texmf-dist/fonts/type1/public/am
+sfonts/cm/cmex10.pfb></usr/local/texlive/2022/texmf-dist/fonts/type1/public/ams
+fonts/cmextra/cmex7.pfb></usr/local/texlive/2022/texmf-dist/fonts/type1/public/
+amsfonts/cm/cmmi10.pfb></usr/local/texlive/2022/texmf-dist/fonts/type1/public/a
+msfonts/cm/cmmi12.pfb></usr/local/texlive/2022/texmf-dist/fonts/type1/public/am
+sfonts/cm/cmmi5.pfb></usr/local/texlive/2022/texmf-dist/fonts/type1/public/amsf
+onts/cm/cmmi7.pfb></usr/local/texlive/2022/texmf-dist/fonts/type1/public/amsfon
+ts/cm/cmr10.pfb></usr/local/texlive/2022/texmf-dist/fonts/type1/public/amsfonts
+/cm/cmr12.pfb></usr/local/texlive/2022/texmf-dist/fonts/type1/public/amsfonts/c
+m/cmr17.pfb></usr/local/texlive/2022/texmf-dist/fonts/type1/public/amsfonts/cm/
+cmr5.pfb></usr/local/texlive/2022/texmf-dist/fonts/type1/public/amsfonts/cm/cmr
+7.pfb></usr/local/texlive/2022/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy10
+.pfb></usr/local/texlive/2022/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy5.p
+fb></usr/local/texlive/2022/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy7.pfb
+></usr/local/texlive/2022/texmf-dist/fonts/type1/public/amsfonts/cm/cmti10.pfb>
+</usr/local/texlive/2022/texmf-dist/fonts/type1/public/amsfonts/symbols/msbm10.
+pfb></usr/local/texlive/2022/texmf-dist/fonts/type1/public/amsfonts/symbols/msb
+m7.pfb></usr/local/texlive/2022/texmf-dist/fonts/type1/public/cm-super/sfrm1000
+.pfb>
+Output written on methods.pdf (11 pages, 297531 bytes).
 PDF statistics:
- 208 PDF objects out of 1000 (max. 8388607)
- 98 compressed objects within 1 object stream
+ 211 PDF objects out of 1000 (max. 8388607)
+ 100 compressed objects within 1 object stream
  0 named destinations out of 1000 (max. 500000)
  11 words of extra memory for PDF output out of 10000 (max. 10000000)
 
