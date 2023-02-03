@@ -56,10 +56,12 @@ Next, we can make our windows using the convenient command from bedtools:
 
     $ bedtools makewindows -g tutorial/genome.txt -w 10000 > tutorial/regions.bed
 
-.. note::
-   
+..
+
+   **Note:**
    It is worthwhile to check that your windows are in sorted order, or you'll run into
    problems down the line:
+
 
    .. code-block:: bash
 
@@ -169,7 +171,7 @@ This will save the corpus to *tutorial/corpus.pkl*.
 
 Choosing the number of mixture components to describe a process is a perenial problem in topic modeling,
 LocusRegression notwithstanding. Here, I employ random search of the model hyperparameter space paired
-with a Successive Halving bandit to find the number of components which produces a descriptive but 
+with a HyperBand bandit to find the number of components which produces a descriptive but 
 generalizeable model. This process can be parallelized for faster tuning.
 
 To run the *tune* command, you have to give the path to corpus, as well as the minimum and maximum
@@ -182,8 +184,14 @@ model configurations.
         --corpus tutorial/corpus.pkl \
         -min 3 -max 12 \
         --n-jobs 5 \
-        --seed-reps 3 \
         -o tutorial/grid.tsv \
+
+    Running HyperBand with 8 jobs.
+    Bracket 1: Evaluating 8 models
+    Bracket 2: Evaluating 15 models
+    Bracket 3: Evaluating 24 models
+    Evaluating model configurations:   100%|██████████████████████| 1282/1282 [00:27<07:35,  2.67it/s]
+
 
 We can plot the results in the *tutorial/grid.tsv* file to see which values for *n_components* make sense
 for the dataset:
@@ -193,15 +201,18 @@ for the dataset:
     import pandas as pd
     import matplotlib.pyplot as plt
     import seaborn as sns
+    import numpy as np
 
-    grid = pd.read_csv('tutorial/grid.tsv', sep = '\t')
+    data = pd.read_json('tutorial/grid.json', sep = '\t')
+
+    data['log_resources'] = np.log(data.resources)
 
     sns.scatterplot(
-        data = grid,
+        data = data,
         x = 'param_n_components',
-        y = 'mean_test_score',
-        hue = 'iter',
-        palette='coolwarm',
+        y = 'score',
+        hue = 'log_resources',
+        palette='mako',
         s = 50,
         edgecolor = 'black',
         ax = ax,
@@ -212,24 +223,27 @@ for the dataset:
 .. image:: images/tuning.svg
     :width: 400
 
-The SuccessiveHalving bandit runs "tournaments", where models are trained for a certain number of 
+The HyperBand algorith runs "tournaments", where models are trained for a certain number of 
 epochs, then tested. The best performing models are promoted to the next iteration and trained 
-for more epochs. This process repeats until a group of winners is chosen.
+for more epochs (granted more resources). This process repeats until a group of winners is chosen.
 
-Here, five components gives a good fit for the dataset.
+Here, four or five components gives a good fit for the dataset.
 
-3. Training the model
+1. Training the model
 ---------------------
 
 To train the representative model for the dataset, provide paths for the corpus and output, then
-specify the chosen number of components using the "-k" argument:
+specify the chosen number of components using the "--n-components" argument. Also, be sure to provide
+the seed of the best performing model from the tuning stage.
 
 .. code-block:: bash
 
     $ locusregression train-model \
         -d tutorial/corpus.pkl \
         -o tutorial/model.pkl \
-        -k 10
+        --n-components 5
+        --seed 2
+
 
 4. Analysis
 -----------

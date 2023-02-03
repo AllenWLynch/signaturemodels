@@ -108,13 +108,12 @@ def train_model(
 def tune(
     locus_subsample = 0.125,
     time_limit = None,
-    pi_prior = 5.,
     bound_tol = 1e-2,
     n_jobs = 1,
     factor = 3,
     train_size = 0.7,
     max_epochs = 300,
-    successive_halving = False,*,
+    tune_subsample= False,*,
     output,
     corpus,
     min_components, 
@@ -122,7 +121,6 @@ def tune(
 ):
 
     model_params = dict(
-        pi_prior = pi_prior,
         bound_tol = bound_tol,
         locus_subsample=locus_subsample,
         time_limit=time_limit
@@ -138,7 +136,7 @@ def tune(
         max_components = max_components,
         factor = factor,
         max_epochs=max_epochs,
-        successive_halving=successive_halving,
+        tune_subsample= tune_subsample,
         **model_params,
     )
 
@@ -269,11 +267,12 @@ tune_required.add_argument('--n-jobs','-j', type = posint, required= True,
 
 tune_optional = tune_sub.add_argument_group('Optional arguments')
 
-tune_optional.add_argument('--max-epochs', type = posint, default = 300,
+tune_sub.add_argument('--max-epochs', type = posint, default = 300,
     help = 'Number of epochs to train for on the last iteration of'
             ' successive halving/Hyperband. This should be set high enough such that the model converges to a solution.')
 tune_optional.add_argument('--factor','-f',type = posint, default = 3,
     help = 'Successive halving reduction factor for each iteration')
+tune_optional.add_argument('--tune-subsample', action = 'store_true', default=False)
 
 model_options = tune_sub.add_argument_group('Model arguments')
 
@@ -281,8 +280,6 @@ model_options.add_argument('--locus-subsample','-sub', type = posfloat, default 
     help = 'Whether to use locus subsampling to speed up training via stochastic variational inference.')
 model_options.add_argument('--time-limit','-time', type = posint, default = None,
     help = 'Time limit in seconds for model training.')
-model_options.add_argument('--pi-prior','-pi', type = posfloat, default = 1.,
-    help = 'Dirichlet prior over sample mixture compositions. A value > 1 will give more dense compositions, which <1 finds more sparse compositions.')
 model_options.add_argument('--bound-tol', '-tol', type = posfloat, default=1e-2,
     help = 'Early stop criterion, stop training if objective score does not increase by this much after one epoch.')
 
