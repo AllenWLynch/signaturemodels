@@ -184,7 +184,7 @@ model configurations.
         --corpus tutorial/corpus.pkl \
         -min 3 -max 12 \
         --n-jobs 5 \
-        -o tutorial/grid.tsv \
+        -o tutorial/data.json \
 
     Running HyperBand with 8 jobs.
     Bracket 1: Evaluating 8 models
@@ -193,7 +193,7 @@ model configurations.
     Evaluating model configurations:   100%|██████████████████████| 1282/1282 [00:27<07:35,  2.67it/s]
 
 
-We can plot the results in the *tutorial/grid.tsv* file to see which values for *n_components* make sense
+We can plot the results in the *tutorial/data.json* file to see which values for *n_components* make sense
 for the dataset:
 
 .. code-block:: python
@@ -203,7 +203,7 @@ for the dataset:
     import seaborn as sns
     import numpy as np
 
-    data = pd.read_json('tutorial/grid.json', sep = '\t')
+    data = pd.read_json('tutorial/data.json', sep = '\t')
 
     data['log_resources'] = np.log(data.resources)
 
