@@ -7,7 +7,6 @@ import numpy as np
 from collections import Counter
 import logging
 import tqdm
-from joblib import Parallel, delayed
 from scipy import sparse
 
 logger = logging.getLogger('Corpus')
@@ -389,10 +388,10 @@ class CorpusReader:
 
             return [trinuc_counts[context] + trinuc_counts[revcomp(context)] for context in CONTEXT_IDX.keys()]
         
-        trinuc_matrix = Parallel(n_jobs=n_jobs, verbose=0)(
-            delayed(count_trinucs)(w.chromosome, w.start, w.end, fasta_object) 
+        trinuc_matrix = [
+            count_trinucs(w.chromosome, w.start, w.end, fasta_object) 
             for w in tqdm.tqdm(window_set, nrows=30, desc = 'Aggregating trinucleotide content')
-        )
+        ]
 
         trinuc_matrix = np.array(trinuc_matrix) + 1 # add a pseudocount
 

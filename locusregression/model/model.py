@@ -16,7 +16,6 @@ import logging
 logger = logging.getLogger('LocusRegressor')
 
 import matplotlib.pyplot as plt
-from joblib import Parallel, delayed
 import pickle
 from functools import partial
 
@@ -34,7 +33,7 @@ class LocusRegressor(BaseEstimator):
         seed = 2, 
         dtype = np.float32,
         pi_prior = 5.,
-        num_epochs = 100, 
+        num_epochs = 300, 
         difference_tol = 1e-3,
         estep_iterations = 1000,
         bound_tol = 1e-2,
@@ -352,12 +351,11 @@ class LocusRegressor(BaseEstimator):
         else:
             beta_sstats = []
 
-        for sample_gamma, sample_rho_sstats, sample_delta_sstats, sample_beta_sstats, \
-            sample_entropy_sstats, sample_weighted_phi in \
-            Parallel(n_jobs = self.n_jobs)(
-                delayed(self._sample_inference)(**sample, gamma = gamma_g, likelihood_scale = likelihood_scale)
-                for gamma_g, sample in zip(gamma, corpus)
-            ):
+        for gamma_g, sample in zip(gamma, corpus):
+
+            sample_gamma, sample_rho_sstats, sample_delta_sstats, sample_beta_sstats, \
+            sample_entropy_sstats, sample_weighted_phi = \
+                    self._sample_inference(**sample, gamma = gamma_g, likelihood_scale = likelihood_scale)
 
             gammas.append(sample_gamma)
             weighted_phis.append(sample_weighted_phi)
@@ -729,12 +727,15 @@ class LocusRegressor(BaseEstimator):
                 corpus = corpus,
                 shared_correlates = self.shared_correlates,
             )
-
-        return self._bound(
-                corpus = corpus, 
-                gamma = gamma,
-                likelihood_scale=self.n_samples/n_samples,
-            )
+        
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            
+            return self._bound(
+                    corpus = corpus, 
+                    gamma = gamma,
+                    likelihood_scale=self.n_samples/n_samples,
+                )
 
 
     def calc_signature_sstats(self, corpus):

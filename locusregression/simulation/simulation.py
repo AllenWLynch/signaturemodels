@@ -4,6 +4,7 @@ from locusregression.corpus.corpus import Corpus
 from locusregression.corpus.featurization import CONTEXT_IDX, MUTATIONS_IDX
 import json
 import os
+import tqdm
 
 TRANSITION_MATRIX = np.array([
     [0.99, 0.005, 0.005],
@@ -114,7 +115,8 @@ class SimulatedCorpus:
 
 
         samples = []
-        for pi, n_mutations in zip(cell_pi, cell_n_mutations):
+        for pi, n_mutations in tqdm.tqdm(zip(cell_pi, cell_n_mutations),
+            total = len(cell_pi), ncols = 100, desc = 'Generating samples'):
 
             samples.append(
                 SimulatedCorpus.simulate_sample(

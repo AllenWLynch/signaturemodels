@@ -50,7 +50,7 @@ def tune_model(corpus,
     max_epochs = 300,
     factor = 3,
     successive_halving=True,*,
-    tune_subsample = True,
+    tune_subsample = False,
     min_components, max_components,
     **model_params):
     

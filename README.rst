@@ -36,3 +36,5 @@ Tutorial
 --------
 
 Please see the `LocusRegression tutorial <docs/tutorial.rst>`_ for usage, and the `methods doc <docs/methods.pdf>`_ for information on the model.
+
+For an overview of the simulation methods, see `simulation tutorial <simulation_tutorial.ipynb>`_.
