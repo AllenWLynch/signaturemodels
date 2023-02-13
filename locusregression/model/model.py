@@ -45,6 +45,7 @@ class LocusRegressor(BaseEstimator):
         eval_every = 10,
         time_limit = None,
         empirical_bayes = True,
+        batch_size = None,
     ):
         '''
         Params
@@ -77,6 +78,8 @@ class LocusRegressor(BaseEstimator):
         self.tau = tau
         self.time_limit = time_limit
         self.empirical_bayes = empirical_bayes
+        self.batch_size = batch_size
+
 
 
     def save(self, filename):
@@ -196,7 +199,7 @@ class LocusRegressor(BaseEstimator):
             elbo += self._sample_bound(
                 Elog_gamma = Elog_gamma_g,
                 logweight_matrix = Elog_gamma_g[:,None, None] + Elog_delta[:,:,None] + Elog_rho,
-                **sample,
+                **sample, shared_correlates= self.shared_correlates,
             )
         
         elbo *= likelihood_scale
@@ -355,7 +358,8 @@ class LocusRegressor(BaseEstimator):
 
             sample_gamma, sample_rho_sstats, sample_delta_sstats, sample_beta_sstats, \
             sample_entropy_sstats, sample_weighted_phi = \
-                    self._sample_inference(**sample, gamma = gamma_g, likelihood_scale = likelihood_scale)
+                    self._sample_inference(**sample, shared_correlates=self.shared_correlates,
+                        gamma = gamma_g, likelihood_scale = likelihood_scale,)
 
             gammas.append(sample_gamma)
             weighted_phis.append(sample_weighted_phi)
@@ -374,90 +378,7 @@ class LocusRegressor(BaseEstimator):
         self._clear_locus_cache()
 
         return np.array(gammas), rho_sstats, delta_sstats, beta_sstats, entropy_sstats, weighted_phis
-        
-    
-    def _get_subsample_func(self, corpus):
-        
-        logger.debug('Subsampling corpus.')
-
-        n_subsample_loci = int(self.n_loci * self.locus_subsample)
-        sampled_loci = self.random_state.choice(self.n_loci, size = n_subsample_loci)
-        
-        bool_array = np.zeros(self.n_loci).astype(bool)
-        bool_array[sampled_loci] = True
-
-
-        # uniformly sample loci
-        subsample_lookup = dict(zip(sampled_loci, np.arange(n_subsample_loci).astype(int))) 
-
-        shared = False
-        first_off = next(iter(corpus))
-
-        if self.shared_correlates:
-
-            shared_attrs = {
-                'window_size' : first_off['window_size'][:,sampled_loci], 
-                'X_matrix' : first_off['X_matrix'][:,sampled_loci],
-                'trinuc_distributions' : first_off['trinuc_distributions'][:,sampled_loci],
-                'feature_names' : first_off['feature_names'],
-                'shared_correlates' : True,
-            }
-            shared = True
-
-        else:
-            shared_attrs = {
-                'trinuc_distributions' : first_off['trinuc_distributions'][:,sampled_loci],
-                'feature_names' : first_off['feature_names'],
-                'shared_correlates' : False,
-            }
-
-        
-        
-        class subsample:
-            
-
-            def __iter__(self):
                 
-                try:
-                    total_mutations = 0
-
-                    for i, sample in enumerate(corpus):
-                        
-                        #mask = np.array([x in subsample_lookup for x in sample['locus']])
-                        mask = bool_array[sample['locus']]
-
-                        new_sample = {
-                            'mutation' : sample['mutation'][mask],
-                            'context' : sample['context'][mask],
-                            'count' : sample['count'][mask],
-                            'locus' : np.array([subsample_lookup[locus] for locus in sample['locus'][mask]]).astype(int), 
-                            }
-
-                        total_mutations += new_sample['count'].sum()
-                        
-                        if shared:
-                            yield {
-                                **new_sample,
-                                **shared_attrs
-                            }
-                        else:
-
-                            yield {
-                                **new_sample,
-                                'window_size' : sample['window_size'][:,sampled_loci], 
-                                'X_matrix' : sample['X_matrix'][:,sampled_loci],
-                                **shared_attrs
-                            }
-
-                finally:
-                    pass
-                    #if i > 1 and total_mutations < 10000:
-                    #    logger.info('A subsampled slice of the dataset for stochastic variational inference should '
-                    #            'contain at least 10,000 mutations. This slice contains {}.'.format(total_mutations)
-                    #            )
-
-
-        return subsample()
 
 
     @staticmethod
@@ -467,20 +388,35 @@ class LocusRegressor(BaseEstimator):
 
     def _fit(self,corpus, reinit = True):
 
-        if self.locus_subsample == 1:
+        if self.batch_size is None:
+            self.batch_size = len(corpus)
+        else:
+            self.batch_size = min(self.batch_size, len(corpus))
+            
+        if self.locus_subsample == 1 and self.batch_size > len(corpus):
+            
             learning_rate = 1
             svi_inference = False
+            logger.warn('Using batch VI updates.')
+
         else:
             svi_inference = True
-
-        likelihood_scale = 1/self.locus_subsample
             
+        sample_svi = self.batch_size < len(corpus)
+        locus_svi = self.locus_subsample < 1
+
+        logging.info(f'Sample SVI: {sample_svi}, Locus SVI {locus_svi}')
+            
+    
         self.n_locus_features, self.n_loci = next(iter(corpus))['X_matrix'].shape
-        
+        n_subsample_loci = int(self.n_loci * self.locus_subsample)
+
         self.trained = False
         self.n_samples = len(corpus)
 
-        self.shared_correlates = next(iter(corpus))['shared_correlates']
+        likelihood_scale = 1/(self.locus_subsample * self.batch_size/self.n_samples)
+
+        self.shared_correlates = corpus.shared_correlates
         self.feature_names = next(iter(corpus))['feature_names']
         
         assert self.n_jobs > 0
@@ -517,11 +453,21 @@ class LocusRegressor(BaseEstimator):
                 for epoch in range(self.epochs_trained, self.num_epochs+1):
 
                     start_time = time.time()
-
                     if svi_inference:
                         self._clear_locus_cache()
-                        inner_corpus = self._get_subsample_func(corpus)
                         learning_rate = (self.tau + epoch)**(-self.kappa)
+
+                        if sample_svi:
+                            update_samples = self.random_state.choice(self.n_samples, size = self.batch_size, replace = False)
+                            inner_corpus = corpus.subset_samples(update_samples)
+                        else:
+                            inner_corpus = corpus
+                        
+                        if locus_svi:
+                            inner_corpus = corpus.subset_loci(
+                                self.random_state.choice(self.n_loci, size = n_subsample_loci, replace = False)
+                            )
+
                     else:
                         inner_corpus = corpus
 
@@ -531,11 +477,14 @@ class LocusRegressor(BaseEstimator):
                         _, _ = self._inference(
                             shared_correlates = self.shared_correlates,
                             corpus= inner_corpus,
-                            gamma = gamma,
+                            gamma = gamma if not sample_svi else self._init_doc_variables(self.batch_size),
                             likelihood_scale = likelihood_scale,
                         )
-
-                    gamma = self.svi_update(gamma, new_gamma, learning_rate)
+                    
+                    if not sample_svi:
+                        gamma = self.svi_update(gamma, new_gamma, learning_rate)
+                    else:
+                        gamma[update_samples] = self.svi_update(gamma[update_samples], new_gamma, learning_rate)
                     
                     logger.debug(' M-step ...')
 
@@ -552,10 +501,16 @@ class LocusRegressor(BaseEstimator):
                         update_beta_sstats = lambda k : [{l : ss[k] for l,ss in beta_sstats.items()}]
 
                     else:
+
+                        def reuse_iterator(key):
+                            class reuseiterator:
+                                def __iter__(self):
+                                    for x in inner_corpus:
+                                        yield x[key]
                         
-                        window_sizes = [x['window_size'] for x in inner_corpus]
-                        X_matrices = [x['X_matrix'] for x in inner_corpus]
-                        trinuc = [x['trinuc_distributions'] for x in inner_corpus]
+                        window_sizes = reuse_iterator('window_size') #[x['window_size'] for x in inner_corpus]
+                        X_matrices = reuse_iterator('X_matrix') #[x['X_matrix'] for x in inner_corpus]
+                        trinuc = reuse_iterator('trinuc_distributions') #[x['trinuc_distributions'] for x in inner_corpus]
 
                         update_beta_sstats = lambda k : [{l : ss[k] for l,ss in beta_sstats_sample.items()} for beta_sstats_sample in beta_sstats]
                         
@@ -609,10 +564,7 @@ class LocusRegressor(BaseEstimator):
                     if epoch % self.eval_every == 0:
                         
                         self.bounds.append(
-                            self._bound(
-                                corpus = corpus, 
-                                gamma = gamma,
-                            )
+                            self._bound(corpus = corpus, gamma = gamma) if not sample_svi else self.score(corpus)
                         )
 
                         if len(self.bounds) > 1:
@@ -683,9 +635,6 @@ class LocusRegressor(BaseEstimator):
             Compositions over signatures for each sample
 
         '''
-
-        if not self.trained:
-            logger.warn('This model was not trained to completion, results may be innaccurate')
 
         n_samples = len(corpus)
         
@@ -776,7 +725,7 @@ class LocusRegressor(BaseEstimator):
         if isinstance(corpus, dict):
             corpus = [corpus]
         else:
-            assert isinstance(corpus, list) and (len(corpus) == 0 or next(iter(corpus))['shared_correlates']), \
+            assert isinstance(corpus, list) and (len(corpus) == 0 or corpus.shared_correlates), \
                 'This function is only available for corpuses with shared genomic correlates.'
 
         n_samples = len(corpus)
@@ -862,7 +811,7 @@ class LocusRegressor(BaseEstimator):
         if isinstance(corpus, dict):
             corpus = [corpus]
         else:
-            assert len(corpus) == 1 or next(iter(corpus))['shared_correlates'], \
+            assert len(corpus) == 1 or corpus.shared_correlates, \
                 'This function is only available for corpuses with shared genomic correlates, or for single records from a corpus.'
 
         X_matrix = next(iter(corpus))['X_matrix']
@@ -882,13 +831,10 @@ class LocusRegressor(BaseEstimator):
     def _pop_corpus(self, corpus):
         return next(iter(corpus))
 
-    def _check_shared(self, corpus):
-        return self._pop_corpus(corpus)['shared_correlates']
-
 
     def _get_weighted_trinuc_distribution(self, corpus):
 
-        if self._check_shared(corpus):
+        if corpus.shared_correlates:
 
             psi_matrix = self.get_locus_distribution(self._pop_corpus(corpus)) #K, L
             trinuc_dist = self._pop_corpus(corpus)['trinuc_distributions'] # C, L

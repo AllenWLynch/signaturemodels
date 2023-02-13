@@ -3,6 +3,7 @@ from .hyperband import run_hyperband
 from functools import partial
 from .model import LocusRegressor
 from .model import logger
+from ..corpus import train_test_split
 import logging
 
 
@@ -57,7 +58,8 @@ def tune_model(corpus,
     assert(max_components>min_components)
     assert(n_jobs > 0)
 
-    train, test = corpus.split_train_test(seed, train_size = train_size)
+    train, test = train_test_split(corpus, seed = seed,
+                        train_size = train_size)
 
     max_candidates = (max_components - min_components)*3*(3 if tune_subsample else 1)
 

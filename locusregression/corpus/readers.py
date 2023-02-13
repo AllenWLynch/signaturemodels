@@ -1,7 +1,7 @@
 
 from .genome_tools import Region, RegionSet, Genome
 from .featurization import CONTEXT_IDX, MUTATIONS_IDX
-from .corpus import Corpus, MixedCorpus
+from .corpus import Corpus
 from pyfaidx import Fasta
 import numpy as np
 from collections import Counter
@@ -131,6 +131,7 @@ class Sample:
             'count' : np.array(counts)
         }
 
+
     @staticmethod
     def featurize_mutations(vcf, fasta_object, genome_object, window_set, 
         sep = '\t', index= -1):
@@ -163,8 +164,7 @@ class CorpusReader:
     def create_corpus(cls, 
             sep = '\t', 
             index = -1, 
-            n_jobs = 1,
-            exposure_file = None,*,
+            n_jobs = 1,*,
             correlates_file,
             fasta_file,
             genome_file,
@@ -172,15 +172,27 @@ class CorpusReader:
             regions_file,
         ):
 
+        if exposure_files is None:
+            exposure_files = []
+
+        elif len(exposure_files) > 1:
+            assert len(exposure_files) == len(vcf_files), \
+                'If providing exposure files, provide one for the whole corpus, or one per sample.'
+
         genome = Genome.from_file(genome_file)
 
         windows = cls.read_windows(regions_file, genome, sep = sep)
 
-        exposures = cls.calculate_exposures(
-            windows, 
-            cls.read_exposure_file(exposure_file, windows, sep = sep) \
-                if not exposure_file is None else np.ones(len(windows))
-        )
+        if len(exposure_files) > 0:
+            exposures = cls.calculate_exposures(
+                windows, 
+                cls.collect_exposures(exposure_files, windows)
+            )
+        else:
+            exposures = cls.calculate_exposures(
+                windows, 
+                np.ones((1, len(windows)))
+            )
         
         features, feature_names = cls.read_correlates(
             correlates_file, windows, required_columns=None)
@@ -201,12 +213,25 @@ class CorpusReader:
                 windows, fa, n_jobs=n_jobs
             )
 
-        return cls.corpus_class(
+        shared = True
+        if exposures.shape[0] == 1:
+            samples = {
+                k : {**sample, 'window_size' : exposures} 
+                for k, sample in samples.items()
+            }
+        else:
+            shared = False
+            samples = {
+                k : {**sample, 'window_size' : exposure}
+                for (k, sample), exposure in zip(samples.items(), exposures)
+            }
+
+        return Corpus(
             samples = samples,
-            window_size = exposures,
             feature_names = feature_names,
             X_matrix = features.T,
-            trinuc_distributions = trinuc_distributions.T
+            trinuc_distributions = trinuc_distributions.T,
+            shared_correlates= shared
         )
 
 
@@ -345,6 +370,7 @@ class CorpusReader:
         return windows
 
 
+
     @staticmethod
     def collect_vcfs(vcf_files, sep = '\t', index = -1,*,
                      fasta_object, genome_object, window_set):
@@ -366,7 +392,16 @@ class CorpusReader:
 
     @staticmethod
     def calculate_exposures(windows, exposures):
-        return np.array([[len(w)/10000 for w in windows]]) * exposures[None,:]
+        return np.array([[len(w)/10000 for w in windows]]) * exposures
+
+
+    @staticmethod
+    def collect_exposures(exposure_files, windows):
+
+        return np.vstack([
+            CorpusReader.read_exposure_file(f, windows)[None,:]
+            for f in exposure_files
+        ])
 
 
     @staticmethod
@@ -396,115 +431,3 @@ class CorpusReader:
         trinuc_matrix = np.array(trinuc_matrix) + 1 # add a pseudocount
 
         return trinuc_matrix/trinuc_matrix.sum(1, keepdims = True)
-
-
-
-class MixedReader(Corpus):
-
-    corpus_class = MixedCorpus
-    
-    @classmethod
-    def create_corpus(cls, 
-            sep = '\t', index = -1, n_jobs = 1,
-            exposure_files = None,*,
-            correlates_files,
-            vcf_files,
-            fasta_file,
-            genome_file,
-            regions_file,
-        ):
-
-        if exposure_files is None:
-            exposure_files = []
-
-        assert len(correlates_files) == len(vcf_files), 'User must provide a VCF file, correlates file, and exposure file for each sample.'
-
-        assert len(exposure_files) in [0,1,len(vcf_files)]
-
-        genome = Genome.from_file(genome_file)
-        windows = cls.read_windows(regions_file, genome, sep = sep)
-
-        if len(exposure_files) == 0:
-            exposures = np.ones((len(vcf_files), len(windows)))
-        elif len(exposure_files) == 1:
-            exposures = np.repeat(
-                cls.read_exposure_file(exposure_files[0], windows)[None,:],
-                len(vcf_files), axis = 0
-            )
-        else:
-            exposures = cls.collect_exposures(exposure_files, windows)
-
-
-        exposures = cls.calculate_exposures(
-            windows, exposures
-        )
-        
-        features, feature_names = cls.collect_correlates(
-            correlates_files, windows, 
-            sep = sep,
-        )
-
-        with Fasta(fasta_file) as fa:
-
-            samples = cls.collect_vcfs(
-                vcf_files=vcf_files, 
-                fasta_object=fa, 
-                genome_object=genome,
-                window_set= windows,
-                index = index,
-                sep = sep,
-            )
-
-            trinuc_distributions = cls.get_trinucleotide_distributions(
-                windows, fa, n_jobs=n_jobs
-            )
-
-        '''out = []
-        for sample, exposure, X_matrix, trinuc in zip(
-            samples, exposures, features, trinuc_distributions):
-            out.append({
-                **sample, 
-                'window_size' : exposure, 
-                'X_matrix' : X_matrix.T,
-                'trinuc_distributions' : trinuc.T,
-                'shared_correlates' : False,
-                'feature_names' : feature_names,
-            })'''
-
-        return cls.corpus_class(
-            samples = samples,
-            window_size = exposures,
-            feature_names = feature_names,
-            X_matrix = [X.T for X in features],
-            trinuc_distributions = trinuc_distributions.T
-        )
-
-
-    @staticmethod
-    def calculate_exposures(windows, exposures):
-        return np.array([[len(w)/10000 for w in windows]]) * exposures
-
-
-    @staticmethod
-    def collect_exposures(exposure_files, windows):
-
-        return np.vstack([
-            MixedCorpus.read_exposure_file(f, windows)[None,:]
-            for f in exposure_files
-        ])
-
-
-    @staticmethod
-    def collect_correlates(correlates_files, windows, sep = '\t'):
-
-        columns = None
-        correlates = []
-
-        for corrs in correlates_files:
-            new_correlates, columns = MixedCorpus.read_correlates(corrs, windows, 
-                required_columns=columns, sep = sep)
-
-            columns = columns[:-1]
-            correlates.append(new_correlates)
-
-        return correlates, columns + ['constant']

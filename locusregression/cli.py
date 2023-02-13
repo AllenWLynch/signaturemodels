@@ -1,4 +1,4 @@
-from .corpus import CorpusReader, MixedReader, load_corpus, save_corpus
+from .corpus import CorpusReader, load_corpus, save_corpus
 from .model import LocusRegressor, tune_model, load_model
 import argparse
 from argparse import ArgumentTypeError
@@ -20,7 +20,7 @@ def write_dataset(
         regions_file,
         vcf_files,
         exposure_files,
-        correlates_files,
+        correlates_file,
         output
         ):
 
@@ -35,28 +35,14 @@ def write_dataset(
     if exposure_files is None:
         exposure_files = []
 
-    if len(correlates_files) > 1 or len(exposure_files) > 1:
-        
-        assert len(correlates_files) == len(vcf_files),\
-            'If more than one correlates or exposures file is provided, then the number of correlates files must match the number of VCF files.\n'\
-            'E.g. each VCF file must be associated with a correlates file, in order.'
+    assert len(exposure_files) in [0,1, len(vcf_files)],\
+        'User must provide zero, one, or the number of exposure files which matches the number of VCF files.'
 
-        assert len(exposure_files) in [0,1, len(vcf_files)],\
-            'User must provide zero, one, or the number of exposure files which matches the number of VCF files.'
-
-        dataset = MixedReader.create_corpus(
-            **shared_args, 
-            exposure_files = exposure_files,
-            correlates_files = correlates_files,
-        )
-    
-    else:
-
-        dataset = CorpusReader.create_corpus(
-            **shared_args,
-            exposure_file = None if len(exposure_files) == 0 else exposure_files[0],
-            correlates_file = correlates_files[0]
-        )
+    dataset = CorpusReader.create_corpus(
+        **shared_args, 
+        exposure_files = exposure_files,
+        correlates_file = correlates_file,
+    )
 
     save_corpus(dataset, output)
     
@@ -125,7 +111,7 @@ def tune(
         locus_subsample=locus_subsample,
         time_limit=time_limit
     )
-
+    
     corpus = load_corpus(corpus)
 
     grid = tune_model(
@@ -181,7 +167,7 @@ dataset_sub.add_argument('--genome-file','-g', type = file_exists, required = Tr
 dataset_sub.add_argument('--regions-file','-r', type = file_exists, required = True,
     help = 'Bed file of format with columns (chromosome, start, end) which defines the windows used to represent genomic loci in the model. '
             'The provided regions may be discontinuous, but MUST be in sorted order (run "sort -k1,1 -k2,2 --check <file>").')
-dataset_sub.add_argument('--correlates-files', '-c', type = file_exists, nargs = '+', required=True,
+dataset_sub.add_argument('--correlates-file', '-c', type = file_exists, required=True,
     help = 'One TSV file, or list of TSV files of genomic correlates. If given as a list, the number of files must match the number of provided VCF files. '
            'The first line must be column names which start with "#". '
            'Each column must have a name, and each TSV file must have the same columns in the same order. '

@@ -1,6 +1,7 @@
 import numpy as np
 from locusregression.corpus.readers import Sample
-from locusregression.corpus.corpus import Corpus
+from locusregression.corpus.featurization import COSMIC_SORT_ORDER
+from locusregression.corpus.corpus import Corpus, InMemorySamples
 from locusregression.corpus.featurization import CONTEXT_IDX, MUTATIONS_IDX
 import json
 import os
@@ -63,7 +64,7 @@ class SimulatedCorpus:
         trinucleotide_priors = TRINUC_PRIORS.copy(),
         signal_means = SIGNAL_MEANS.copy(),
         signal_std = SIGNAL_STD.copy(),
-        shared_correlates = True,*,
+        exposures = None,*,
         cosmic_sigs,
     ):
 
@@ -87,35 +88,33 @@ class SimulatedCorpus:
 
         assert isinstance(pi_prior, (int, float))
 
-        randomstate = np.random.RandomState(seed)
+        if exposures is None:
+            exposures = np.ones((n_cells, n_loci))
+        else:
+            raise NotImplementedError()
+            assert exposures.shape == (n_cells, n_loci)
 
+        randomstate = np.random.RandomState(seed)
 
         cell_pi = randomstate.dirichlet(np.ones(num_signatures) * pi_prior, size = n_cells)
         cell_n_mutations = randomstate.lognormal(log_mean_mutations, log_std_mutations, size = n_cells).astype(int)
 
-        if shared_correlates:
+        states = SimulatedCorpus.get_genomic_states(randomstate, 
+            n_loci=n_loci, transition_matrix=state_transition_matrix)
 
-            states = SimulatedCorpus.get_genomic_states(randomstate, 
-                n_loci=n_loci, transition_matrix=state_transition_matrix)
+        signals = SimulatedCorpus.get_signals(randomstate, state = states, 
+            signal_means=signal_means, signal_std=signal_std)
 
-            signals = SimulatedCorpus.get_signals(randomstate, state = states, 
-                signal_means=signal_means, signal_std=signal_std)
+        psi_matrix = SimulatedCorpus.get_psi_matrix(beta_matrix, signals)
 
-            psi_matrix = SimulatedCorpus.get_psi_matrix(beta_matrix, signals)
-
-            trinuc_distributions = np.vstack([
-                randomstate.dirichlet(trinucleotide_priors[state])[None,:]
-                for state in states
-            ]).T
-
-            exposures = np.ones((1, n_loci))
-
-        else:
-            raise NotImplementedError()
+        trinuc_distributions = np.vstack([
+            randomstate.dirichlet(trinucleotide_priors[state])[None,:]
+            for state in states
+        ]).T
 
 
         samples = []
-        for pi, n_mutations in tqdm.tqdm(zip(cell_pi, cell_n_mutations),
+        for pi, n_mutations, exposure in tqdm.tqdm(zip(cell_pi, cell_n_mutations, exposures),
             total = len(cell_pi), ncols = 100, desc = 'Generating samples'):
 
             samples.append(
@@ -125,16 +124,17 @@ class SimulatedCorpus:
                     trinuc_distributions=trinuc_distributions,
                     signatures=signatures,
                     pi = pi, 
-                    n_mutations= n_mutations
+                    n_mutations= n_mutations,
+                    exposures = exposure[None,:],
                 )
             )
         
         corpus = Corpus(
-                samples = samples,
-                window_size = exposures, 
+                samples = InMemorySamples(samples),
                 X_matrix = signals,
                 trinuc_distributions = trinuc_distributions,
-                feature_names = [f'Signal {i}' for i in range(num_states)]
+                feature_names = [f'Signal {i}' for i in range(num_states)],
+                shared_correlates = True,
         )
 
         generative_parameters = {
@@ -189,7 +189,7 @@ class SimulatedCorpus:
     @staticmethod
     def simulate_sample(randomstate,*,
             psi_matrix, trinuc_distributions, signatures,
-            pi, n_mutations,
+            pi, n_mutations, exposures,
             ):
 
         loci, contexts, mutations = [],[],[]
@@ -212,6 +212,60 @@ class SimulatedCorpus:
             contexts.append(context)
             mutations.append(mutation)
 
-        return Sample._aggregate_counts(
-            mutations, contexts, loci
+        return {
+            **Sample._aggregate_counts(mutations, contexts, loci), 
+            'window_size' : exposures
+            }
+
+
+    def from_model(
+        model, 
+        corpus,
+        n_cells = 100,
+        seed = 0,
+        ):
+
+        randomstate = np.random.RandomState(seed)
+        
+        num_signatures = model.n_components
+        pi_prior = model.alpha
+        n_loci = model.n_loci
+        beta_matrix = model.beta_mu
+        signals = corpus.X_matrix
+        trinuc_distributions = corpus.trinuc_distributions
+
+        signatures = np.vstack([
+            np.expand_dims(SimulatedCorpus.cosmic_sig_to_matrix(dict(zip(COSMIC_SORT_ORDER, model.signature(k)))), 0)
+            for k in range(model.n_components)
+        ])
+
+        cell_pi = randomstate.dirichlet(np.ones(num_signatures) * pi_prior, size = n_cells)
+        cell_n_mutations = [sum(sample['count']) for sample in corpus]
+
+        psi_matrix = SimulatedCorpus.get_psi_matrix(beta_matrix, signals)
+
+        exposures = np.ones((1, n_loci))
+
+        samples = []
+        for pi, n_mutations in tqdm.tqdm(zip(cell_pi, cell_n_mutations),
+            total = len(cell_pi), ncols = 100, desc = 'Generating samples'):
+
+            samples.append(
+                SimulatedCorpus.simulate_sample(
+                    randomstate, 
+                    psi_matrix=psi_matrix,
+                    trinuc_distributions=trinuc_distributions,
+                    signatures=signatures,
+                    pi = pi, 
+                    n_mutations= n_mutations,
+                    exposures = exposures.copy(),
+                )
+            )
+        
+        return Corpus(
+                samples = InMemorySamples(samples),
+                X_matrix = signals,
+                trinuc_distributions = trinuc_distributions,
+                feature_names = corpus.feature_names,
+                shared_correlates = True,
         )
