@@ -218,7 +218,7 @@ class Corpus(CorpusMixin):
             new_samples.append(new_sample)
         
         return Corpus(
-            samples = new_samples,
+            samples = InMemorySamples(new_samples),
             **{
                 'X_matrix' : self.X_matrix[:,loci],
                 'trinuc_distributions' : self.trinuc_distributions[:,loci],

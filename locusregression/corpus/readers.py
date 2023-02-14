@@ -1,7 +1,7 @@
 
 from .genome_tools import Region, RegionSet, Genome
 from .featurization import CONTEXT_IDX, MUTATIONS_IDX
-from .corpus import Corpus
+from .corpus import Corpus, InMemorySamples
 from pyfaidx import Fasta
 import numpy as np
 from collections import Counter
@@ -227,7 +227,7 @@ class CorpusReader:
             }
 
         return Corpus(
-            samples = samples,
+            samples = InMemorySamples(samples),
             feature_names = feature_names,
             X_matrix = features.T,
             trinuc_distributions = trinuc_distributions.T,
