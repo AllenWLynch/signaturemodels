@@ -303,7 +303,7 @@ class LocusRegressor(BaseEstimator):
             gamma = self.alpha + gamma_sstats*likelihood_scale
             
             if np.abs(gamma - old_gamma).mean() < self.difference_tol:
-                logger.debug('E-step converged after {} iterations'.format(i))
+                #logger.debug('E-step converged after {} iterations'.format(i))
                 break
         else:
             logger.debug('E-step did not converge. If this happens frequently, consider increasing "estep_iterations".')
@@ -472,7 +472,7 @@ class LocusRegressor(BaseEstimator):
                         inner_corpus = corpus
 
                     
-                    logger.debug(' E-step ...')
+                    #logger.debug(' E-step ...')
                     new_gamma, rho_sstats, delta_sstats, beta_sstats, \
                         _, _ = self._inference(
                             shared_correlates = self.shared_correlates,
@@ -486,7 +486,7 @@ class LocusRegressor(BaseEstimator):
                     else:
                         gamma[update_samples] = self.svi_update(gamma[update_samples], new_gamma, learning_rate)
                     
-                    logger.debug(' M-step ...')
+                    #logger.debug(' M-step ...')
 
                     new_beta_mu, new_beta_nu, new_delta = \
                         np.zeros_like(self.beta_mu), np.zeros_like(self.beta_nu), np.zeros_like(self.delta)
@@ -554,7 +554,7 @@ class LocusRegressor(BaseEstimator):
                             learning_rate
                         )
 
-                    logger.debug("Estimating evidence lower bound ...")
+                    #logger.debug("Estimating evidence lower bound ...")
 
                     elapsed_time = time.time() - start_time
                     self.elapsed_times.append(elapsed_time)

@@ -221,16 +221,15 @@ class CorpusReader:
 
         shared = True
         if exposures.shape[0] == 1:
-            samples = {
-                k : {**sample, 'window_size' : exposures} 
-                for k, sample in samples.items()
-            }
+            samples = [{**sample, 'window_size' : exposures} 
+                    for sample in samples]
+            
         else:
             shared = False
-            samples = {
-                k : {**sample, 'window_size' : exposure}
-                for (k, sample), exposure in zip(samples.items(), exposures)
-            }
+            samples = [
+                {**sample, 'window_size' : exposure}
+                for sample, exposure in zip(samples, exposures)
+            ]
 
         return Corpus(
             samples = InMemorySamples(samples),

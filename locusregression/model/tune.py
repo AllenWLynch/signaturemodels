@@ -22,7 +22,7 @@ def random_model(randomstate,
             n_components = randomstate.randint(min_components, max_components),
             seed = randomstate.randint(0, 100000000),
             tau = randomstate.choice([1, 5, 25, 50, 100]),
-            kappa = np.random.choice([0.5, 0.6, 0.7]),
+            kappa = randomstate.choice([0.5, 0.6, 0.7]),
             **model_params
         )
 

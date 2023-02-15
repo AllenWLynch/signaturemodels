@@ -1,4 +1,4 @@
-from .corpus import CorpusReader, load_corpus, save_corpus
+from .corpus import CorpusReader, load_corpus, save_corpus, stream_corpus
 from .model import LocusRegressor, tune_model, load_model
 import argparse
 from argparse import ArgumentTypeError
@@ -84,7 +84,7 @@ def train_model(
         kappa = kappa,
     )
     
-    dataset = load_corpus(corpus)
+    dataset = stream_corpus(corpus)
     
     model.fit(dataset)
     
@@ -112,7 +112,7 @@ def tune(
         time_limit=time_limit
     )
     
-    corpus = load_corpus(corpus)
+    corpus = stream_corpus(corpus)
 
     grid = tune_model(
         corpus,
