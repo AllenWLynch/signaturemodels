@@ -65,7 +65,7 @@ class Sample:
                     if line[VCF.REF] in 'ATCG' and line[VCF.ALT] in 'ATCG': # check for SBS
                         
                         newregion = SbsRegion(
-                                'chr' + line[VCF.CHROM],int(line[VCF.POS])-1+index, int(line[VCF.POS])+2+index, # add some buffer indices for the context
+                                line[VCF.CHROM],int(line[VCF.POS])-1+index, int(line[VCF.POS])+2+index, # add some buffer indices for the context
                                 annotation=(line[VCF.REF], line[VCF.ALT])
                             )
                         
@@ -74,9 +74,9 @@ class Sample:
                             sbs_mutations.append(newregion)
         
         if all_sbs == 0:
-            logger.warn('VCF file {} contained no valid SBS mutations.')
+            logger.warn('\tVCF file {} contained no valid SBS mutations.')
         elif len(sbs_mutations)/all_sbs < 0.5:
-            logger.warn('It appears there was a mismatch between the names of chromosomes in your VCF file and genome file.'
+            logger.warn('\tIt appears there was a mismatch between the names of chromosomes in your VCF file and genome file. '
                        'Many mutations were rejected.')
                 
         return RegionSet(sbs_mutations, genome_object)
@@ -88,12 +88,12 @@ class Sample:
         try:
             context = fasta_object[sbs.chromosome][sbs.start : sbs.end].seq.upper()
         except KeyError as err:
-            raise KeyError('Chromosome {} found in VCF file is not in the FASTA reference file'\
+            raise KeyError('\tChromosome {} found in VCF file is not in the FASTA reference file'\
                 .format(sbs.chromosome)) from err
 
         newref = context[1]
 
-        assert newref == sbs.ref, 'Looks like the vcf file was constructed with a different reference genome, different ref allele found at {}:{}, found {} instead of {}'.format(
+        assert newref == sbs.ref, '\tLooks like the vcf file was constructed with a different reference genome, different ref allele found at {}:{}, found {} instead of {}'.format(
             sbs.chromosome, str(sbs.start+1), newref, sbs.ref 
         )
 
@@ -147,7 +147,12 @@ class Sample:
         unmatched_mask = locus_indices == -1
         
         if unmatched_mask.sum() > 0:
-            logger.warn(f'{int(unmatched_mask.sum())} mutations did not intersect with any provided windows, filtering these out.')
+            unmatched_percent = unmatched_mask.sum()/unmatched_mask.size*100
+
+            if unmatched_percent > 25:
+                logger.warn(f'\t{unmatched_percent:.2f}% of mutations were not mapped to a genomic window.')
+            else:
+                logger.warn(f'\t{unmatched_percent:.2f} mutations did not intersect with any provided windows, filtering these out.')
 
         return Sample._aggregate_counts(
             np.array(mutation_indices)[~unmatched_mask], 
@@ -164,7 +169,8 @@ class CorpusReader:
     def create_corpus(cls, 
             sep = '\t', 
             index = -1, 
-            n_jobs = 1,*,
+            n_jobs = 1,
+            exposure_files = None,*,
             correlates_file,
             fasta_file,
             genome_file,
