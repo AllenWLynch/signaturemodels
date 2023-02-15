@@ -115,7 +115,7 @@ class LambdaOptimizer:
 
         new_delta = optim_results.x
 
-        lambda_logger.debug('Update converged after {} iterations.'.format(optim_results.nfev))
+        #lambda_logger.debug('Update converged after {} iterations.'.format(optim_results.nfev))
 
         return new_delta
 
