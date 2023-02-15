@@ -21,6 +21,8 @@ def random_model(randomstate,
             num_epochs=0, 
             n_components = randomstate.randint(min_components, max_components),
             seed = randomstate.randint(0, 100000000),
+            tau = randomstate.choice([1, 5, 25, 50, 100]),
+            kappa = np.random.choice([0.5, 0.6, 0.7]),
             **model_params
         )
 
@@ -61,7 +63,7 @@ def tune_model(corpus,
     train, test = train_test_split(corpus, seed = seed,
                         train_size = train_size)
 
-    max_candidates = (max_components - min_components)*3*(3 if tune_subsample else 1)
+    max_candidates = 1000#(max_components - min_components)*3*(3 if tune_subsample else 1)
 
     #logging.basicConfig(level = logging.ERROR)
     logger.setLevel(logging.ERROR)
