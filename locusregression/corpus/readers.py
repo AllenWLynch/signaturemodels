@@ -402,6 +402,8 @@ class CorpusReader:
 
     @staticmethod
     def collect_exposures(exposure_files, windows):
+        
+        logger.info('Reading exposure files ...')
 
         return np.vstack([
             CorpusReader.read_exposure_file(f, windows)[None,:]
