@@ -11,7 +11,7 @@ from .optim_lambda import LambdaOptimizer
 import time
 import warnings
 
-from sklearn.base import BaseEstimator
+#from sklearn.base import BaseEstimator
 import logging
 logger = logging.getLogger('LocusRegressor')
 
@@ -19,7 +19,7 @@ import matplotlib.pyplot as plt
 import pickle
 from functools import partial
 
-class LocusRegressor(BaseEstimator):
+class LocusRegressor:
     
     n_contexts = 32
 
@@ -42,7 +42,7 @@ class LocusRegressor(BaseEstimator):
         locus_subsample = 0.125,
         kappa = 0.5,
         tau = 1,
-        eval_every = 10,
+        eval_every = 50,
         time_limit = None,
         empirical_bayes = True,
         batch_size = None,
@@ -405,7 +405,7 @@ class LocusRegressor(BaseEstimator):
         sample_svi = self.batch_size < len(corpus)
         locus_svi = self.locus_subsample < 1
 
-        logging.info(f'Sample SVI: {sample_svi}, Locus SVI {locus_svi}')
+        logging.debug(f'Sample SVI: {sample_svi}, Locus SVI {locus_svi}')
             
     
         self.n_locus_features, self.n_loci = next(iter(corpus))['X_matrix'].shape
@@ -442,7 +442,7 @@ class LocusRegressor(BaseEstimator):
             total_time = 0
             self.epochs_trained = 0
         else:
-            total_time = np.cumsum(self.elapsed_times)
+            total_time = sum(self.elapsed_times)
 
         gamma = self._init_doc_variables(len(corpus))
         
@@ -450,7 +450,7 @@ class LocusRegressor(BaseEstimator):
             warnings.simplefilter("ignore")
 
             try:
-                for epoch in range(self.epochs_trained, self.num_epochs+1):
+                for epoch in range(self.epochs_trained+1, self.num_epochs+1):
 
                     start_time = time.time()
                     if svi_inference:
@@ -491,13 +491,15 @@ class LocusRegressor(BaseEstimator):
                     new_beta_mu, new_beta_nu, new_delta = \
                         np.zeros_like(self.beta_mu), np.zeros_like(self.beta_nu), np.zeros_like(self.delta)
 
+
+                    trinuc = next(iter(inner_corpus))['trinuc_distributions']
                         
                     if self.shared_correlates:
 
                         first_off = next(iter(inner_corpus))
                         window_sizes = [first_off['window_size']]
                         X_matrices = [first_off['X_matrix']]
-                        trinuc = [first_off['trinuc_distributions']]
+                        
                         update_beta_sstats = lambda k : [{l : ss[k] for l,ss in beta_sstats.items()}]
 
                     else:
@@ -507,10 +509,11 @@ class LocusRegressor(BaseEstimator):
                                 def __iter__(self):
                                     for x in inner_corpus:
                                         yield x[key]
+
+                            return reuseiterator()
                         
                         window_sizes = reuse_iterator('window_size') #[x['window_size'] for x in inner_corpus]
                         X_matrices = reuse_iterator('X_matrix') #[x['X_matrix'] for x in inner_corpus]
-                        trinuc = reuse_iterator('trinuc_distributions') #[x['trinuc_distributions'] for x in inner_corpus]
 
                         update_beta_sstats = lambda k : [{l : ss[k] for l,ss in beta_sstats_sample.items()} for beta_sstats_sample in beta_sstats]
                         

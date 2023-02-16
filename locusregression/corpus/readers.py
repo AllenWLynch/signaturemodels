@@ -9,7 +9,7 @@ import logging
 import tqdm
 from scipy import sparse
 
-logger = logging.getLogger('Corpus')
+logger = logging.getLogger('DataReader')
 logger.setLevel(logging.INFO)
 
 #

@@ -74,11 +74,10 @@ class LambdaOptimizer:
 
         obj_jac_funcs = [
                 LambdaOptimizer._get_sample_optim_func(
-                    trinuc_distributions = trinuc,
+                    trinuc_distributions = trinuc_distributions,
                     beta_sstats = beta_sstats_sample, 
                 )
-                for trinuc, beta_sstats_sample in \
-                    zip(trinuc_distributions, beta_sstats) \
+                for beta_sstats_sample in beta_sstats \
                     if len(beta_sstats_sample) > 0
             ]
 
@@ -115,7 +114,7 @@ class LambdaOptimizer:
 
         new_delta = optim_results.x
 
-        lambda_logger.debug('Update converged after {} iterations.'.format(optim_results.nfev))
+        #lambda_logger.debug('Update converged after {} iterations.'.format(optim_results.nfev))
 
         return new_delta
 

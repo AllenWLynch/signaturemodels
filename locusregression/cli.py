@@ -1,5 +1,5 @@
-from .corpus import CorpusReader, load_corpus, save_corpus, stream_corpus
-from .model import LocusRegressor, tune_model, load_model
+from .corpus import CorpusReader, save_corpus, stream_corpus, MetaCorpus
+from .model import LocusRegressor, tune_model
 import argparse
 from argparse import ArgumentTypeError
 import os
@@ -62,7 +62,7 @@ def train_model(
         quiet = True,
         n_jobs = 1,*,
         n_components,
-        corpus,
+        corpuses,
         output,
     ):
     
@@ -84,7 +84,14 @@ def train_model(
         kappa = kappa,
     )
     
-    dataset = stream_corpus(corpus)
+    if len(corpuses) == 1:
+        dataset = stream_corpus(corpuses[0])
+    else:
+        dataset = MetaCorpus(*[
+            stream_corpus(corpus) for corpus in corpuses
+        ])
+
+    logging.basicConfig( level=logging.INFO )
     
     model.fit(dataset)
     
@@ -98,10 +105,10 @@ def tune(
     n_jobs = 1,
     factor = 3,
     train_size = 0.7,
-    max_epochs = 300,
+    max_time = 1000,
     tune_subsample= False,*,
     output,
-    corpus,
+    corpuses,
     min_components, 
     max_components,
 ):
@@ -112,16 +119,21 @@ def tune(
         time_limit=time_limit
     )
     
-    corpus = stream_corpus(corpus)
+    if len(corpuses) == 1:
+        dataset = stream_corpus(corpuses[0])
+    else:
+        dataset = MetaCorpus(*[
+            stream_corpus(corpus) for corpus in corpuses
+        ])
 
     grid = tune_model(
-        corpus,
+        dataset,
         n_jobs = n_jobs,
         train_size = train_size,
         min_components = min_components,
         max_components = max_components,
         factor = factor,
-        max_epochs=max_epochs,
+        max_time=max_time,
         tune_subsample= tune_subsample,
         **model_params,
     )
@@ -210,8 +222,8 @@ trainer_sub = subparsers.add_parser('train-model', help = 'Train LocusRegression
 trainer_required = trainer_sub.add_argument_group('Required arguments')
 trainer_required .add_argument('--n-components','-k', type = posint, required=True,
     help = 'Number of signatures to learn.')
-trainer_required .add_argument('--corpus', '-d', type = file_exists, required=True,
-    help = 'Path to compiled corpus file.')
+trainer_required .add_argument('--corpuses', '-d', type = file_exists, nargs = '+', required=True,
+    help = 'Path to compiled corpus file/files.')
 trainer_required .add_argument('--output','-o', type = valid_path, required=True,
     help = 'Where to save trained model.')
 
@@ -240,8 +252,8 @@ tune_sub = subparsers.add_parser('tune', help = 'Tune number of signatures for L
     'Successive Halving algorithm.')
 
 tune_required = tune_sub.add_argument_group('Required arguments')
-tune_required.add_argument('--corpus', '-d', type = file_exists, required=True,
-    help = 'Path to compiled corpus file.')
+tune_required.add_argument('--corpuses', '-d', type = file_exists, nargs = '+', required=True,
+    help = 'Path to compiled corpus file/files.')
 tune_required.add_argument('--output','-o', type = valid_path, required=True,
     help = 'Where to save tuning results.')
 tune_required.add_argument('--max-components','-max',type = posint, required=True,
@@ -253,8 +265,8 @@ tune_required.add_argument('--n-jobs','-j', type = posint, required= True,
 
 tune_optional = tune_sub.add_argument_group('Optional arguments')
 
-tune_sub.add_argument('--max-epochs', type = posint, default = 300,
-    help = 'Number of epochs to train for on the last iteration of'
+tune_sub.add_argument('--max-time', '-t', type = posint,
+    help = 'Maximum length of time to allow training during'
             ' successive halving/Hyperband. This should be set high enough such that the model converges to a solution.')
 tune_optional.add_argument('--factor','-f',type = posint, default = 3,
     help = 'Successive halving reduction factor for each iteration')
@@ -270,21 +282,6 @@ model_options.add_argument('--bound-tol', '-tol', type = posfloat, default=1e-2,
     help = 'Early stop criterion, stop training if objective score does not increase by this much after one epoch.')
 
 tune_sub.set_defaults(func = tune)
-
-
-def score(*,model, corpus):
-
-    dataset = load_corpus(corpus)
-    model = load_model(model)
-
-    print(model.score(dataset))
-
-
-score_args = subparsers.add_parser('score')
-score_args.add_argument('--model','-m', type = file_exists, required=True)
-score_args.add_argument('--corpus','-d',type= file_exists, required=True)
-score_args.set_defaults(func = score)
-
 
 
 def main():

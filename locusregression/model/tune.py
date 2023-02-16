@@ -15,13 +15,15 @@ def random_model(randomstate,
                     ):
 
     if tune_subsample:
-        model_params['locus_subsample'] = randomstate.choice([0.0625, 0.125, 0.25])
+        model_params['locus_subsample'] = randomstate.choice([0.0625, 0.125, 0.25,])
+        model_params['batch_size'] = randomstate.choice([32,64,128])
         
     return LocusRegressor(
-            num_epochs=0, 
+            num_epochs=1000, 
+            eval_every = 1000,
             n_components = randomstate.randint(min_components, max_components),
             seed = randomstate.randint(0, 100000000),
-            tau = randomstate.choice([1, 5, 25, 50, 100]),
+            tau = randomstate.choice([1, 16, 48, 128]),
             kappa = randomstate.choice([0.5, 0.6, 0.7]),
             **model_params
         )
@@ -29,7 +31,7 @@ def random_model(randomstate,
 
 def eval_params(model, resources,*, train, test):
     
-    model.num_epochs = resources
+    model.time_limit = resources
     model.partial_fit(train)
     return model.score(test)
 
@@ -40,7 +42,10 @@ def get_records(bracket, model, loss, resources):
             'bracket' : bracket,
             'param_n_components' : model.n_components,
             'param_locus_subsample' : model.locus_subsample,
-            'param_seed' : model.seed,
+            'param_seed' : int(model.seed),
+            'param_tau' : int(model.tau),
+            'param_kappa' : float(model.kappa),
+            'param_batch_size' : int(model.batch_size),
             'resources' : resources,
             'score' : loss,
         }
@@ -50,7 +55,7 @@ def tune_model(corpus,
     n_jobs = 1, 
     seed = 0,
     train_size = 0.7,
-    max_epochs = 300,
+    max_time = 1000,
     factor = 3,
     successive_halving=True,*,
     tune_subsample = False,
@@ -78,7 +83,7 @@ def tune_model(corpus,
             partial(eval_params, train = train, test = test),
             get_records,
             factor = factor,
-            max_resources = max_epochs,
+            max_resources = max_time,
             seed = seed,
             max_candidates= max_candidates,
             n_jobs= n_jobs,

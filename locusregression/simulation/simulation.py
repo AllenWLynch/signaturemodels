@@ -61,6 +61,7 @@ class SimulatedCorpus:
         n_loci = 1000,
         state_transition_matrix = TRANSITION_MATRIX.copy(),
         beta_matrix = BETA_MATRIX.copy(),
+        rate_function = None,
         trinucleotide_priors = TRINUC_PRIORS.copy(),
         signal_means = SIGNAL_MEANS.copy(),
         signal_std = SIGNAL_STD.copy(),
@@ -76,8 +77,11 @@ class SimulatedCorpus:
         num_states = state_transition_matrix.shape[0]
         assert state_transition_matrix.shape == (num_states, num_states)
 
-        num_signatures = beta_matrix.shape[0]
-        assert beta_matrix.shape == (num_signatures, num_states)
+        num_signatures = signatures.shape[0]
+        assert beta_matrix is None or beta_matrix.shape == (num_signatures, num_states)
+
+        if beta_matrix is None:
+            assert not rate_function is None
 
         assert signatures.shape == (num_signatures, 32, 3)
 
@@ -88,10 +92,11 @@ class SimulatedCorpus:
 
         assert isinstance(pi_prior, (int, float))
 
+        shared_exposures = True
         if exposures is None:
             exposures = np.ones((n_cells, n_loci))
         else:
-            raise NotImplementedError()
+            shared_exposures = False
             assert exposures.shape == (n_cells, n_loci)
 
         randomstate = np.random.RandomState(seed)
@@ -105,17 +110,18 @@ class SimulatedCorpus:
         signals = SimulatedCorpus.get_signals(randomstate, state = states, 
             signal_means=signal_means, signal_std=signal_std)
 
-        psi_matrix = SimulatedCorpus.get_psi_matrix(beta_matrix, signals)
-
         trinuc_distributions = np.vstack([
             randomstate.dirichlet(trinucleotide_priors[state])[None,:]
             for state in states
         ]).T
 
-
         samples = []
-        for pi, n_mutations, exposure in tqdm.tqdm(zip(cell_pi, cell_n_mutations, exposures),
+        for i, (pi, n_mutations, exposure) in tqdm.tqdm(enumerate(zip(cell_pi, cell_n_mutations, exposures)),
             total = len(cell_pi), ncols = 100, desc = 'Generating samples'):
+
+            if i == 0 or not shared_exposures:
+                psi_matrix = SimulatedCorpus.get_psi_matrix(signals, exposure, 
+                        beta_matrix = beta_matrix, rate_function = rate_function)
 
             samples.append(
                 SimulatedCorpus.simulate_sample(
@@ -134,7 +140,7 @@ class SimulatedCorpus:
                 X_matrix = signals,
                 trinuc_distributions = trinuc_distributions,
                 feature_names = [f'Signal {i}' for i in range(num_states)],
-                shared_correlates = True,
+                shared_correlates = shared_exposures,
         )
 
         generative_parameters = {
@@ -178,9 +184,15 @@ class SimulatedCorpus:
 
 
     @staticmethod
-    def get_psi_matrix(beta_matrix, signals):
+    def get_psi_matrix(signals, exposure,
+                        beta_matrix = None, 
+                        rate_function = None):
         
-        psi_hat = np.exp(beta_matrix.dot(signals))
+        if rate_function is None:
+            assert not beta_matrix is None
+            rate_function = lambda x : beta_matrix @ x
+
+        psi_hat = exposure*np.exp(rate_function(signals))
         psi = psi_hat/psi_hat.sum(-1, keepdims = True) # K,L, sum l=1 -> L {psi_kl} = 1
 
         return psi

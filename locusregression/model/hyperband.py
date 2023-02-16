@@ -4,6 +4,7 @@ import numpy as np
 from math import log, floor, ceil
 import tqdm
 import multiprocess as mp
+import logging
 
 
 class Bracket:
