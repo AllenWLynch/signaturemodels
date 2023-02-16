@@ -227,7 +227,7 @@ class CorpusReader:
         else:
             shared = False
             samples = [
-                {**sample, 'window_size' : exposure}
+                {**sample, 'window_size' : exposure[None,:]}
                 for sample, exposure in zip(samples, exposures)
             ]
 
