@@ -59,6 +59,7 @@ class SimulatedCorpus:
         log_std_mutations = 1.,
         pi_prior = 1.,
         n_loci = 1000,
+        mutation_rate_noise = 0.5,
         state_transition_matrix = TRANSITION_MATRIX.copy(),
         beta_matrix = BETA_MATRIX.copy(),
         rate_function = None,
@@ -121,7 +122,11 @@ class SimulatedCorpus:
 
             if i == 0 or not shared_exposures:
                 psi_matrix = SimulatedCorpus.get_psi_matrix(signals, exposure, 
-                        beta_matrix = beta_matrix, rate_function = rate_function)
+                        beta_matrix = beta_matrix, 
+                        rate_function = rate_function,
+                        mutation_rate_noise = mutation_rate_noise,
+                        random_state= randomstate,
+                )
 
             samples.append(
                 SimulatedCorpus.simulate_sample(
@@ -135,11 +140,15 @@ class SimulatedCorpus:
                 )
             )
         
+        signals = np.vstack([
+            signals, np.ones((1,signals.shape[-1]))
+        ])
+
         corpus = Corpus(
                 samples = InMemorySamples(samples),
                 X_matrix = signals,
                 trinuc_distributions = trinuc_distributions,
-                feature_names = [f'Signal {i}' for i in range(num_states)],
+                feature_names = [f'Signal {i}' for i in range(num_states)] + ['Constant'],
                 shared_correlates = shared_exposures,
         )
 
@@ -180,19 +189,23 @@ class SimulatedCorpus:
         signals = signal_means[:,None]*state_as_onehot.T \
                 + signal_std[:,None]*randomstate.randn(len(signal_means), len(state)) # S, L
 
-        return (signals - signals.mean(-1, keepdims = True))/signals.std(-1, keepdims = True)
+        standard_signals = (signals - signals.mean(-1, keepdims = True))/signals.std(-1, keepdims = True)
+
+        return standard_signals
 
 
     @staticmethod
     def get_psi_matrix(signals, exposure,
                         beta_matrix = None, 
-                        rate_function = None):
+                        rate_function = None,
+                        mutation_rate_noise = 0.5,*,
+                        random_state):
         
         if rate_function is None:
             assert not beta_matrix is None
             rate_function = lambda x : beta_matrix @ x
 
-        psi_hat = exposure*np.exp(rate_function(signals))
+        psi_hat = exposure*np.exp(rate_function(signals) + mutation_rate_noise*random_state.randn(signals.shape[-1]))
         psi = psi_hat/psi_hat.sum(-1, keepdims = True) # K,L, sum l=1 -> L {psi_kl} = 1
 
         return psi
