@@ -1,8 +1,23 @@
 
 import numpy as np
-from scipy.special import psi, gammaln, polygamma
+from scipy.special import psi, gammaln, polygamma, gamma
 import logging
 logger = logging.getLogger(__name__)
+from collections import Counter 
+
+
+def dirichlet_multinomial_logprob(z, alpha):
+
+    n_z = np.array(list(Counter(z).values()))
+
+    n = sum(n_z)
+
+    alpha_bar = sum(alpha)
+
+    return gammaln(alpha_bar) + gammaln(n+1) - gammaln(n+alpha_bar) + \
+            np.sum(
+                gammaln(n_z + alpha) - gammaln(alpha) - gammaln(n_z + 1)
+            )
 
 
 def log_dirichlet_expectation(alpha):

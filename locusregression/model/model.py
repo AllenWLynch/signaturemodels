@@ -1,7 +1,8 @@
 
 import numpy as np
 from .base import dirichlet_bound, log_dirichlet_expectation, \
-        M_step_alpha, update_tau
+        M_step_alpha, update_tau, dirichlet_multinomial_logprob
+from scipy import stats
 
 from collections import defaultdict
 from locusregression.corpus import COSMIC_SORT_ORDER, SIGNATURE_STRINGS, MUTATION_PALETTE
@@ -109,7 +110,7 @@ class LocusRegressor:
                                                (self.n_components, self.n_contexts),
                                               ).astype(self.dtype, copy=False)
         
-        self.rho = self.random_state.gamma(100, 1/100,
+        self.omega = self.random_state.gamma(100, 1/100,
                                                (self.n_components, self.n_contexts, 3),
                                               ).astype(self.dtype, copy = False)
         
@@ -187,7 +188,7 @@ class LocusRegressor:
         ):
         
         Elog_delta = log_dirichlet_expectation(self.delta)
-        Elog_rho = log_dirichlet_expectation(self.rho)
+        Elog_rho = log_dirichlet_expectation(self.omega)
         Elog_gamma = log_dirichlet_expectation(gamma)
 
         elbo = 0
@@ -212,7 +213,7 @@ class LocusRegressor:
         
         elbo += sum(dirichlet_bound(np.ones(self.n_contexts), self.delta, Elog_delta))
         
-        elbo += np.sum(dirichlet_bound(np.ones((1,3)), self.rho, Elog_rho))
+        elbo += np.sum(dirichlet_bound(np.ones((1,3)), self.omega, Elog_rho))
 
         return elbo
 
@@ -220,7 +221,7 @@ class LocusRegressor:
     def _prebuild_phi_matrix(self):
 
         Elog_delta = log_dirichlet_expectation(self.delta)
-        Elog_rho = log_dirichlet_expectation(self.rho)
+        Elog_rho = log_dirichlet_expectation(self.omega)
 
         self.phi_matrix_prebuild = np.exp(Elog_delta)[:,:,None] * np.exp(Elog_rho)
 
@@ -279,7 +280,7 @@ class LocusRegressor:
         
         beta_sstats = defaultdict(lambda : np.zeros(self.n_components))
         delta_sstats = np.zeros_like(self.delta)
-        rho_sstats = np.zeros_like(self.rho)
+        rho_sstats = np.zeros_like(self.omega)
 
         flattend_phi = trinuc_distributions[context,locus]*\
                        self.phi_matrix_prebuild[:,context,mutation]*\
@@ -345,7 +346,7 @@ class LocusRegressor:
             )
 
         weighted_phis, gammas = [], []
-        rho_sstats = np.zeros_like(self.rho)
+        rho_sstats = np.zeros_like(self.omega)
         delta_sstats = np.zeros_like(self.delta)
         entropy_sstats = 0
 
@@ -541,7 +542,7 @@ class LocusRegressor:
                     self.delta = self.svi_update(self.delta, new_delta, learning_rate)
 
                     # update rho distribution
-                    self.rho = self.svi_update(self.rho, rho_sstats + 1., learning_rate)
+                    self.omega = self.svi_update(self.omega, rho_sstats + 1., learning_rate)
 
                     if self.empirical_bayes:
 
@@ -692,7 +693,7 @@ class LocusRegressor:
 
     def calc_signature_sstats(self, corpus):
 
-        self._weighted_trinuc_dists = self._get_weighted_trinuc_distribution(corpus)
+        #self._weighted_trinuc_dists = self._get_weighted_trinuc_distribution(corpus)
 
         self._genome_trinuc_distribution = np.sum(
             self._pop_corpus(corpus)['trinuc_distributions']*\
@@ -929,7 +930,7 @@ class LocusRegressor:
 
 
         eps_posterior = np.concatenate([
-            np.expand_dims(np.random.dirichlet(self.rho[component, j], size = monte_carlo_draws).T, 0)
+            np.expand_dims(np.random.dirichlet(self.omega[component, j], size = monte_carlo_draws).T, 0)
             for j in range(32)
         ])
 
@@ -1038,3 +1039,69 @@ class LocusRegressor:
             ax.spines[s].set_visible(False)
 
         return ax
+
+    
+    def _model_conditional_log_prob(self,*,
+            beta, _lambda, rho,
+            X_matrix,
+            mutation,
+            context,
+            locus,
+            count,
+            trinuc_distributions,
+            window_size
+        ):
+
+        mutation_matrix = _lambda[:,:,None] * rho
+
+        p_m_l = trinuc_distributions[context, locus]*mutation_matrix[:, context, mutation] \
+                 / np.dot(_lambda, trinuc_distributions[:,locus]) # K,C x C,L -> K,I
+        
+        z = np.random.choice(p_m_l.shape[0], p = p_m_l.T) # propose Z proportional to the signature-only posterior
+
+        mutrates = window_size*np.exp(beta @ X_matrix)
+
+        p_l = mutrates[:, locus]/np.sum(mutrates, axis = -1) # K,I
+
+        log_p_ml_z = (np.log(count) + np.log(p_m_l) + np.log(p_l))[z, np.arange(len(z))] # choose a likelihood for each observation
+
+        log_p_z_alpha = dirichlet_multinomial_logprob(z, self.alpha*len(z))
+
+        return np.sum(log_p_ml_z) + log_p_z_alpha
+
+    
+    def _global_posterior_samples(self, size = 1000):
+
+        betas = self.beta_nu*self.random_state.randn(size = size) + self.beta_mu
+
+        lambdas = self.random_state.dirichlet(self.delta, size = size)
+
+        rhos = self.random_state.dirichlet(self.omega, size = size)
+
+        for vals in zip(betas, lambdas, rhos):
+            yield dict(zip(['beta','_lambda','rho'], vals))
+
+    
+    def _log_posterior_importance_weight(self,*, beta, _lambda, rho):
+
+        p_prior = stats.norm(np.zeros_like(self.tau), self.tau).pdf(beta)
+        p_posterior = stats.norm(self.beta_mu, self.beta_nu).pdf(beta)
+
+        return np.log(p_prior) - np.log(p_posterior)
+
+    
+    def IS_marginal_likelihood(self, sample, corpus, size = 1000):
+        
+        logp_samples = []
+        for posterior in self._global_posterior_samples(size = size):
+            logp_samples.append(
+                self._log_posterior_importance_weight(**posterior) + \
+                self._model_conditional_log_prob(
+                    **posterior, **sample, 
+                    X_matrix = corpus.X_matrix,
+                    trinuc_distributions= corpus.trinuc_distributions,
+                )
+            )
+
+        return logp_samples
+
