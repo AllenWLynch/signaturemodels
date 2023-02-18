@@ -2,7 +2,12 @@ from sklearn.ensemble._gb_losses import RegressionLossFunction, DummyRegressor
 from sklearn.tree import DecisionTreeRegressor
 import numpy as np
 import logging
+from scipy.optimize import line_search
+
 logger = logging.getLogger('Trees')
+
+class TreeFitError(ValueError):
+    pass
 
 class MutationRateLoss(RegressionLossFunction):
 
@@ -30,11 +35,22 @@ class MutationRateLoss(RegressionLossFunction):
         '''
 
         exposure = kargs['sample_weight']
+        y_hat = exposure*np.exp(raw_predictions)
 
         grads = y \
-            - np.sum(y)/np.sum(exposure*np.exp(raw_predictions)) * exposure * np.exp(raw_predictions)
+            - np.sum(y)/np.sum(y_hat) * y_hat
 
         return grads
+
+
+    def hessian(self, y, raw_predictions, **kargs):
+        
+        exposure = kargs['sample_weight']
+        y_hat = exposure*np.exp(raw_predictions)
+
+        hess = -np.sum(y)/np.square(np.sum(y_hat)) * (y_hat * np.sum(y_hat) + y_hat**2)
+
+        return -hess
 
 
     def update_terminal_regions(
@@ -86,21 +102,34 @@ def optim_tree(learning_rate = 1.,*,
 
     loss = MutationRateLoss()
     
-    residuals = loss.negative_gradient(y, prediction, 
+    first_order = loss.negative_gradient(y, prediction, 
                        sample_weight = exposures)
 
-    initial = loss(y, prediction, 
-                       sample_weight = exposures)
+    second_order = loss.hessian(y, prediction, 
+                       sample_weight = exposures) + 1e-30
+
+    residuals = first_order/second_order
 
     tree = DecisionTreeRegressor(
         criterion='friedman_mse', 
         max_depth=3,
-        #ccp_alpha = 0.0001,
+        min_samples_leaf=5,
+        min_samples_split=5,
+        ccp_alpha=0.01,
         ).fit(X, residuals)
 
-    improvement = loss(y, prediction + learning_rate*tree.predict(X),
-                    sample_weight=exposures)
 
-    logger.debug(f'Improvement: {improvement - initial}')
+    search_direction = tree.predict(X)
 
-    return tree
+    alpha = line_search(
+        lambda x : loss(y, x, sample_weight=exposures), 
+        lambda x : -loss.negative_gradient(y, x,  sample_weight=exposures),
+        prediction,
+        search_direction
+        )[0]
+
+    if alpha is None:
+        logger.info('Tree rejected')
+        raise TreeFitError()
+
+    return lambda x : alpha*learning_rate*tree.predict(x)

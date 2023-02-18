@@ -6,7 +6,7 @@ from ..base import dirichlet_bound, log_dirichlet_expectation, \
 from collections import defaultdict
 from locusregression.corpus import COSMIC_SORT_ORDER, SIGNATURE_STRINGS, MUTATION_PALETTE
 
-from .tree_optim import optim_tree
+from .tree_optim import optim_tree, TreeFitError
 from ..optim_lambda import LambdaOptimizer
 
 import time
@@ -521,17 +521,22 @@ class LocusRegressor(BaseEstimator):
 
                     for k in range(self.n_components):   
 
-                        eta = 0.1
+                        eta = 1
 
-                        self._trees[k].append(
-                            optim_tree(
-                                beta_sstats = update_beta_sstats(k),
-                                prediction = self.log_mutation_rates[k, update_loci],
-                                X_matrices = X_matrices,
-                                window_sizes = window_sizes,
-                                learning_rate = learning_rate*eta
+                        try:
+                            self._trees[k].append(
+                                optim_tree(
+                                    beta_sstats = update_beta_sstats(k),
+                                    prediction = self.log_mutation_rates[k, update_loci],
+                                    X_matrices = X_matrices,
+                                    window_sizes = window_sizes,
+                                    learning_rate = eta*learning_rate
+                                )
                             )
-                        )
+
+                            self.log_mutation_rates[k] += self._trees[k][-1](corpus.X_matrix.T)
+                        except TreeFitError:
+                            pass
 
                         new_delta[k] = LambdaOptimizer.optimize(self.delta[k],
                             trinuc_distributions = trinuc,
@@ -539,7 +544,7 @@ class LocusRegressor(BaseEstimator):
                             delta_sstats = delta_sstats[k],
                         )
 
-                        self.log_mutation_rates[k] += eta*learning_rate*self._trees[k][-1].predict(corpus.X_matrix.T)
+                        
                     #self.beta_mu = self.svi_update(self.beta_mu, new_beta_mu, learning_rate)
                     #self.beta_nu = self.svi_update(self.beta_nu, new_beta_nu, learning_rate)
 
