@@ -91,7 +91,7 @@ class SimulatedCorpus:
 
         assert trinucleotide_priors.shape == (num_states, 32)
 
-        assert isinstance(pi_prior, (int, float))
+        #assert isinstance(pi_prior, (int, float))
 
         shared_exposures = True
         if exposures is None:
@@ -101,9 +101,6 @@ class SimulatedCorpus:
             assert exposures.shape == (n_cells, n_loci)
 
         randomstate = np.random.RandomState(seed)
-
-        cell_pi = randomstate.dirichlet(np.ones(num_signatures) * pi_prior, size = n_cells)
-        cell_n_mutations = randomstate.lognormal(log_mean_mutations, log_std_mutations, size = n_cells).astype(int)
 
         states = SimulatedCorpus.get_genomic_states(randomstate, 
             n_loci=n_loci, transition_matrix=state_transition_matrix)
@@ -115,6 +112,9 @@ class SimulatedCorpus:
             randomstate.dirichlet(trinucleotide_priors[state])[None,:]
             for state in states
         ]).T
+
+        cell_pi = randomstate.dirichlet(np.ones(num_signatures) * pi_prior, size = n_cells)
+        cell_n_mutations = randomstate.lognormal(log_mean_mutations, log_std_mutations, size = n_cells).astype(int)
 
         samples = []
         for i, (pi, n_mutations, exposure) in tqdm.tqdm(enumerate(zip(cell_pi, cell_n_mutations, exposures)),

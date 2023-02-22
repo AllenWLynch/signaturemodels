@@ -8,7 +8,10 @@ from collections import Counter
 
 def dirichlet_multinomial_logprob(z, alpha):
 
-    n_z = np.array(list(Counter(z).values()))
+    z, num = np.unique(z, return_counts=True)
+
+    n_z = np.zeros_like(alpha)
+    n_z[z] = num
 
     n = sum(n_z)
 

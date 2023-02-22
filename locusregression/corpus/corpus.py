@@ -92,7 +92,7 @@ class SampleLoader:
 class InMemorySamples(list):
 
     def subset(self, idx_list):
-        return [self[i] for i in idx_list]
+        return InMemorySamples([self[i] for i in idx_list])
 
 
 

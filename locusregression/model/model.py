@@ -3,6 +3,7 @@ import numpy as np
 from .base import dirichlet_bound, log_dirichlet_expectation, \
         M_step_alpha, update_tau, dirichlet_multinomial_logprob
 from scipy import stats
+import tqdm
 
 from collections import defaultdict
 from locusregression.corpus import COSMIC_SORT_ORDER, SIGNATURE_STRINGS, MUTATION_PALETTE
@@ -1043,6 +1044,7 @@ class LocusRegressor:
     
     def _model_conditional_log_prob(self,*,
             beta, _lambda, rho,
+            alpha,
             X_matrix,
             mutation,
             context,
@@ -1057,49 +1059,68 @@ class LocusRegressor:
         p_m_l = trinuc_distributions[context, locus]*mutation_matrix[:, context, mutation] \
                  / np.dot(_lambda, trinuc_distributions[:,locus]) # K,C x C,L -> K,I
         
-        z = np.random.choice(p_m_l.shape[0], p = p_m_l.T) # propose Z proportional to the signature-only posterior
-
         mutrates = window_size*np.exp(beta @ X_matrix)
 
-        p_l = mutrates[:, locus]/np.sum(mutrates, axis = -1) # K,I
+        p_l = mutrates[:, locus]/np.sum(mutrates, axis = -1, keepdims=True) # K,I
+        
+        p_ml_z = p_l*p_m_l*alpha[:,None]
 
-        log_p_ml_z = (np.log(count) + np.log(p_m_l) + np.log(p_l))[z, np.arange(len(z))] # choose a likelihood for each observation
+        q_z = p_ml_z/p_ml_z.sum(axis = 0, keepdims = True)
 
-        log_p_z_alpha = dirichlet_multinomial_logprob(z, self.alpha*len(z))
+        z = np.argmax(np.log(q_z.T) + self.random_state.gumbel(size=q_z.T.shape), axis=1)
 
-        return np.sum(log_p_ml_z) + log_p_z_alpha
+        log_p_ml_z = (np.log(count) + np.log(p_m_l)[z, np.arange(len(z))] \
+            + np.log(p_l)[z, np.arange(len(z))]) # choose a likelihood for each observation
+
+        log_p_z_alpha = dirichlet_multinomial_logprob(z, np.array(alpha))
+
+        return log_p_z_alpha + np.sum(log_p_ml_z) 
 
     
     def _global_posterior_samples(self, size = 1000):
 
-        betas = self.beta_nu*self.random_state.randn(size = size) + self.beta_mu
+        for i in range(size):
 
-        lambdas = self.random_state.dirichlet(self.delta, size = size)
+            beta = self.beta_nu*self.random_state.randn(*self.beta_mu.shape) + self.beta_mu
 
-        rhos = self.random_state.dirichlet(self.omega, size = size)
+            _lambda = np.vstack([
+                self.random_state.dirichlet(self.delta[k])[None,:]
+                for k in range(self.n_components)
+            ])
 
-        for vals in zip(betas, lambdas, rhos):
-            yield dict(zip(['beta','_lambda','rho'], vals))
+            rho = np.vstack([
+                np.expand_dims(np.vstack([
+                    self.random_state.dirichlet(self.omega[k, c])[None,:]
+                    for c in range(32)
+                ]), axis = 0)
+                for k in range(self.n_components)
+            ])
 
-    
+            yield {'beta' : beta, '_lambda' : _lambda, 'rho' : rho}
+
+
     def _log_posterior_importance_weight(self,*, beta, _lambda, rho):
 
-        p_prior = stats.norm(np.zeros_like(self.tau), self.tau).pdf(beta)
+        p_prior = stats.norm(np.zeros_like(self.beta_mu), self.param_tau[:,None]).pdf(beta)
         p_posterior = stats.norm(self.beta_mu, self.beta_nu).pdf(beta)
 
-        return np.log(p_prior) - np.log(p_posterior)
+        return np.log(p_prior).sum() - np.log(p_posterior).sum()
 
     
-    def IS_marginal_likelihood(self, sample, corpus, size = 1000):
+    def IS_marginal_likelihood(self, sample, corpus, alpha = None, size = 1000):
         
+        if alpha is None:
+            alpha = self.alpha
+
         logp_samples = []
-        for posterior in self._global_posterior_samples(size = size):
+        for posterior in tqdm.tqdm(self._global_posterior_samples(size = size), ncols =100, total = size):
             logp_samples.append(
-                self._log_posterior_importance_weight(**posterior) + \
+                #self._log_posterior_importance_weight(**posterior) + \
                 self._model_conditional_log_prob(
                     **posterior, **sample, 
                     X_matrix = corpus.X_matrix,
                     trinuc_distributions= corpus.trinuc_distributions,
+                    alpha = alpha,
                 )
             )
 
