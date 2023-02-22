@@ -59,7 +59,7 @@ class SimulatedCorpus:
         log_std_mutations = 1.,
         pi_prior = 1.,
         n_loci = 1000,
-        mutation_rate_noise = 0.5,
+        mutation_rate_noise = 0.1,
         state_transition_matrix = TRANSITION_MATRIX.copy(),
         beta_matrix = BETA_MATRIX.copy(),
         rate_function = None,
@@ -157,6 +157,14 @@ class SimulatedCorpus:
             'compositions' : cell_pi,
             'beta' : beta_matrix,
             'signatures' : signatures,
+            'n_cells' : n_cells,
+            'log_mean_mutations' : log_mean_mutations,
+            'log_std_mutations' : log_std_mutations,
+            'n_loci' : n_loci,
+            'pi_prior' : pi_prior,
+            'mutation_rate_noise' : mutation_rate_noise,
+            'seed' : seed,
+            'cosmic_sigs' : cosmic_sigs
         }
 
         return corpus, generative_parameters

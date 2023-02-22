@@ -4,7 +4,7 @@ from scipy.spatial.distance import cdist
 def signature_cosine_distance(model, simulation_parameters):
     
     sigs = np.vstack([
-        model.signature(i, raw = True, normalization='local') for i in range(model.n_components)
+        model.signature(i, raw = True, normalization='global') for i in range(model.n_components)
     ])
 
     truth = simulation_parameters['signatures'].reshape(-1,96)
@@ -17,7 +17,7 @@ def signature_cosine_distance(model, simulation_parameters):
 
 def coef_l1_distance(model, simulation_parameters):
     
-    return cdist(model.beta_mu, 
+    return cdist(model.beta_mu[:,:-1], 
             simulation_parameters['beta'], 
             metric='cityblock'
             ).min(0).mean()

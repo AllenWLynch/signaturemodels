@@ -18,6 +18,7 @@ def random_model(randomstate,
         model_params['locus_subsample'] = randomstate.choice([0.0625, 0.125, 0.25,])
         model_params['batch_size'] = randomstate.choice([32,64,128])
         
+
     return LocusRegressor(
             num_epochs=1000, 
             eval_every = 1000,
@@ -36,7 +37,7 @@ def eval_params(model, resources,*, train, test):
     return model.score(test)
 
 
-def get_records(bracket, model, loss, resources):
+def get_records(trial_num, bracket, model, loss, resources):
     
     return {
             'bracket' : bracket,
@@ -48,6 +49,7 @@ def get_records(bracket, model, loss, resources):
             'param_batch_size' : int(model.batch_size),
             'resources' : resources,
             'score' : loss,
+            'trial_num' : trial_num,
         }
 
 
@@ -55,7 +57,7 @@ def tune_model(corpus,
     n_jobs = 1, 
     seed = 0,
     train_size = 0.7,
-    max_time = 1000,
+    max_time = None,
     factor = 3,
     successive_halving=True,*,
     tune_subsample = False,
@@ -70,8 +72,24 @@ def tune_model(corpus,
 
     max_candidates = 1000#(max_components - min_components)*3*(3 if tune_subsample else 1)
 
-    #logging.basicConfig(level = logging.ERROR)
     logger.setLevel(logging.ERROR)
+    #logging.basicConfig(level = logging.ERROR)
+
+    if max_time is None:
+        print('No "max_time" provided, inferring a good length of time to allow each model ...')
+        
+        warmup_epochs = 10
+        test_model = LocusRegressor(
+            n_components=min_components + (max_components - min_components)//2,
+            **model_params,
+            num_epochs=warmup_epochs,
+        ).fit(corpus)
+
+        time_per_epoch = sum(test_model.elapsed_times)/warmup_epochs # the first iteration is usually twice as long as subsequent iterations
+        max_time = int(time_per_epoch * 200)
+
+        print(f'Allocating {max_time} seconds for each trial.')
+
 
     return run_hyperband(
             partial(random_model, 

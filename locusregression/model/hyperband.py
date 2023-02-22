@@ -227,7 +227,7 @@ def run_hyperband(
                             band.push(bracket, model, loss)
 
                             records.append(
-                                records_func(bracket, model, loss, resources)
+                                records_func(len(records) + 1, bracket, model, loss, resources)
                             )
 
                             bar.update(resources)

@@ -591,7 +591,8 @@ class LocusRegressor:
                         break
 
                 else:
-                    logger.info('Model did not converge, consider increasing "estep_iterations" or "num_epochs" parameters.')
+                    #logger.info('Model did not converge, consider increasing "estep_iterations" or "num_epochs" parameters.')
+                    pass
 
 
             except KeyboardInterrupt:
@@ -618,7 +619,11 @@ class LocusRegressor:
         Model with inferred parameters.
 
         '''
-        return self._fit(corpus)
+        self._fit(corpus)
+
+        self._calc_signature_sstats(corpus)
+
+        return self
 
 
     def partial_fit(self, corpus):
@@ -692,7 +697,7 @@ class LocusRegressor:
                 )
 
 
-    def calc_signature_sstats(self, corpus):
+    def _calc_signature_sstats(self, corpus):
 
         #self._weighted_trinuc_dists = self._get_weighted_trinuc_distribution(corpus)
 
@@ -896,7 +901,7 @@ class LocusRegressor:
     def signature(self, component, 
             monte_carlo_draws = 1000,
             return_error = False,
-            normalization = 'local',
+            normalization = 'global',
             raw = False):
         '''
         Returns the 96-dimensional channel for a component.
