@@ -224,7 +224,7 @@ class BetaOptimizer:
 
         new_beta = optim_results.x
 
-        beta_logger.debug('Update converged after {} iterations.'.format(optim_results.nfev))
+        #beta_logger.debug('Update converged after {} iterations.'.format(optim_results.nfev))
 
 
         return new_beta[:F], new_beta[F:]

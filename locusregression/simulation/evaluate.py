@@ -11,7 +11,7 @@ def signature_cosine_distance(model, simulation_parameters):
 
     cosine_matches = 1 - cdist(sigs, truth, metric='cosine')
     
-    return cosine_matches.max(1).mean()
+    return cosine_matches.max(0).mean()
 
 
 
@@ -20,4 +20,4 @@ def coef_l1_distance(model, simulation_parameters):
     return cdist(model.beta_mu, 
             simulation_parameters['beta'], 
             metric='cityblock'
-            ).min(1).mean()
+            ).min(0).mean()

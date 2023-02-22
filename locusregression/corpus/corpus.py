@@ -2,6 +2,8 @@ import numpy as np
 from abc import ABC, abstractmethod
 from collections import defaultdict
 import h5py as h5
+import logging
+logger = logging.getLogger('Corpus')
 
 class CorpusMixin(ABC):
 
@@ -17,7 +19,6 @@ class CorpusMixin(ABC):
         self.X_matrix = X_matrix
         self.trinuc_distributions = trinuc_distributions
         self._shared_correlates = shared_correlates
-
 
     @property
     def shared_correlates(self):
@@ -65,11 +66,15 @@ class SampleLoader:
         return len(self.subset_idx)
 
 
+    def _read_item(self, h5, i):
+        #logger.debug('Streaming from disk cache.')
+        return {k : h5[f'samples/{i}/{k}'][...] for k in h5[f'samples/{i}'].keys()}
+
     def __iter__(self):
 
         with h5.File(self.filename, 'r') as f:
             for i in self.subset_idx:
-                yield {k : f[f'samples/{i}/{k}'][...] for k in f[f'samples/{i}'].keys()}
+                yield self._read_item(f,i)
         
 
     def __getitem__(self, idx):
@@ -77,7 +82,7 @@ class SampleLoader:
         idx = self.subset_idx[idx]
 
         with h5.File(self.filename, 'r') as f:
-            return {k : f[f'samples/{idx}/{k}'][...] for k in f[f'samples/{idx}'].keys()}
+            return self._read_item(f, idx)
 
 
     def subset(self, idx_list):
@@ -87,7 +92,7 @@ class SampleLoader:
 class InMemorySamples(list):
 
     def subset(self, idx_list):
-        return [self[i] for i in idx_list]
+        return InMemorySamples([self[i] for i in idx_list])
 
 
 

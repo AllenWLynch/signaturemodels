@@ -1,7 +1,9 @@
 
 import numpy as np
 from .base import dirichlet_bound, log_dirichlet_expectation, \
-        M_step_alpha, update_tau
+        M_step_alpha, update_tau, dirichlet_multinomial_logprob
+from scipy import stats
+import tqdm
 
 from collections import defaultdict
 from locusregression.corpus import COSMIC_SORT_ORDER, SIGNATURE_STRINGS, MUTATION_PALETTE
@@ -11,7 +13,7 @@ from .optim_lambda import LambdaOptimizer
 import time
 import warnings
 
-from sklearn.base import BaseEstimator
+#from sklearn.base import BaseEstimator
 import logging
 logger = logging.getLogger('LocusRegressor')
 
@@ -19,7 +21,7 @@ import matplotlib.pyplot as plt
 import pickle
 from functools import partial
 
-class LocusRegressor(BaseEstimator):
+class LocusRegressor:
     
     n_contexts = 32
 
@@ -42,7 +44,7 @@ class LocusRegressor(BaseEstimator):
         locus_subsample = 0.125,
         kappa = 0.5,
         tau = 1,
-        eval_every = 10,
+        eval_every = 50,
         time_limit = None,
         empirical_bayes = True,
         batch_size = None,
@@ -109,7 +111,7 @@ class LocusRegressor(BaseEstimator):
                                                (self.n_components, self.n_contexts),
                                               ).astype(self.dtype, copy=False)
         
-        self.rho = self.random_state.gamma(100, 1/100,
+        self.omega = self.random_state.gamma(100, 1/100,
                                                (self.n_components, self.n_contexts, 3),
                                               ).astype(self.dtype, copy = False)
         
@@ -187,7 +189,7 @@ class LocusRegressor(BaseEstimator):
         ):
         
         Elog_delta = log_dirichlet_expectation(self.delta)
-        Elog_rho = log_dirichlet_expectation(self.rho)
+        Elog_rho = log_dirichlet_expectation(self.omega)
         Elog_gamma = log_dirichlet_expectation(gamma)
 
         elbo = 0
@@ -212,7 +214,7 @@ class LocusRegressor(BaseEstimator):
         
         elbo += sum(dirichlet_bound(np.ones(self.n_contexts), self.delta, Elog_delta))
         
-        elbo += np.sum(dirichlet_bound(np.ones((1,3)), self.rho, Elog_rho))
+        elbo += np.sum(dirichlet_bound(np.ones((1,3)), self.omega, Elog_rho))
 
         return elbo
 
@@ -220,7 +222,7 @@ class LocusRegressor(BaseEstimator):
     def _prebuild_phi_matrix(self):
 
         Elog_delta = log_dirichlet_expectation(self.delta)
-        Elog_rho = log_dirichlet_expectation(self.rho)
+        Elog_rho = log_dirichlet_expectation(self.omega)
 
         self.phi_matrix_prebuild = np.exp(Elog_delta)[:,:,None] * np.exp(Elog_rho)
 
@@ -279,7 +281,7 @@ class LocusRegressor(BaseEstimator):
         
         beta_sstats = defaultdict(lambda : np.zeros(self.n_components))
         delta_sstats = np.zeros_like(self.delta)
-        rho_sstats = np.zeros_like(self.rho)
+        rho_sstats = np.zeros_like(self.omega)
 
         flattend_phi = trinuc_distributions[context,locus]*\
                        self.phi_matrix_prebuild[:,context,mutation]*\
@@ -303,7 +305,7 @@ class LocusRegressor(BaseEstimator):
             gamma = self.alpha + gamma_sstats*likelihood_scale
             
             if np.abs(gamma - old_gamma).mean() < self.difference_tol:
-                logger.debug('E-step converged after {} iterations'.format(i))
+                #logger.debug('E-step converged after {} iterations'.format(i))
                 break
         else:
             logger.debug('E-step did not converge. If this happens frequently, consider increasing "estep_iterations".')
@@ -345,7 +347,7 @@ class LocusRegressor(BaseEstimator):
             )
 
         weighted_phis, gammas = [], []
-        rho_sstats = np.zeros_like(self.rho)
+        rho_sstats = np.zeros_like(self.omega)
         delta_sstats = np.zeros_like(self.delta)
         entropy_sstats = 0
 
@@ -405,7 +407,7 @@ class LocusRegressor(BaseEstimator):
         sample_svi = self.batch_size < len(corpus)
         locus_svi = self.locus_subsample < 1
 
-        logging.info(f'Sample SVI: {sample_svi}, Locus SVI {locus_svi}')
+        logging.debug(f'Sample SVI: {sample_svi}, Locus SVI {locus_svi}')
             
     
         self.n_locus_features, self.n_loci = next(iter(corpus))['X_matrix'].shape
@@ -442,7 +444,7 @@ class LocusRegressor(BaseEstimator):
             total_time = 0
             self.epochs_trained = 0
         else:
-            total_time = np.cumsum(self.elapsed_times)
+            total_time = sum(self.elapsed_times)
 
         gamma = self._init_doc_variables(len(corpus))
         
@@ -450,7 +452,7 @@ class LocusRegressor(BaseEstimator):
             warnings.simplefilter("ignore")
 
             try:
-                for epoch in range(self.epochs_trained, self.num_epochs+1):
+                for epoch in range(self.epochs_trained+1, self.num_epochs+1):
 
                     start_time = time.time()
                     if svi_inference:
@@ -472,7 +474,7 @@ class LocusRegressor(BaseEstimator):
                         inner_corpus = corpus
 
                     
-                    logger.debug(' E-step ...')
+                    #logger.debug(' E-step ...')
                     new_gamma, rho_sstats, delta_sstats, beta_sstats, \
                         _, _ = self._inference(
                             shared_correlates = self.shared_correlates,
@@ -486,18 +488,20 @@ class LocusRegressor(BaseEstimator):
                     else:
                         gamma[update_samples] = self.svi_update(gamma[update_samples], new_gamma, learning_rate)
                     
-                    logger.debug(' M-step ...')
+                    #logger.debug(' M-step ...')
 
                     new_beta_mu, new_beta_nu, new_delta = \
                         np.zeros_like(self.beta_mu), np.zeros_like(self.beta_nu), np.zeros_like(self.delta)
 
+
+                    trinuc = next(iter(inner_corpus))['trinuc_distributions']
                         
                     if self.shared_correlates:
 
                         first_off = next(iter(inner_corpus))
                         window_sizes = [first_off['window_size']]
                         X_matrices = [first_off['X_matrix']]
-                        trinuc = [first_off['trinuc_distributions']]
+                        
                         update_beta_sstats = lambda k : [{l : ss[k] for l,ss in beta_sstats.items()}]
 
                     else:
@@ -507,10 +511,11 @@ class LocusRegressor(BaseEstimator):
                                 def __iter__(self):
                                     for x in inner_corpus:
                                         yield x[key]
+
+                            return reuseiterator()
                         
                         window_sizes = reuse_iterator('window_size') #[x['window_size'] for x in inner_corpus]
                         X_matrices = reuse_iterator('X_matrix') #[x['X_matrix'] for x in inner_corpus]
-                        trinuc = reuse_iterator('trinuc_distributions') #[x['trinuc_distributions'] for x in inner_corpus]
 
                         update_beta_sstats = lambda k : [{l : ss[k] for l,ss in beta_sstats_sample.items()} for beta_sstats_sample in beta_sstats]
                         
@@ -538,7 +543,7 @@ class LocusRegressor(BaseEstimator):
                     self.delta = self.svi_update(self.delta, new_delta, learning_rate)
 
                     # update rho distribution
-                    self.rho = self.svi_update(self.rho, rho_sstats + 1., learning_rate)
+                    self.omega = self.svi_update(self.omega, rho_sstats + 1., learning_rate)
 
                     if self.empirical_bayes:
 
@@ -554,7 +559,7 @@ class LocusRegressor(BaseEstimator):
                             learning_rate
                         )
 
-                    logger.debug("Estimating evidence lower bound ...")
+                    #logger.debug("Estimating evidence lower bound ...")
 
                     elapsed_time = time.time() - start_time
                     self.elapsed_times.append(elapsed_time)
@@ -689,7 +694,7 @@ class LocusRegressor(BaseEstimator):
 
     def calc_signature_sstats(self, corpus):
 
-        self._weighted_trinuc_dists = self._get_weighted_trinuc_distribution(corpus)
+        #self._weighted_trinuc_dists = self._get_weighted_trinuc_distribution(corpus)
 
         self._genome_trinuc_distribution = np.sum(
             self._pop_corpus(corpus)['trinuc_distributions']*\
@@ -926,7 +931,7 @@ class LocusRegressor(BaseEstimator):
 
 
         eps_posterior = np.concatenate([
-            np.expand_dims(np.random.dirichlet(self.rho[component, j], size = monte_carlo_draws).T, 0)
+            np.expand_dims(np.random.dirichlet(self.omega[component, j], size = monte_carlo_draws).T, 0)
             for j in range(32)
         ])
 
@@ -1035,3 +1040,89 @@ class LocusRegressor(BaseEstimator):
             ax.spines[s].set_visible(False)
 
         return ax
+
+    
+    def _model_conditional_log_prob(self,*,
+            beta, _lambda, rho,
+            alpha,
+            X_matrix,
+            mutation,
+            context,
+            locus,
+            count,
+            trinuc_distributions,
+            window_size
+        ):
+
+        mutation_matrix = _lambda[:,:,None] * rho
+
+        p_m_l = trinuc_distributions[context, locus]*mutation_matrix[:, context, mutation] \
+                 / np.dot(_lambda, trinuc_distributions[:,locus]) # K,C x C,L -> K,I
+        
+        mutrates = window_size*np.exp(beta @ X_matrix)
+
+        p_l = mutrates[:, locus]/np.sum(mutrates, axis = -1, keepdims=True) # K,I
+        
+        p_ml_z = p_l*p_m_l*alpha[:,None]
+
+        q_z = p_ml_z/p_ml_z.sum(axis = 0, keepdims = True)
+
+        z = np.argmax(np.log(q_z.T) + self.random_state.gumbel(size=q_z.T.shape), axis=1)
+
+        log_p_ml_z = (np.log(count) + np.log(p_m_l)[z, np.arange(len(z))] \
+            + np.log(p_l)[z, np.arange(len(z))]) # choose a likelihood for each observation
+
+        log_p_z_alpha = dirichlet_multinomial_logprob(z, np.array(alpha))
+
+        return log_p_z_alpha + np.sum(log_p_ml_z) 
+
+    
+    def _global_posterior_samples(self, size = 1000):
+
+        for i in range(size):
+
+            beta = self.beta_nu*self.random_state.randn(*self.beta_mu.shape) + self.beta_mu
+
+            _lambda = np.vstack([
+                self.random_state.dirichlet(self.delta[k])[None,:]
+                for k in range(self.n_components)
+            ])
+
+            rho = np.vstack([
+                np.expand_dims(np.vstack([
+                    self.random_state.dirichlet(self.omega[k, c])[None,:]
+                    for c in range(32)
+                ]), axis = 0)
+                for k in range(self.n_components)
+            ])
+
+            yield {'beta' : beta, '_lambda' : _lambda, 'rho' : rho}
+
+
+    def _log_posterior_importance_weight(self,*, beta, _lambda, rho):
+
+        p_prior = stats.norm(np.zeros_like(self.beta_mu), self.param_tau[:,None]).pdf(beta)
+        p_posterior = stats.norm(self.beta_mu, self.beta_nu).pdf(beta)
+
+        return np.log(p_prior).sum() - np.log(p_posterior).sum()
+
+    
+    def IS_marginal_likelihood(self, sample, corpus, alpha = None, size = 1000):
+        
+        if alpha is None:
+            alpha = self.alpha
+
+        logp_samples = []
+        for posterior in tqdm.tqdm(self._global_posterior_samples(size = size), ncols =100, total = size):
+            logp_samples.append(
+                #self._log_posterior_importance_weight(**posterior) + \
+                self._model_conditional_log_prob(
+                    **posterior, **sample, 
+                    X_matrix = corpus.X_matrix,
+                    trinuc_distributions= corpus.trinuc_distributions,
+                    alpha = alpha,
+                )
+            )
+
+        return logp_samples
+
