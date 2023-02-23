@@ -198,7 +198,7 @@ trainer_optional = trainer_sub.add_argument_group('Optional arguments')
 
 trainer_optional.add_argument('--locus-subsample','-sub', type = posfloat, default = 0.125,
     help = 'Whether to use locus subsampling to speed up training via stochastic variational inference.')
-trainer_optional.add_argument('--batch-size','-batch', type = posfloat, default = 128,
+trainer_optional.add_argument('--batch-size','-batch', type = posint, default = 128,
     help = 'Use minibatch updates via stochastic variational inference.')
 trainer_optional.add_argument('--time-limit','-time', type = posint, default = None,
     help = 'Time limit in seconds for model training.')
