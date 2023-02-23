@@ -153,7 +153,7 @@ class Sample:
             if unmatched_percent > 25:
                 logger.warn(f'\t{unmatched_percent:.2f}% of mutations were not mapped to a genomic window.')
             else:
-                logger.warn(f'\t{unmatched_percent:.2f} mutations did not intersect with any provided windows, filtering these out.')
+                logger.warn(f'\t{unmatched_percent:.2f}% mutations did not intersect with any provided windows, filtering these out.')
 
         return Sample._aggregate_counts(
             np.array(mutation_indices)[~unmatched_mask], 

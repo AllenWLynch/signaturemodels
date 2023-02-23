@@ -286,7 +286,7 @@ model_options = tune_sub.add_argument_group('Model arguments')
 
 model_options.add_argument('--locus-subsample','-sub', type = posfloat, default = 0.125,
     help = 'Whether to use locus subsampling to speed up training via stochastic variational inference.')
-model_options.add_argument('--batch-size','-batch', type = posfloat, default = 128,
+model_options.add_argument('--batch-size','-batch', type = posint, default = 128,
     help = 'Batch size for stochastic variational inference.')
 
 tune_sub.set_defaults(func = tune)
