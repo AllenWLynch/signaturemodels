@@ -132,6 +132,7 @@ dataset_sub.set_defaults(func = write_dataset)
     
 def train_model(
         locus_subsample = 0.125,
+        batch_size = 128,
         time_limit = None,
         tau = 1,
         kappa = 0.5,
@@ -151,6 +152,7 @@ def train_model(
     
     model = LocusRegressor(
         locus_subsample = locus_subsample,
+        batch_size = batch_size,
         seed = seed, 
         dtype = np.float32,
         pi_prior = pi_prior,
@@ -196,6 +198,8 @@ trainer_optional = trainer_sub.add_argument_group('Optional arguments')
 
 trainer_optional.add_argument('--locus-subsample','-sub', type = posfloat, default = 0.125,
     help = 'Whether to use locus subsampling to speed up training via stochastic variational inference.')
+trainer_optional.add_argument('--batch-size','-batch', type = posfloat, default = 128,
+    help = 'Use minibatch updates via stochastic variational inference.')
 trainer_optional.add_argument('--time-limit','-time', type = posint, default = None,
     help = 'Time limit in seconds for model training.')
 trainer_optional.add_argument('--tau', type = posint, default = 1)
