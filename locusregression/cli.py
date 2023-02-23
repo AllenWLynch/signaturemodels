@@ -58,7 +58,8 @@ subparsers = parser.add_subparsers(help = 'commands')
 
 def write_dataset(
         sep = '\t', 
-        index = -1,*,
+        index = -1,
+        chr_prefix = '',*,
         fasta_file,
         genome_file,
         regions_file,
@@ -74,6 +75,7 @@ def write_dataset(
         regions_file = regions_file,
         vcf_files = vcf_files,
         sep = sep, index = index,
+        chr_prefix = chr_prefix,
     )
 
     if exposure_files is None:
@@ -122,6 +124,8 @@ dataset_sub.add_argument('--sep','-sep',default ='\t',type = str, help = 'Separa
 dataset_sub.add_argument('--index','-i',default = -1,type = int, 
                          help = 'Position offset between VCF and Fasta/Bed files. If VCF files were written with 1-based indexing,'
                                 'set this to "-1".')
+
+dataset_sub.add_argument('--chr-prefix', default= '', help='Append the chromosome names in VCF files with this prefix. Useful if you are using UCSC reference materials.')
 
 dataset_sub.set_defaults(func = write_dataset)
     

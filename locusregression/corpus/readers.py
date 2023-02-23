@@ -50,7 +50,7 @@ class Sample:
 
     @staticmethod
     def _read_mutations(vcf_file, genome_object, 
-                        sep = '\t', index = -1):
+                        sep = '\t', index = -1, chr_prefix = ''):
 
         sbs_mutations = []
         all_sbs = 0
@@ -65,7 +65,7 @@ class Sample:
                     if line[VCF.REF] in 'ATCG' and line[VCF.ALT] in 'ATCG': # check for SBS
                         
                         newregion = SbsRegion(
-                                line[VCF.CHROM],int(line[VCF.POS])-1+index, int(line[VCF.POS])+2+index, # add some buffer indices for the context
+                                chr_prefix + line[VCF.CHROM],int(line[VCF.POS])-1+index, int(line[VCF.POS])+2+index, # add some buffer indices for the context
                                 annotation=(line[VCF.REF], line[VCF.ALT])
                             )
                         
@@ -134,9 +134,10 @@ class Sample:
 
     @staticmethod
     def featurize_mutations(vcf, fasta_object, genome_object, window_set, 
-        sep = '\t', index= -1):
+        sep = '\t', index= -1, chr_prefix = ''):
 
-        sbs_set = Sample._read_mutations(vcf, genome_object, sep = sep, index = index)
+        sbs_set = Sample._read_mutations(vcf, genome_object, 
+            sep = sep, index = index, chr_prefix = chr_prefix)
 
         mutation_indices, context_indices = list(zip(*[
             Sample._get_context_mutation_idx(fasta_object, sbs) for sbs in sbs_set.regions
@@ -168,7 +169,8 @@ class CorpusReader:
     @classmethod
     def create_corpus(cls, 
             sep = '\t', 
-            index = -1, 
+            index = -1,
+            chr_prefix = '', 
             n_jobs = 1,
             exposure_files = None,*,
             correlates_file,
@@ -213,6 +215,7 @@ class CorpusReader:
                 window_set = windows,
                 index = index,
                 sep = sep,
+                chr_prefix = chr_prefix,
             )
 
             trinuc_distributions = cls.get_trinucleotide_distributions(
@@ -377,7 +380,7 @@ class CorpusReader:
 
 
     @staticmethod
-    def collect_vcfs(vcf_files, sep = '\t', index = -1,*,
+    def collect_vcfs(vcf_files, sep = '\t', index = -1, chr_prefix = '',*,
                      fasta_object, genome_object, window_set):
         
         logger.info('Reading VCF files ...')
@@ -388,7 +391,7 @@ class CorpusReader:
             
             samples.append(
                 Sample.featurize_mutations(vcf, fasta_object, genome_object, window_set,
-                                          sep = sep, index = index)
+                                          sep = sep, index = index, chr_prefix = chr_prefix)
             )
         
         logger.info('Done reading VCF files.')
