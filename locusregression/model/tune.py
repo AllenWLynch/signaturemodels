@@ -57,7 +57,7 @@ def tune_model(corpus,
     n_jobs = 1, 
     seed = 0,
     train_size = 0.7,
-    max_time = None,
+    max_time = 900,
     factor = 3,
     successive_halving=True,*,
     tune_subsample = False,
@@ -74,21 +74,18 @@ def tune_model(corpus,
 
     logger.setLevel(logging.ERROR)
     #logging.basicConfig(level = logging.ERROR)
-
-    if max_time is None:
-        print('No "max_time" provided, inferring a good length of time to allow each model ...')
         
-        warmup_epochs = 10
-        test_model = LocusRegressor(
-            n_components=min_components + (max_components - min_components)//2,
-            **model_params,
-            num_epochs=warmup_epochs,
-        ).fit(corpus)
+    warmup_epochs = 10
+    test_model = LocusRegressor(
+        n_components=min_components + (max_components - min_components)//2,
+        **model_params,
+        num_epochs=warmup_epochs,
+    ).fit(corpus)
 
-        time_per_epoch = sum(test_model.elapsed_times)/warmup_epochs # the first iteration is usually twice as long as subsequent iterations
-        max_time = int(time_per_epoch * 200)
+    time_per_epoch = sum(test_model.elapsed_times)/warmup_epochs # the first iteration is usually twice as long as subsequent iterations
+    max_time = min(max_time, int(time_per_epoch * 200))
 
-        print(f'Allocating {max_time} seconds for each trial.')
+    print(f'Allocating {max_time} seconds for each trial.')
 
 
     return run_hyperband(

@@ -131,7 +131,7 @@ if __name__ == "__main__":
     }
 
     i=0
-    for n_cells in [1,25,50,100,200]:
+    for n_cells in [25,50,100,200]:
         for log_mean_mutations in [3,4,5,6,7]:
             i+=1
             

@@ -170,7 +170,7 @@ def train_model(
             stream_corpus(corpus) for corpus in corpuses
         ])
 
-    logging.basicConfig( level=logging.INFO )
+    logging.basicConfig( level=logging.ERROR )
     
     model.fit(dataset)
     
@@ -214,7 +214,7 @@ def tune(
     n_jobs = 1,
     factor = 3,
     train_size = 0.7,
-    max_time = None,
+    max_time = 900,
     tune_subsample= False,*,
     output,
     corpuses,
@@ -267,7 +267,7 @@ tune_required.add_argument('--n-jobs','-j', type = posint, required= True,
 
 tune_optional = tune_sub.add_argument_group('Optional arguments')
 
-tune_sub.add_argument('--max-time', '-t', type = posint, default=None,
+tune_sub.add_argument('--max-time', '-t', type = posint, default=900,
     help = 'Maximum length of time to allow training during'
             ' successive halving/Hyperband. This should be set high enough such that the model converges to a solution.')
 tune_optional.add_argument('--factor','-f',type = posint, default = 3,
