@@ -106,7 +106,8 @@ class HyperBand:
         seed = 0,
         max_resources = 300,
         factor = 3,
-        max_candidates = np.inf,*,
+        max_candidates = np.inf,
+        successive_halving = False,*,
         random_model_function,
     ):
 
@@ -128,7 +129,7 @@ class HyperBand:
                 randomstate = self.randomstate,
                 max_candidates = max_candidates,
                 bracket_num=s
-            ) for s in range(1, self.s_max)
+            ) for s in (range(1, self.s_max) if not successive_halving else [self.s_max])
         ]
         
         
@@ -171,6 +172,7 @@ def run_hyperband(
     records_func,
     factor = 3,
     max_resources = 300,
+    successive_halving = False,
     seed = 0,
     n_jobs = 1,
     max_candidates = np.inf,
@@ -179,6 +181,7 @@ def run_hyperband(
     band = HyperBand(
         random_model_function = random_model_func,
         factor = factor,
+        successive_halving = successive_halving,
         max_resources = max_resources,
         seed = seed,
         max_candidates = max_candidates,

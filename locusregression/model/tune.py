@@ -39,7 +39,7 @@ def eval_params(model, resources,*, train, test):
 
 def get_records(trial_num, bracket, model, loss, resources):
     
-    return {
+    record = {
             'bracket' : bracket,
             'param_n_components' : model.n_components,
             'param_locus_subsample' : model.locus_subsample,
@@ -52,6 +52,10 @@ def get_records(trial_num, bracket, model, loss, resources):
             'trial_num' : trial_num,
         }
 
+    return record
+
+    
+
 
 def tune_model(corpus,
     n_jobs = 1, 
@@ -59,7 +63,7 @@ def tune_model(corpus,
     train_size = 0.7,
     max_time = 900,
     factor = 3,
-    successive_halving=True,*,
+    successive_halving=False,*,
     tune_subsample = False,
     min_components, max_components,
     **model_params):
@@ -99,6 +103,7 @@ def tune_model(corpus,
             get_records,
             factor = factor,
             max_resources = max_time,
+            successive_halving = successive_halving,
             seed = seed,
             max_candidates= max_candidates,
             n_jobs= n_jobs,

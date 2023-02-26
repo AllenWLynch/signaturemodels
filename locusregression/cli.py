@@ -259,7 +259,7 @@ def tune(
     
 
 tune_sub = subparsers.add_parser('tune', help = 'Tune number of signatures for LocusRegression model on a pre-compiled corpus using the'
-    'Successive Halving algorithm.')
+    'hyperband or successive halving algorithm.')
 
 tune_required = tune_sub.add_argument_group('Required arguments')
 tune_required.add_argument('--corpuses', '-d', type = file_exists, nargs = '+', required=True,
@@ -281,6 +281,8 @@ tune_sub.add_argument('--max-time', '-t', type = posint, default=900,
 tune_optional.add_argument('--factor','-f',type = posint, default = 3,
     help = 'Successive halving reduction factor for each iteration')
 tune_optional.add_argument('--tune-subsample', action = 'store_true', default=False)
+tune_optional.add_argument('--successive-halving','-halving', action = 'store_true',
+    default= False, help='Use the successive halving algorithm for tuning.')
 
 model_options = tune_sub.add_argument_group('Model arguments')
 
@@ -324,7 +326,7 @@ def retrain_best(trial_num = None,*,
 
     print('Training model with params:\n\t' + param_string)
 
-    model = LocusRegressor(**params, time_limit=max_resoures).fit(dataset)
+    model = LocusRegressor(**params).fit(dataset)
 
     model.save(output)
 
