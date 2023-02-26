@@ -34,7 +34,7 @@ class LocusRegressor:
         n_components = 10,
         seed = 2, 
         dtype = np.float32,
-        pi_prior = 5.,
+        pi_prior = 3.,
         num_epochs = 300, 
         difference_tol = 1e-3,
         estep_iterations = 1000,
