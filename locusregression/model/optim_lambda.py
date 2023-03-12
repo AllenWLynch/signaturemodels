@@ -8,10 +8,10 @@ lambda_logger = logging.getLogger('Lambda optimizer')
 class LambdaOptimizer:
 
     @staticmethod
-    def _get_sample_optim_func(*,beta_sstats, trinuc_distributions):
+    def _get_sample_optim_func(*,locus_sstats, trinuc_distributions):
         
-        nonzero_indices = np.array(list(beta_sstats.keys()))
-        weighted_phis = np.vstack(list(beta_sstats.values())).T # (K, l)
+        nonzero_indices = np.array(list(locus_sstats.keys()))
+        weighted_phis = np.vstack(list(locus_sstats.values())).T # (K, l)
         
         trinuc_distributions = trinuc_distributions[:, nonzero_indices]
 
@@ -24,15 +24,15 @@ class LambdaOptimizer:
 
 
     @staticmethod
-    def _objective_jac_regularization(delta, delta_sstats):
+    def _objective_jac_regularization(delta, context_sstats):
         
         lamsum = delta.sum()
-        marginal_sstats = delta_sstats.sum()
+        marginal_sstats = context_sstats.sum()
 
-        objective = np.dot(delta_sstats, psi(delta)-psi(lamsum)) + marginal_sstats*np.log(lamsum)
+        objective = np.dot(context_sstats, psi(delta)-psi(lamsum)) + marginal_sstats*np.log(lamsum)
         objective -= loggamma(lamsum) - loggamma(delta).sum() + np.dot(delta - 1, psi(delta) - psi(lamsum))
 
-        zero_term = (delta_sstats - delta + 1)
+        zero_term = (context_sstats - delta + 1)
         jac = polygamma(1, delta)*zero_term - polygamma(1, lamsum)*np.sum(zero_term) + marginal_sstats/lamsum
 
         return -objective, -jac
@@ -61,8 +61,25 @@ class LambdaOptimizer:
     @staticmethod
     def optimize(delta0,*,
         trinuc_distributions,
-        beta_sstats,
-        delta_sstats
+        locus_sstats,
+        context_sstats):
+
+        return np.vstack([
+                LambdaOptimizer._optimize(
+                    delta0 = delta0[k],
+                    trinuc_distributions = trinuc_distributions,
+                    context_sstats = context_sstats[k],
+                    locus_sstats={ l : v[k] for l,v in locus_sstats.items() }
+                )
+                for k in range(delta0.shape[0])
+            ])
+
+    
+    @staticmethod
+    def _optimize(delta0,*,
+        trinuc_distributions,
+        locus_sstats,
+        context_sstats
         ):
         
         '''
@@ -75,10 +92,8 @@ class LambdaOptimizer:
         obj_jac_funcs = [
                 LambdaOptimizer._get_sample_optim_func(
                     trinuc_distributions = trinuc_distributions,
-                    beta_sstats = beta_sstats_sample, 
+                    locus_sstats = locus_sstats, 
                 )
-                for beta_sstats_sample in beta_sstats \
-                    if len(beta_sstats_sample) > 0
             ]
 
 
@@ -96,7 +111,7 @@ class LambdaOptimizer:
                 obj+=_obj
                 jac+=_jac
 
-            _obj_reg, _jac_reg = LambdaOptimizer._objective_jac_regularization(delta, delta_sstats)
+            _obj_reg, _jac_reg = LambdaOptimizer._objective_jac_regularization(delta, context_sstats)
 
             obj+=_obj_reg
             jac+=_jac_reg
@@ -106,7 +121,7 @@ class LambdaOptimizer:
 
         optim_results = minimize(
                 reduce_objective_jac, 
-                (delta0 + delta_sstats + 1)/2,
+                (delta0 + context_sstats + 1)/2,
                 method = 'l-bfgs-b',
                 jac = True,
                 bounds = Bounds(1e-30, np.inf, keep_feasible=True),
@@ -115,6 +130,5 @@ class LambdaOptimizer:
         new_delta = optim_results.x
 
         #lambda_logger.debug('Update converged after {} iterations.'.format(optim_results.nfev))
-
         return new_delta
 

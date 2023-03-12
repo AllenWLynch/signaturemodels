@@ -31,7 +31,9 @@ def log_dirichlet_expectation(alpha):
         return psi(alpha) - psi(np.sum(alpha, axis = -1, keepdims=True))
 
 
-def dirichlet_bound(alpha, gamma, logE_gamma):
+def dirichlet_bound(alpha, gamma):
+
+    logE_gamma = log_dirichlet_expectation(gamma)
 
     alpha = np.expand_dims(alpha, 0)
     
@@ -40,6 +42,7 @@ def dirichlet_bound(alpha, gamma, logE_gamma):
              gammaln(gamma) - gammaln(alpha) + (alpha - gamma)*logE_gamma,
              axis = -1
         )
+
 
 def _dir_prior_update_step(prior, N, logphat, rho = 0.05):
     
@@ -88,7 +91,7 @@ def update_tau(mu, nu):
     return np.sqrt(2*np.pi) * np.sum(mu**2 + nu**2, axis = -1)
 
 
-def M_step_alpha(alpha, gamma):
+def update_alpha(alpha, gamma):
     
     N = gamma.shape[0]
     log_phat = log_dirichlet_expectation(gamma).mean(-2)

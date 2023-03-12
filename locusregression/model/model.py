@@ -1,15 +1,13 @@
 
 import numpy as np
-from .base import dirichlet_bound, log_dirichlet_expectation, \
-        M_step_alpha, update_tau, dirichlet_multinomial_logprob
+from .base import dirichlet_bound, log_dirichlet_expectation, dirichlet_multinomial_logprob
+
 from scipy import stats
 import tqdm
 
-from collections import defaultdict
 from locusregression.corpus import COSMIC_SORT_ORDER, SIGNATURE_STRINGS, MUTATION_PALETTE
 
-from .optim_beta import BetaOptimizer
-from .optim_lambda import LambdaOptimizer
+from ._model_state import ModelState, CorpusState
 import time
 import warnings
 
@@ -20,8 +18,13 @@ logger = logging.getLogger('LocusRegressor')
 import matplotlib.pyplot as plt
 import pickle
 from functools import partial
+import _sstats
 
 class LocusRegressor:
+
+    MODEL_STATE = ModelState
+    CORPUS_STATE = CorpusState
+    SSTATS = _sstats
     
     n_contexts = 32
 
@@ -95,205 +98,110 @@ class LocusRegressor:
                                    (n_samples, self.n_components) # n_genomes by n_components
                                   ).astype(self.dtype, copy=False)
         return gamma
-        
     
-    def _init_variables(self):
-        
-        assert isinstance(self.n_components, int) and self.n_components > 1
 
-        self.random_state = np.random.RandomState(self.seed)
+    @staticmethod
+    def get_flattened_phi(*,model_state, sample, corpus_state):
 
-        self.alpha = self.pi_prior * np.ones(self.n_components).astype(self.dtype, copy=False)
+        E_delta = model_state.delta/model_state.delta.sum(axis = 1, keepdims = True)
+        trinuc_distributions = corpus_state.trinuc_distributions
 
-        self.param_tau = np.ones(self.n_components)
-
-        self.delta = self.random_state.gamma(100, 1/100, 
-                                               (self.n_components, self.n_contexts),
-                                              ).astype(self.dtype, copy=False)
+        flattend_phi = trinuc_distributions[sample.context,sample.locus]*model_state.signature_distribution[:,sample.context,sample.mutation]\
+                       /(E_delta @ trinuc_distributions[:, sample.locus])\
+                       * sample.exposures[:, sample.locus] * np.exp( corpus_state.logmu[:, sample.locus] - corpus_state.log_denom(sample.exposures) )
         
-        self.omega = self.random_state.gamma(100, 1/100,
-                                               (self.n_components, self.n_contexts, 3),
-                                              ).astype(self.dtype, copy = False)
-        
-        
-        self.beta_mu = self.random_state.normal(0.,0.01, 
-                               (self.n_components, self.n_locus_features) 
-                              ).astype(self.dtype, copy=False)
-
-        
-        self.beta_nu = self.random_state.gamma(2., 0.005, 
-                               (self.n_components, self.n_locus_features)
-                              ).astype(self.dtype, copy=False)
+        return flattend_phi
 
 
     def _sample_bound(self,*,
-            shared_correlates,
-            X_matrix,
-            window_size,
-            mutation,
-            context,
-            locus,
-            count,
-            feature_names,
-            trinuc_distributions,
-            logweight_matrix,
-            Elog_gamma,
+            sample,
+            model_state,
+            corpus_state,
         ):
+    
+        sample_sstats = self._sample_inference(
+            gamma0 = self._init_doc_variables(1)[0],
+            sample = sample,
+            model_state = model_state,
+            corpus_state = corpus_state,
+        )
 
-        locus_logmu, _, log_normalizer = self._get_locus_distribution(
-                X_matrix=X_matrix, 
-                window_size=window_size,
-                shared_correlates=shared_correlates
-            )
+        logweight_matrix = log_dirichlet_expectation(sample_sstats.gamma)[:,None, None] + np.log(model_state.signature_distribution)
 
-        def _get_phis(Elog_gamma):
-        
-            flattend_phi = trinuc_distributions[context,locus]*\
-                        self.phi_matrix_prebuild[:,context,mutation]*\
-                        1/np.dot(
-                                self.delta/self.delta.sum(axis = 1, keepdims = True), 
-                                trinuc_distributions[:, locus]
-                            )*\
-                        window_size[:, locus] * np.exp( locus_logmu[:, locus] - log_normalizer )
-            
-            count_g = np.array(count)[:,None]
-            
-            exp_Elog_gamma = np.exp(Elog_gamma[:,None])
-            phi_matrix = np.outer(exp_Elog_gamma, 1/np.dot(flattend_phi.T, exp_Elog_gamma))*flattend_phi
-            weighted_phi = phi_matrix * count_g.T
-
-            return phi_matrix, weighted_phi
-
-
-        flattened_logweight = logweight_matrix[:, context, mutation] + trinuc_distributions[context, locus]
+        flattened_logweight = logweight_matrix[:, sample.context, sample.mutation] \
+                + corpus_state.trinuc_distributions[sample.context, sample.locus]
         
         flattened_logweight -= np.log(np.dot(
-                self.delta/self.delta.sum(axis = 1, keepdims = True), 
-                trinuc_distributions[:, locus]
+                model_state.delta/model_state.delta.sum(axis = 1, keepdims = True), 
+                corpus_state.trinuc_distributions[:, sample.locus]
             ))
         
-        flattened_logweight += np.log(window_size[:, locus]) + locus_logmu[:, locus] - log_normalizer
+        flattened_logweight += np.log(sample.exposures[:, sample.locus]) + corpus_state.logmu[:, sample.locus] - corpus_state.log_denom(sample.exposures)
 
-        phi_matrix, weighted_phi = _get_phis(Elog_gamma)
+        weighted_phi = sample_sstats.weighed_phi
 
-        entropy_sstats = -np.sum(weighted_phi * np.where(phi_matrix > 0, np.log(phi_matrix), 0.))
+        phi = weighted_phi/np.array(sample.count)[None,:]
+
+        entropy_sstats = -np.sum(weighted_phi * np.where(phi > 0, np.log(phi), 0.))
         
-        return np.sum(weighted_phi*flattened_logweight) + entropy_sstats
+        return np.sum(weighted_phi*flattened_logweight) + entropy_sstats, sample_sstats.gamma
 
 
 
     def _bound(self,*,
             corpus, 
-            gamma,
+            model_state,
+            corpus_states,
             likelihood_scale = 1.
         ):
-        
-        Elog_delta = log_dirichlet_expectation(self.delta)
-        Elog_rho = log_dirichlet_expectation(self.omega)
-        Elog_gamma = log_dirichlet_expectation(gamma)
 
         elbo = 0
-
-        self._prebuild_phi_matrix()
         
-        for Elog_gamma_g, sample in zip(Elog_gamma, corpus):
+        corpus_gammas = {
+            corp.name : []
+            for corp in corpus.corpuses
+        }
 
-            elbo += self._sample_bound(
-                Elog_gamma = Elog_gamma_g,
-                logweight_matrix = Elog_gamma_g[:,None, None] + Elog_delta[:,:,None] + Elog_rho,
-                **sample, shared_correlates= self.shared_correlates,
+        for sample in corpus:
+
+            sample_elbo, sample_gamma = self._sample_bound(
+                sample = sample,
+                model_state = model_state,
+                corpus_state = corpus_states[sample.corpus_name]
             )
+
+            elbo += sample_elbo
+            corpus_gammas[sample.corpus_name].append(sample_gamma)
         
         elbo *= likelihood_scale
         
-        elbo += np.sum(1/(self.param_tau * np.sqrt(np.pi * 2)))
-        elbo +=  np.sum(-1/(2*self.param_tau[:,None]**2) * (np.square(self.beta_mu) + np.square(self.beta_nu)))
-        elbo += np.sum(np.log(self.beta_nu))
-        
-        elbo += sum(dirichlet_bound(self.alpha, gamma, Elog_gamma))
-        
-        elbo += sum(dirichlet_bound(np.ones(self.n_contexts), self.delta, Elog_delta))
-        
-        elbo += np.sum(dirichlet_bound(np.ones((1,3)), self.omega, Elog_rho))
+        elbo += model_state.get_posterior_entropy()
+
+        for name, corpus_state in corpus_states.items():
+            elbo += corpus_state.get_posterior_entropy(corpus_gammas[name])
 
         return elbo
-
-
-    def _prebuild_phi_matrix(self):
-
-        Elog_delta = log_dirichlet_expectation(self.delta)
-        Elog_rho = log_dirichlet_expectation(self.omega)
-
-        self.phi_matrix_prebuild = np.exp(Elog_delta)[:,:,None] * np.exp(Elog_rho)
-
-
-    def _get_locus_distribution(self,*,X_matrix, window_size, shared_correlates):
-
-        if shared_correlates:
-            try:
-                return self._cached_correlates
-            except AttributeError:
-                logger.debug('Recalculating locus distribution.')
-                pass
-        
-        locus_logmu = self.beta_mu.dot(X_matrix) # n_topics, n_loci
-        locus_logstd = self.beta_nu.dot(X_matrix) # n_topics, n_loci
-        
-        log_normalizer = np.log(
-            (window_size * np.exp(locus_logmu + 1/2*np.square(locus_logstd)) ).sum(axis = -1, keepdims = True)
-        )
-
-        if shared_correlates:
-            self._cached_correlates = (locus_logmu, locus_logstd, log_normalizer)
-
-        return locus_logmu, locus_logstd, log_normalizer
-
-
-    def _clear_locus_cache(self):
-        try:
-            self._cached_correlates
-        except AttributeError:
-            pass
-        else:
-            delattr(self, '_cached_correlates')
-
     
 
     def _sample_inference(self,
         likelihood_scale = 1.,*,
-        shared_correlates,
-        gamma,
-        X_matrix,
-        mutation,
-        context,
-        locus,
-        count,
-        feature_names,
-        trinuc_distributions,
-        window_size
+        gamma0,
+        sample,
+        model_state,
+        corpus_state,
     ):
-
-        locus_logmu, _, log_normalizer = self._get_locus_distribution(
-                X_matrix=X_matrix, 
-                window_size=window_size,
-                shared_correlates=shared_correlates
+        
+        flattend_phi = self.get_flattened_phi(
+                model_state=model_state,
+                sample = sample,
+                corpus_state=corpus_state
             )
-        
-        beta_sstats = defaultdict(lambda : np.zeros(self.n_components))
-        delta_sstats = np.zeros_like(self.delta)
-        rho_sstats = np.zeros_like(self.omega)
+    
+        count_g = np.array(sample.count)[:,None]
 
-        flattend_phi = trinuc_distributions[context,locus]*\
-                       self.phi_matrix_prebuild[:,context,mutation]*\
-                       1/np.dot(
-                            self.delta/self.delta.sum(axis = 1, keepdims = True), 
-                            trinuc_distributions[:, locus]
-                        )*\
-                       window_size[:, locus] * np.exp( locus_logmu[:, locus] - log_normalizer )
+        gamma = gamma0.copy()
         
-        count_g = np.array(count)[:,None]
-        
-        for i in range(self.estep_iterations): # inner e-step loop
+        for s in range(self.estep_iterations): # inner e-step loop
             
             old_gamma = gamma.copy()
             exp_Elog_gamma = np.exp(log_dirichlet_expectation(old_gamma)[:,None])
@@ -302,152 +210,110 @@ class LocusRegressor:
                     exp_Elog_gamma*np.dot(flattend_phi, count_g/np.dot(flattend_phi.T, exp_Elog_gamma))
                 ).astype(self.dtype)
             
-            gamma = self.alpha + gamma_sstats*likelihood_scale
+            gamma = corpus_state.alpha + gamma_sstats*likelihood_scale
             
             if np.abs(gamma - old_gamma).mean() < self.difference_tol:
-                #logger.debug('E-step converged after {} iterations'.format(i))
+                logger.debug(f'E-step converged after {s} iterations.')
                 break
         else:
             logger.debug('E-step did not converge. If this happens frequently, consider increasing "estep_iterations".')
 
-
         exp_Elog_gamma = np.exp(log_dirichlet_expectation(gamma)[:,None])
         phi_matrix = np.outer(exp_Elog_gamma, 1/np.dot(flattend_phi.T, exp_Elog_gamma))*flattend_phi*likelihood_scale
+        
         weighted_phi = phi_matrix * count_g.T
 
-        for _mutation, _context, _locus, ss in zip(mutation, context, locus, weighted_phi.T):
-            rho_sstats[:, _context, _mutation]+=ss
-            delta_sstats[:, _context]+=ss
-            beta_sstats[_locus]+=ss
+        return self.SSTATS.SampleSstats(
+            model_state = model_state,
+            sample=sample,
+            weighted_phi=weighted_phi,
+            gamma=gamma,
+        )
         
-        entropy_sstats = -np.sum(weighted_phi * np.where(phi_matrix > 0, np.log(phi_matrix), 0.))
-        # the "phi_matrix" is only needed to calculate the entropy of q(z), so we calculate
-        # the entropy here to save memory
-                            
-        return gamma, rho_sstats, delta_sstats, \
-                beta_sstats, entropy_sstats, weighted_phi
 
     
     def _inference(self,
             likelihood_scale = 1.,*,
-            shared_correlates,
             corpus,
+            model_state,
+            corpus_states,
             gamma,
         ):
         
-        self._prebuild_phi_matrix()
-
-        if shared_correlates:
-            first_off = next(iter(corpus))
-
-            self._get_locus_distribution(
-                X_matrix=first_off['X_matrix'], 
-                window_size=first_off['window_size'],
-                shared_correlates=shared_correlates
-            )
-
-        weighted_phis, gammas = [], []
-        rho_sstats = np.zeros_like(self.omega)
-        delta_sstats = np.zeros_like(self.delta)
-        entropy_sstats = 0
-
-        if shared_correlates:
-            beta_sstats = defaultdict(lambda : np.zeros(self.n_components))
-        else:
-            beta_sstats = []
+        sstat_collections = {
+            corp.name : self.SSTATS.CorpusSstats(corp, model_state, corpus_states[corp.name]) 
+            for corp in corpus.corpuses
+        }
 
         for gamma_g, sample in zip(gamma, corpus):
 
-            sample_gamma, sample_rho_sstats, sample_delta_sstats, sample_beta_sstats, \
-            sample_entropy_sstats, sample_weighted_phi = \
-                    self._sample_inference(**sample, shared_correlates=self.shared_correlates,
-                        gamma = gamma_g, likelihood_scale = likelihood_scale,)
+            sstat_collections[sample.corpus_name] += \
+                    self._sample_inference(
+                        sample = sample,
+                        gamma0 = gamma_g, 
+                        likelihood_scale = likelihood_scale,
+                        model_state = model_state,
+                        corpus_state = corpus_states[sample.corpus_name]
+                    )
 
-            gammas.append(sample_gamma)
-            weighted_phis.append(sample_weighted_phi)
-            entropy_sstats += sample_entropy_sstats
-            rho_sstats += sample_rho_sstats
-            delta_sstats += sample_delta_sstats
+        return self.SSTATS.MetaSstats(sstat_collections, self.model_state)
+        
 
-            if shared_correlates: # pile up sstats
-                
-                for locus, sstats in sample_beta_sstats.items():
-                    beta_sstats[locus] += sstats
-
-            else:
-                beta_sstats.append(sample_beta_sstats)
-
-        self._clear_locus_cache()
-
-        return np.array(gammas), rho_sstats, delta_sstats, beta_sstats, entropy_sstats, weighted_phis
-                
-
-
-    @staticmethod
-    def svi_update(old, new, learning_rate):
-        return (1-learning_rate)*old + learning_rate*new
+    def update_mutation_rates(self):
+        for corpusstate in self.corpus_states.values():
+            corpusstate.update_mutation_rate(self.model_state)
 
 
     def _fit(self,corpus, reinit = True):
+        
+        self.batch_size = len(corpus) if self.batch_size is None else min(self.batch_size, len(corpus))
+        assert 0 < self.locus_subsample <= 1
 
-        if self.batch_size is None:
-            self.batch_size = len(corpus)
-        else:
-            self.batch_size = min(self.batch_size, len(corpus))
-            
-        if self.locus_subsample == 1 and self.batch_size > len(corpus):
-            
-            learning_rate = 1
-            svi_inference = False
-            logger.warn('Using batch VI updates.')
+        locus_svi, batch_svi = self.locus_subsample < 1, self.batch_size < len(corpus)
 
-        else:
-            svi_inference = True
-            
-        sample_svi = self.batch_size < len(corpus)
-        locus_svi = self.locus_subsample < 1
+        learning_rate_fn = lambda t : (self.tau + t)**(-self.kappa) if locus_svi or batch_svi else 1.
 
-        logging.debug(f'Sample SVI: {sample_svi}, Locus SVI {locus_svi}')
-            
-    
-        self.n_locus_features, self.n_loci = next(iter(corpus))['X_matrix'].shape
+        self.n_locus_features, self.n_loci = corpus.shape
+        self.n_samples, self.feature_names = len(corpus), corpus.feature_names
+        
         n_subsample_loci = int(self.n_loci * self.locus_subsample)
-
-        self.trained = False
-        self.n_samples = len(corpus)
-
         likelihood_scale = 1/(self.locus_subsample * self.batch_size/self.n_samples)
 
-        self.shared_correlates = corpus.shared_correlates
-        self.feature_names = next(iter(corpus))['feature_names']
+        self.random_state = np.random.RandomState(self.seed)
         
-        assert self.n_jobs > 0
-
-        if self.n_jobs > 1:
-            logger.warn('Fitting model using {} cores.'.format(self.n_jobs))
-        
-        if self.shared_correlates:
-            logger.info('Sharing genomic correlates between samples for faster inference.')
-
         assert self.n_locus_features < self.n_loci, \
             'The feature matrix should be of shape (N_features, N_loci) where N_features << N_loci. The matrix you provided appears to be in the wrong orientation.'
+        self.trained = False
 
         if not reinit:
             try:
-                self.param_tau
+                self.model_state
             except AttributeError:
                 reinit = True
 
         if reinit:
-            self._init_variables()
-            self.bounds, self.elapsed_times = [], []
-            total_time = 0
-            self.epochs_trained = 0
-        else:
-            total_time = sum(self.elapsed_times)
+            self.model_state = self.MODEL_STATE(
+                n_components=self.n_components,
+                random_state=self.random_state,
+                n_features=self.n_locus_features,
+                dtype = np.float32
+            )
 
-        gamma = self._init_doc_variables(len(corpus))
-        
+            self.bounds, self.elapsed_times, self.total_time, self.epochs_trained = \
+                [], [], 0, 0
+            
+            self.corpus_states = {
+                corp.name : self.CORPUS_STATE(corp, 
+                            pi_prior=self.pi_prior,
+                            n_components=self.n_components,
+                            dtype = self.dtype, 
+                            subset_sample=1)
+                for corp in corpus.corpuses
+            }
+
+            self.update_mutation_rates()
+
+
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
 
@@ -455,152 +321,74 @@ class LocusRegressor:
                 for epoch in range(self.epochs_trained+1, self.num_epochs+1):
 
                     start_time = time.time()
-                    if svi_inference:
-                        self._clear_locus_cache()
-                        learning_rate = (self.tau + epoch)**(-self.kappa)
-
-                        if sample_svi:
-                            update_samples = self.random_state.choice(self.n_samples, size = self.batch_size, replace = False)
-                            inner_corpus = corpus.subset_samples(update_samples)
-                        else:
-                            inner_corpus = corpus
-                        
-                        if locus_svi:
-                            inner_corpus = corpus.subset_loci(
-                                self.random_state.choice(self.n_loci, size = n_subsample_loci, replace = False)
-                            )
-
+                    
+                    if batch_svi:
+                        inner_corpus = corpus.subset_samples(
+                            self.random_state.choice(self.n_samples, size = self.batch_size, replace = False)
+                        )
                     else:
                         inner_corpus = corpus
+                    
+                    if locus_svi:
+                        update_loci = self.random_state.choice(self.n_loci, size = n_subsample_loci, replace = False)
+                        inner_corpus = inner_corpus.subset_loci(update_loci)
 
-                    
-                    #logger.debug(' E-step ...')
-                    new_gamma, rho_sstats, delta_sstats, beta_sstats, \
-                        _, _ = self._inference(
-                            shared_correlates = self.shared_correlates,
-                            corpus= inner_corpus,
-                            gamma = gamma if not sample_svi else self._init_doc_variables(self.batch_size),
-                            likelihood_scale = likelihood_scale,
-                        )
-                    
-                    if not sample_svi:
-                        gamma = self.svi_update(gamma, new_gamma, learning_rate)
+                        inner_corpus_states = {
+                            name : state.subset_corpusstate(inner_corpus.get_corpus(name), update_loci)
+                            for name, state in self.corpus_states.items()
+                        }
                     else:
-                        gamma[update_samples] = self.svi_update(gamma[update_samples], new_gamma, learning_rate)
+                        inner_corpus_states = self.corpus_states
                     
-                    #logger.debug(' M-step ...')
 
-                    new_beta_mu, new_beta_nu, new_delta = \
-                        np.zeros_like(self.beta_mu), np.zeros_like(self.beta_nu), np.zeros_like(self.delta)
-
-
-                    trinuc = next(iter(inner_corpus))['trinuc_distributions']
-                        
-                    if self.shared_correlates:
-
-                        first_off = next(iter(inner_corpus))
-                        window_sizes = [first_off['window_size']]
-                        X_matrices = [first_off['X_matrix']]
-                        
-                        update_beta_sstats = lambda k : [{l : ss[k] for l,ss in beta_sstats.items()}]
-
-                    else:
-
-                        def reuse_iterator(key):
-                            class reuseiterator:
-                                def __iter__(self):
-                                    for x in inner_corpus:
-                                        yield x[key]
-
-                            return reuseiterator()
-                        
-                        window_sizes = reuse_iterator('window_size') #[x['window_size'] for x in inner_corpus]
-                        X_matrices = reuse_iterator('X_matrix') #[x['X_matrix'] for x in inner_corpus]
-
-                        update_beta_sstats = lambda k : [{l : ss[k] for l,ss in beta_sstats_sample.items()} for beta_sstats_sample in beta_sstats]
-                        
-
-                    for k in range(self.n_components):   
-
-                        new_beta_mu[k], new_beta_nu[k] = \
-                            BetaOptimizer.optimize(
-                                beta_mu0 = self.beta_mu[k],  
-                                beta_nu0 = self.beta_nu[k],
-                                beta_sstats = update_beta_sstats(k),
-                                window_sizes=window_sizes,
-                                X_matrices=X_matrices,
-                                tau = self.param_tau[k]
+                    sstats = self._inference(
+                                likelihood_scale = likelihood_scale,
+                                corpus = inner_corpus,
+                                model_state = self.model_state,
+                                corpus_states = inner_corpus_states,
+                                gamma = self._init_doc_variables(len(inner_corpus)),
                             )
+                    
+                    self.model_state.update_state(sstats, learning_rate_fn(epoch))
+                    
+                    for corpus_state in self.corpus_states.values():
+                        corpus_state.update_alpha(sstats, learning_rate_fn(epoch))
 
-                        new_delta[k] = LambdaOptimizer.optimize(self.delta[k],
-                            trinuc_distributions = trinuc,
-                            beta_sstats = update_beta_sstats(k),
-                            delta_sstats = delta_sstats[k],
-                        )
-
-                    self.beta_mu = self.svi_update(self.beta_mu, new_beta_mu, learning_rate)
-                    self.beta_nu = self.svi_update(self.beta_nu, new_beta_nu, learning_rate)
-                    self.delta = self.svi_update(self.delta, new_delta, learning_rate)
-
-                    # update rho distribution
-                    self.omega = self.svi_update(self.omega, rho_sstats + 1., learning_rate)
-
-                    if self.empirical_bayes:
-
-                        self.alpha = self.svi_update(
-                            self.alpha, 
-                            M_step_alpha(self.alpha, new_gamma),
-                            learning_rate    
-                        )
-
-                        self.param_tau = self.svi_update(
-                            self.param_tau, 
-                            update_tau(new_beta_mu, new_beta_nu), 
-                            learning_rate
-                        )
-
-                    #logger.debug("Estimating evidence lower bound ...")
+                    self.update_mutation_rates()
 
                     elapsed_time = time.time() - start_time
                     self.elapsed_times.append(elapsed_time)
-                    total_time += elapsed_time
+                    self.total_time += elapsed_time
                     self.epochs_trained+=1
 
                     if epoch % self.eval_every == 0:
                         
-                        self.bounds.append(
-                            self._bound(corpus = corpus, gamma = gamma) if not sample_svi else self.score(corpus)
-                        )
+                        self.bounds.append(self._bound(
+                            corpus = corpus,
+                            model_state = self.model_state,
+                            corpus_states = self.corpus_states,
+                            likelihood_scale=1,
+                        ))
 
                         if len(self.bounds) > 1:
-
                             improvement = self.bounds[-1] - (self.bounds[-2] if epoch > 1 else self.bounds[-1])
-
-                            logger.info('  Epoch {:<3} complete. | Elapsed time: {:<3.1f} seconds. | Bound: {:<10.2f}, improvement: {:<10.2f} '\
-                                    .format(epoch, elapsed_time, self.bounds[-1], improvement,))
-
-                            if (self.bounds[-1] - self.bounds[-2]) < self.bound_tol and not svi_inference:
-                                break
-
+                            logger.info(f'  Epoch {epoch:<3} complete. | Elapsed time: {elapsed_time:<3.1f} seconds. '
+                                        f'| Bound: { self.bounds[-1]:<10.2f}, improvement: {improvement:<10.2f} ')
+                            
                     else:
-
                         logger.info('  Epoch {:<3} complete. | Elapsed time: {:<3.1f} seconds.'.format(epoch, elapsed_time))
 
-                    if not self.time_limit is None and total_time >= self.time_limit:
+                    if not self.time_limit is None and self.total_time >= self.time_limit:
                         logger.info('Time limit reached, stopping training.')
                         break
 
                 else:
-                    #logger.info('Model did not converge, consider increasing "estep_iterations" or "num_epochs" parameters.')
                     pass
-
 
             except KeyboardInterrupt:
                 pass
         
         self.trained = True
-
-        self._clear_locus_cache()
 
         return self
 
@@ -702,8 +490,8 @@ class LocusRegressor:
         #self._weighted_trinuc_dists = self._get_weighted_trinuc_distribution(corpus)
 
         self._genome_trinuc_distribution = np.sum(
-            self._pop_corpus(corpus)['trinuc_distributions']*\
-                self._pop_corpus(corpus)['window_size'],
+            corpus.trinuc_distributions*\
+                corpus.exposures,
             -1, keepdims= True
         )
 
@@ -936,13 +724,13 @@ class LocusRegressor:
 
 
         eps_posterior = np.concatenate([
-            np.expand_dims(np.random.dirichlet(self.omega[component, j], size = monte_carlo_draws).T, 0)
+            np.expand_dims(np.random.dirichlet(self.model_state.omega[component, j], size = monte_carlo_draws).T, 0)
             for j in range(32)
         ])
 
         lambda_posterior = \
             np.random.dirichlet(
-                self.delta[component], 
+                self.model_state.delta[component], 
                 size = monte_carlo_draws
             ).T # 32 x M
 
@@ -1017,13 +805,14 @@ class LocusRegressor:
         if ax is None:
             fig, ax = plt.subplots(1,1,figsize= figsize)
 
-        mu, nu = self.beta_mu[component,:], self.beta_nu[component,:]
+        mu, nu = self.model_state.beta_mu[component,:], self.model_state.beta_nu[component,:]
 
         ax.scatter(
             x = mu,
             y= self.feature_names, 
             marker='s', s=dotsize, 
-            color='black')
+            color='black'
+        )
 
         ax.axvline(x=0, linestyle='--', color='black', linewidth=1)
 

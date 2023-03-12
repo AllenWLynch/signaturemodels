@@ -8,21 +8,38 @@ logger = logging.getLogger('Corpus')
 class CorpusMixin(ABC):
 
     def __init__(self,*,
+        name,
         samples,
         feature_names,
         X_matrix,
         trinuc_distributions,
-        shared_correlates
+        shared_exposures,
     ):
+        self.name = name
         self.samples = samples
         self.feature_names = feature_names
         self.X_matrix = X_matrix
         self.trinuc_distributions = trinuc_distributions
-        self._shared_correlates = shared_correlates
+        self._shared_exposures = shared_exposures
+
+        if self._shared_exposures:
+            self._exposures = samples[0]['exposures']
+
+    @property
+    def shape(self):
+        return self.X_matrix.shape
+
+    @property
+    def exposures(self):
+        return self._exposures
 
     @property
     def shared_correlates(self):
-        return self._shared_correlates
+        return True
+    
+    @property
+    def shared_exposures(self):
+        return self._shared_exposures
         
     @abstractmethod
     def __iter__(self):
@@ -42,6 +59,14 @@ class CorpusMixin(ABC):
 
     @abstractmethod
     def subset_loci(self, loci):
+        raise NotImplementedError()
+    
+    @abstractmethod
+    def corpuses(self):
+        raise NotImplementedError()
+    
+    @abstractmethod
+    def get_corpus(self, name):
         raise NotImplementedError()
 
 
@@ -95,13 +120,13 @@ class InMemorySamples(list):
         return InMemorySamples([self[i] for i in idx_list])
 
 
-
 def save_corpus(corpus, filename):
 
     with h5.File(filename, 'w') as f:
         
         data_group = f.create_group('data')
-        data_group.attrs['shared'] = corpus.shared_correlates
+        data_group.attrs['shared_exposures'] = corpus.shared_exposures
+        data_group.attrs['name'] = corpus.name
 
         data_group.create_dataset('trinuc_distributions', data = corpus.trinuc_distributions)
         data_group.create_dataset('X_matrix', data = corpus.X_matrix)
@@ -119,7 +144,7 @@ def load_corpus(filename):
 
     with h5.File(filename, 'r') as f:
 
-        is_shared_correlates = f['data'].attrs['shared']
+        is_shared = f['data'].attrs['shared_exposures']
 
         return Corpus(
             trinuc_distributions = f['data/trinuc_distributions'][...],
@@ -129,7 +154,8 @@ def load_corpus(filename):
                 {k : f[f'samples/{i}/{k}'][...] for k in f[f'samples/{i}'].keys()}
                 for i in range(len(f['samples'].keys()))
             ]),
-            shared_correlates=is_shared_correlates,
+            shared_exposures=is_shared,
+            name = f['data'].attrs['name']
         )
 
 
@@ -137,14 +163,15 @@ def stream_corpus(filename):
 
     with h5.File(filename, 'r') as f:
 
-        is_shared_correlates = f['data'].attrs['shared']
+        is_shared = f['data'].attrs['shared_exposures']
 
         return Corpus(
             trinuc_distributions = f['data/trinuc_distributions'][...],
             X_matrix = f['data/X_matrix'][...],
             feature_names = f['data/X_matrix'].attrs['feature_names'],
             samples = SampleLoader(filename),
-            shared_correlates=is_shared_correlates,
+            shared_exposures=is_shared,
+            name = f['data'].attrs['name']
         )
 
 
@@ -163,6 +190,12 @@ def train_test_split(corpus, seed = 0, train_size = 0.7):
     return corpus.subset_samples(train_idx), corpus.subset_samples(test_idx)
 
 
+class dotdict(dict):
+    """dot.notation access to dictionary attributes"""
+    __getattr__ = dict.get
+    __setattr__ = dict.__setitem__
+    __delattr__ = dict.__delitem__
+
 
 class Corpus(CorpusMixin):
 
@@ -172,12 +205,10 @@ class Corpus(CorpusMixin):
 
     def __getitem__(self, idx):
         
-        return {
+        return dotdict({
             **self.samples[idx],
-            'X_matrix' : self.X_matrix,
-            'trinuc_distributions' : self.trinuc_distributions,
-            'feature_names' : self.feature_names,
-        }
+            'corpus_name' : self.name
+        })
 
 
     def __iter__(self):
@@ -185,6 +216,9 @@ class Corpus(CorpusMixin):
         for i in range(len(self)):
             yield self[i]
 
+    @property
+    def corpuses(self):
+        return [self]
 
     def subset_samples(self, subset_idx):
 
@@ -193,7 +227,8 @@ class Corpus(CorpusMixin):
             feature_names = self.feature_names,
             X_matrix = self.X_matrix,
             trinuc_distributions = self.trinuc_distributions,
-            shared_correlates = self.shared_correlates
+            shared_exposures = self.shared_exposures,
+            name = self.name,
         )
 
 
@@ -215,7 +250,7 @@ class Corpus(CorpusMixin):
                 'context' : sample['context'][mask],
                 'count' : sample['count'][mask],
                 'locus' : np.array([subsample_lookup[locus] for locus in sample['locus'][mask]]).astype(int), 
-                'window_size' : sample['window_size'][:,loci]
+                'exposures' : sample['exposures'][:,loci]
             }
 
             total_mutations += new_sample['count'].sum()
@@ -229,8 +264,13 @@ class Corpus(CorpusMixin):
                 'trinuc_distributions' : self.trinuc_distributions[:,loci],
                 'feature_names' : self.feature_names,
             },
-            shared_correlates = self.shared_correlates,
+            shared_exposures = self.shared_exposures,
+            name = self.name,
         )
+    
+    def get_corpus(self, name):
+        assert name == self.name
+        return self
 
 
 class MetaCorpus(CorpusMixin):
@@ -238,10 +278,23 @@ class MetaCorpus(CorpusMixin):
     def __init__(self, *corpuses):
         
         assert len(corpuses) > 1, 'If only one corpus, use that directly'
-        self.corpuses = corpuses
+        assert len(set([corpus.name for corpus in corpuses])) == len(corpuses), \
+            'All corpuses must have unique names.'
+        assert all([np.all(corpuses[0].feature_names == corpus.feature_names) for corpus in corpuses])
+        assert all([corpuses[0].X_matrix.shape == corpus.X_matrix.shape for corpus in corpuses])
+
+        self._corpuses = corpuses
         self.idx_starts = np.cumsum(
             [0] + [len(corpus) for corpus in self.corpuses]
         )
+
+    @property
+    def corpuses(self):
+        return self._corpuses
+
+    @property
+    def shape(self):
+        return self.corpuses[0].X_matrix.shape
 
 
     def __len__(self):
@@ -291,9 +344,23 @@ class MetaCorpus(CorpusMixin):
         return MetaCorpus(*[
             corpus.subset_loci(loci) for corpus in self.corpuses
         ])
-
+    
+    def get_corpus(self, name):
+        
+        for corpus in self.corpuses:
+            if corpus.name == name:
+                return corpus
+            
+        raise KeyError(f'Corpus {name} does not exist.')
 
     @property
     def shared_correlates(self):
         return False
+    
+    @property
+    def trinuc_distributions(self):
+        return self.corpuses[0].trinuc_distributions
 
+    @property
+    def feature_names(self):
+        return self.corpuses[0].feature_names

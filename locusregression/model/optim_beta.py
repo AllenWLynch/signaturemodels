@@ -12,7 +12,7 @@ class BetaOptimizer:
     def _get_sample_optim_func(*,
             beta_mu0, 
             beta_nu0,
-            window_size, 
+            exposures, 
             X_matrix,
             beta_sstats,
         ):
@@ -21,18 +21,17 @@ class BetaOptimizer:
         weighted_phis = np.vstack(list(beta_sstats.values())).T # (K, l)
         
         K_weights = weighted_phis.sum(axis = -1, keepdims = True)
-        deriv_second_term = np.dot(weighted_phis, X_matrix[:, nonzero_indices].T) # K,L x L,F -> KxF
+        deriv_second_term = weighted_phis @ X_matrix[:, nonzero_indices].T # K,L x L,F -> KxF
 
-        locus_std_sq = np.square(np.dot(beta_nu0, X_matrix))
-        normalizer = ( window_size * np.exp(np.dot(beta_mu0, X_matrix) + 1/2*locus_std_sq) ).sum(-1, keepdims=True)
+        normalizer = ( exposures * np.exp( beta_mu0 @ X_matrix + 1/2*(beta_nu0 @ X_matrix)**2 ) ).sum(-1, keepdims=True)
+
+        gamma = K_weights/normalizer * exposures
 
         optim_kwargs = {
-                'K_weights' : K_weights, 
-                'normalizer' : normalizer, 
+                'gamma' : gamma,
                 'deriv_second_term' : deriv_second_term,
                 'nonzero_indices' : nonzero_indices,
                 'weighted_phis' : weighted_phis,
-                'window_size' : window_size,
                 'X_matrix' : X_matrix,
                 }
 
@@ -55,81 +54,53 @@ class BetaOptimizer:
             beta_mu, 
             beta_nu,*,
             # suffstats calculated before optimization
-            window_size,
             X_matrix,
-            normalizer,
-            weighted_phis,
+            gamma,
             nonzero_indices,
             deriv_second_term,
-            K_weights,
+            weighted_phis,
         ):
 
-        locus_logmu = np.dot(beta_mu, X_matrix) # F x F, L -> L
-        std_inner = np.dot(beta_nu, X_matrix)
+        locus_logmu = beta_mu @ X_matrix # F x F, L -> L
+        std_inner = beta_nu @ X_matrix
         
-        locus_expectation = window_size * np.exp(locus_logmu + 1/2*np.square(std_inner)) # L
-        
-        log_denom = np.sum(locus_expectation, axis = -1, keepdims=True)/normalizer - 1 + np.log(normalizer) # (L,)
-        
-        objective = np.sum(weighted_phis * (np.log(window_size)[:,nonzero_indices] + locus_logmu[nonzero_indices] - log_denom))                    
+        locus_expectation = gamma * np.exp(locus_logmu + 1/2*np.square(std_inner)) # L
+
+        objective = np.sum(weighted_phis * locus_logmu[nonzero_indices]) - locus_expectation.sum(axis = -1)
                
-        mu_jac = deriv_second_term - K_weights/normalizer * \
-            np.dot(locus_expectation, X_matrix.T) 
+        mu_jac = deriv_second_term - locus_expectation @ X_matrix.T 
         
-        std_jac =  -K_weights/normalizer * np.dot(std_inner*locus_expectation, X_matrix.T)
+        std_jac =  -(std_inner*locus_expectation) @ X_matrix.T
         
         return -objective, -np.squeeze(np.concatenate([mu_jac, std_jac], axis = 1))
+
     
-
     @staticmethod
-    def _hess_regularization(beta_mu, beta_nu, tau):
-
-        F = len(beta_mu)
-
-        return np.diag(
-            np.concatenate([
-                np.ones(F) * -1/(tau**2),
-                np.ones(F) * -1/(tau**2)  - 1/np.square(beta_nu)
+    def optimize(
+        tau = 1.,*, 
+        beta_mu0, 
+        beta_nu0,
+        exposures,
+        X_matrices,
+        beta_sstats,
+    ):
+        return list(map(np.vstack, 
+            zip(*[
+                BetaOptimizer._optimize(
+                    tau = tau[k], beta_mu0 = beta_mu0[k], beta_nu0 = beta_nu0[k],
+                    exposures=exposures, X_matrices=X_matrices, 
+                    beta_sstats=[{ l : v[k] for l,v in stats.items() } for stats in beta_sstats]
+                )
+                for k in range(beta_mu0.shape[0])
             ])
-        )
-
-
-    @staticmethod
-    def _hess_sample(
-            beta_mu, 
-            beta_nu,*,
-            window_size,
-            X_matrix,
-            # suffstats calculated before optimization
-            normalizer,
-            weighted_phis,
-            nonzero_indices,
-            deriv_second_term,
-            K_weights
-        ):
-
-        std_inner = np.dot(beta_nu, X_matrix)
-        locus_expectation = window_size * np.exp(np.dot(beta_mu, X_matrix) + 1/2*np.square(std_inner))*X_matrix # L,F
-        
-        dmu_dmu = -K_weights/normalizer*np.dot(locus_expectation, X_matrix.T) # (F,F) + (F,L)x(L,F) --> (F,F)
-        
-        dmu_dstd = -K_weights/normalizer*np.dot(locus_expectation * std_inner, X_matrix.T)
-        
-        dstd_dstd = -K_weights/normalizer*np.dot(locus_expectation * (np.square(std_inner) + 1), X_matrix.T)
-
-        hess_matrix = np.vstack([
-            np.hstack([dmu_dmu, dmu_dstd]), 
-            np.hstack([dmu_dstd.T, dstd_dstd])
-        ])
-        
-        return -hess_matrix
-
+        ))
     
+
     @staticmethod
-    def optimize(tau = 1.,*, 
+    def _optimize(tau = 1.,*, 
             beta_mu0, 
             beta_nu0,
-            window_sizes,
+            exposures,
             X_matrices,
             beta_sstats,
         ):
@@ -143,16 +114,18 @@ class BetaOptimizer:
         Then return functions which can be called with args (beta_mu, beta_nu) to calculate the objective score,
         jacobian, and hessians. - the suffstats are already provided as arguments to that function.        
         '''
+        
+
         obj_jac_funcs = [
                 BetaOptimizer._get_sample_optim_func(
                     beta_mu0=beta_mu0,
                     beta_nu0=beta_nu0,
-                    window_size=_window,
+                    exposures=_window,
                     X_matrix=_X,
                     beta_sstats=beta_sstats_sample,
                 )
                 for _window, _X, beta_sstats_sample in \
-                    zip(window_sizes, X_matrices, beta_sstats) \
+                    zip(exposures, X_matrices, beta_sstats) \
                     if len(beta_sstats_sample) > 0
             ]
 
@@ -181,34 +154,6 @@ class BetaOptimizer:
 
             return obj, jac
 
-        '''
-        def hess(x):
-
-            raise NotImplementedError()
-            
-            beta_mu, beta_nu = x[:F], x[F:]
-
-            hess_matrix = 0
-
-            for hess_sample in hess_funcs:
-                hess_matrix += hess_sample(beta_mu, beta_nu)
-
-            return hess_matrix
-        
-        hess_kwargs = dict(
-            hess = hess,
-            method = 'trust-constr',
-            constraints=LinearConstraint(
-                np.hstack([np.zeros((F,F)), np.diag(np.ones(F))]),
-                np.zeros(F),
-                np.inf*np.ones(F),
-                keep_feasible=True,
-            ),
-            options = dict(
-                xtol = 1e-5,
-                gtol = 1e-5,
-            )
-        )'''
 
         lbfgs_kwargs = dict(
             method = 'l-bfgs-b',
@@ -225,6 +170,5 @@ class BetaOptimizer:
         new_beta = optim_results.x
 
         #beta_logger.debug('Update converged after {} iterations.'.format(optim_results.nfev))
-
 
         return new_beta[:F], new_beta[F:]

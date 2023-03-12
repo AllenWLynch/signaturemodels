@@ -1,5 +1,6 @@
 from .corpus import CorpusReader, save_corpus, stream_corpus, MetaCorpus
-from .model import LocusRegressor, tune_model, load_model
+from .model import LocusRegressor, load_model, logger
+from .tuning import tune_model
 from .simulation import SimulatedCorpus, coef_l1_distance, signature_cosine_distance
 import argparse
 from argparse import ArgumentTypeError
@@ -9,9 +10,6 @@ import sys
 import logging
 import json
 import pickle
-
-logger = logging.getLogger()
-logger.setLevel(logging.INFO)
 
 
 def posint(x):
@@ -176,7 +174,7 @@ def train_model(
             stream_corpus(corpus) for corpus in corpuses
         ])
 
-    logging.basicConfig( level=logging.ERROR )
+    logger.setLevel(logging.INFO)
     
     model.fit(dataset)
     
@@ -305,7 +303,7 @@ def retrain_best(trial_num = None,*,
             stream_corpus(corpus) for corpus in corpuses
         ])
 
-    logging.basicConfig( level=logging.INFO )
+    logger.setLevel(logging.INFO)
 
     with open(tune_results, 'r') as f:
         results = json.load(f)
@@ -401,7 +399,7 @@ eval_sub.set_defaults(func = evaluate_model)
 def main():
     #____ Execute commands ___
 
-    logging.basicConfig(level = logging.INFO)
+    logger.setLevel(logging.INFO)
 
     args = parser.parse_args()
 

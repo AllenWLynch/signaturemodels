@@ -53,6 +53,7 @@ class SimulatedCorpus:
 
     @staticmethod
     def create(
+        corpus_name,
         seed = 0,
         n_cells = 100,
         log_mean_mutations = 5,
@@ -145,11 +146,12 @@ class SimulatedCorpus:
         ])
 
         corpus = Corpus(
+                name = corpus_name,
                 samples = InMemorySamples(samples),
                 X_matrix = signals,
                 trinuc_distributions = trinuc_distributions,
                 feature_names = [f'Signal {i}' for i in range(num_states)] + ['Constant'],
-                shared_correlates = shared_exposures,
+                shared_exposures = shared_exposures,
         )
 
         generative_parameters = {
@@ -247,7 +249,7 @@ class SimulatedCorpus:
 
         return {
             **Sample._aggregate_counts(mutations, contexts, loci), 
-            'window_size' : exposures
+            'exposures' : exposures
             }
 
 

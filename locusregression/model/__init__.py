@@ -1,5 +1,4 @@
-from .model import LocusRegressor
-from .tune import tune_model
+from .model import LocusRegressor, logger
 
 def load_model(model):
     return LocusRegressor.load(model)
