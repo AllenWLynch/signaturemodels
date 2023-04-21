@@ -18,7 +18,7 @@ logger = logging.getLogger('LocusRegressor')
 import matplotlib.pyplot as plt
 import pickle
 from functools import partial
-import _sstats
+import locusregression.model._sstats as _sstats
 
 class LocusRegressor:
 
@@ -92,9 +92,11 @@ class LocusRegressor:
             pickle.dump(self, f)
         
         
-    def _init_doc_variables(self, n_samples):
+    def _init_doc_variables(self, n_samples, is_bound = False):
 
-        gamma = self.random_state.gamma(100., 1./100., 
+        random_state = self.random_state if not is_bound else self.bound_random_state
+
+        gamma = random_state.gamma(100., 1./100., 
                                    (n_samples, self.n_components) # n_genomes by n_components
                                   ).astype(self.dtype, copy=False)
         return gamma
@@ -120,7 +122,7 @@ class LocusRegressor:
         ):
     
         sample_sstats = self._sample_inference(
-            gamma0 = self._init_doc_variables(1)[0],
+            gamma0 = self._init_doc_variables(1, is_bound=True)[0],
             sample = sample,
             model_state = model_state,
             corpus_state = corpus_state,
@@ -145,7 +147,6 @@ class LocusRegressor:
         entropy_sstats = -np.sum(weighted_phi * np.where(phi > 0, np.log(phi), 0.))
         
         return np.sum(weighted_phi*flattened_logweight) + entropy_sstats, sample_sstats.gamma
-
 
 
     def _bound(self,*,
@@ -280,6 +281,7 @@ class LocusRegressor:
         likelihood_scale = 1/(self.locus_subsample * self.batch_size/self.n_samples)
 
         self.random_state = np.random.RandomState(self.seed)
+        self.bound_random_state = np.random.RandomState(self.seed + 1)
         
         assert self.n_locus_features < self.n_loci, \
             'The feature matrix should be of shape (N_features, N_loci) where N_features << N_loci. The matrix you provided appears to be in the wrong orientation.'
@@ -307,6 +309,7 @@ class LocusRegressor:
                             pi_prior=self.pi_prior,
                             n_components=self.n_components,
                             dtype = self.dtype, 
+                            random_state = self.random_state,
                             subset_sample=1)
                 for corp in corpus.corpuses
             }
@@ -351,8 +354,9 @@ class LocusRegressor:
                     
                     self.model_state.update_state(sstats, learning_rate_fn(epoch))
                     
-                    for corpus_state in self.corpus_states.values():
-                        corpus_state.update_alpha(sstats, learning_rate_fn(epoch))
+                    if epoch >= 10:
+                        for corpus_state in self.corpus_states.values():
+                            corpus_state.update_alpha(sstats, learning_rate_fn(epoch))
 
                     self.update_mutation_rates()
 
@@ -372,6 +376,7 @@ class LocusRegressor:
 
                         if len(self.bounds) > 1:
                             improvement = self.bounds[-1] - (self.bounds[-2] if epoch > 1 else self.bounds[-1])
+                            
                             logger.info(f'  Epoch {epoch:<3} complete. | Elapsed time: {elapsed_time:<3.1f} seconds. '
                                         f'| Bound: { self.bounds[-1]:<10.2f}, improvement: {improvement:<10.2f} ')
                             
