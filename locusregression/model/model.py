@@ -3,7 +3,7 @@ import numpy as np
 from .base import log_dirichlet_expectation, dirichlet_multinomial_logprob
 from scipy import stats
 import tqdm
-#from numba import njit
+from numba import njit
 from locusregression.corpus import COSMIC_SORT_ORDER, SIGNATURE_STRINGS, MUTATION_PALETTE
 
 from ._model_state import ModelState, CorpusState
@@ -20,7 +20,7 @@ from functools import partial
 import locusregression.model._sstats as _sstats
 
 
-#@njit
+@njit
 def estep_update(exp_Elog_gamma, alpha, flattend_phi, count_g, likelihood_scale = 1):
     gamma_sstats = exp_Elog_gamma*np.dot(flattend_phi, count_g/np.dot(flattend_phi.T, exp_Elog_gamma))
     gamma_sstats = gamma_sstats.reshape(-1)
@@ -382,7 +382,7 @@ class LocusRegressor:
                             logger.info(f'  Epoch {epoch:<3} complete. | Elapsed time: {elapsed_time:<3.2f} seconds. '
                                         f'| Bound: { self.bounds[-1]:<10.2f}, improvement: {improvement:<10.2f} ')
                             
-                    else:
+                    elif not self.quiet:
                         logger.info('  Epoch {:<3} complete. | Elapsed time: {:<3.2f} seconds.'.format(epoch, elapsed_time))
 
                     if not self.time_limit is None and self.total_time >= self.time_limit:

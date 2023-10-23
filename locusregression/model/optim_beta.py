@@ -3,11 +3,11 @@ import numpy as np
 from scipy.optimize import minimize
 import logging
 from functools import partial
-#from numba import njit
+from numba import njit
 beta_logger = logging.getLogger('Beta optimizer')
 
 
-#@njit
+@njit
 def _objective_jac_regularization(beta_mu, beta_nu, tau):
     tau_sq = tau**2
     objective = -1/(2*tau_sq)*np.sum( np.square(beta_mu) + np.square(beta_nu) ) + np.sum(np.log(beta_nu))
@@ -22,7 +22,7 @@ def _objective_jac_regularization(beta_mu, beta_nu, tau):
     return -objective, -jac #np.concatenate([mu_jac, std_jac])
 
     
-#@njit
+@njit
 def _objective_jac_sample(
         beta_mu, 
         beta_nu,*,

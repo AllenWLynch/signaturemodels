@@ -10,6 +10,7 @@ import sys
 import logging
 import json
 import pickle
+import logging
 
 
 def posint(x):
@@ -139,7 +140,7 @@ def train_model(
         num_epochs = 10000, 
         difference_tol = 1e-3,
         estep_iterations = 1000,
-        eval_every = 10,
+        eval_every = 20,
         bound_tol = 1e-2,
         quiet = True,
         n_jobs = 1,*,
@@ -174,6 +175,7 @@ def train_model(
             stream_corpus(corpus) for corpus in corpuses
         ])
 
+    logging.basicConfig(level=logging.INFO)
     logger.setLevel(logging.INFO)
     
     model.fit(dataset)
@@ -279,8 +281,8 @@ tune_sub.add_argument('--max-time', '-t', type = posint, default=900,
 tune_optional.add_argument('--factor','-f',type = posint, default = 3,
     help = 'Successive halving reduction factor for each iteration')
 tune_optional.add_argument('--tune-subsample', action = 'store_true', default=False)
-tune_optional.add_argument('--successive-halving','-halving', action = 'store_true',
-    default= False, help='Use the successive halving algorithm for tuning.')
+#tune_optional.add_argument('--successive-halving','-halving', action = 'store_true',
+#    default= False, help='Use the successive halving algorithm for tuning.')
 
 model_options = tune_sub.add_argument_group('Model arguments')
 
@@ -303,6 +305,7 @@ def retrain_best(trial_num = None,*,
             stream_corpus(corpus) for corpus in corpuses
         ])
 
+    logging.basicConfig(level=logging.INFO)
     logger.setLevel(logging.INFO)
 
     with open(tune_results, 'r') as f:
@@ -324,7 +327,7 @@ def retrain_best(trial_num = None,*,
 
     print('Training model with params:\n\t' + param_string)
 
-    model = LocusRegressor(**params).fit(dataset)
+    model = LocusRegressor(**params, eval_every=10, quiet=True).fit(dataset)
 
     model.save(output)
 
@@ -382,7 +385,7 @@ def evaluate_model(*,simulation_params, model):
     coef_l1 = coef_l1_distance(model, params)
     signature_cos = signature_cosine_distance(model, params)
 
-    print('coef_L1_dist','signature_cos_dist', sep = '\t')
+    print('coef_L1_dist','signature_cos_sim', sep = '\t')
     print(coef_l1, signature_cos, sep = '\t')
 
 

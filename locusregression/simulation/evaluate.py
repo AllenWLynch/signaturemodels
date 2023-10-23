@@ -17,7 +17,7 @@ def signature_cosine_distance(model, simulation_parameters):
 
 def coef_l1_distance(model, simulation_parameters):
     
-    return cdist(model.beta_mu[:,:-1], 
+    return cdist(model.model_state.beta_mu[:,:-1], 
             simulation_parameters['beta'], 
             metric='cityblock'
             ).min(0).mean()
