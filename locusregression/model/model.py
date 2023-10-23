@@ -1,10 +1,9 @@
 
 import numpy as np
-from .base import dirichlet_bound, log_dirichlet_expectation, dirichlet_multinomial_logprob
-
+from .base import log_dirichlet_expectation, dirichlet_multinomial_logprob
 from scipy import stats
 import tqdm
-
+#from numba import njit
 from locusregression.corpus import COSMIC_SORT_ORDER, SIGNATURE_STRINGS, MUTATION_PALETTE
 
 from ._model_state import ModelState, CorpusState
@@ -19,6 +18,14 @@ import matplotlib.pyplot as plt
 import pickle
 from functools import partial
 import locusregression.model._sstats as _sstats
+
+
+#@njit
+def estep_update(exp_Elog_gamma, alpha, flattend_phi, count_g, likelihood_scale = 1):
+    gamma_sstats = exp_Elog_gamma*np.dot(flattend_phi, count_g/np.dot(flattend_phi.T, exp_Elog_gamma))
+    gamma_sstats = gamma_sstats.reshape(-1)
+    return alpha + gamma_sstats*likelihood_scale
+
 
 class LocusRegressor:
 
@@ -36,7 +43,7 @@ class LocusRegressor:
     def __init__(self, 
         n_components = 10,
         seed = 2, 
-        dtype = np.float32,
+        dtype = float,
         pi_prior = 3.,
         num_epochs = 300, 
         difference_tol = 1e-3,
@@ -183,7 +190,7 @@ class LocusRegressor:
 
         return elbo
     
-
+    
     def _sample_inference(self,
         likelihood_scale = 1.,*,
         gamma0,
@@ -196,23 +203,18 @@ class LocusRegressor:
                 model_state=model_state,
                 sample = sample,
                 corpus_state=corpus_state
-            )
-    
-        count_g = np.array(sample.count)[:,None]
+            ).astype(self.dtype, copy=False)
 
+        count_g = np.array(sample.count)[:,None].astype(self.dtype, copy=False)
         gamma = gamma0.copy()
         
         for s in range(self.estep_iterations): # inner e-step loop
             
             old_gamma = gamma.copy()
-            exp_Elog_gamma = np.exp(log_dirichlet_expectation(old_gamma)[:,None])
-            
-            gamma_sstats = np.squeeze(
-                    exp_Elog_gamma*np.dot(flattend_phi, count_g/np.dot(flattend_phi.T, exp_Elog_gamma))
-                ).astype(self.dtype)
-            
-            gamma = corpus_state.alpha + gamma_sstats*likelihood_scale
-            
+            exp_Elog_gamma = np.exp(log_dirichlet_expectation(gamma)[:,None])
+
+            gamma = estep_update(exp_Elog_gamma, corpus_state.alpha, flattend_phi, count_g)
+
             if np.abs(gamma - old_gamma).mean() < self.difference_tol:
                 logger.debug(f'E-step converged after {s} iterations.')
                 break
@@ -381,7 +383,7 @@ class LocusRegressor:
                                         f'| Bound: { self.bounds[-1]:<10.2f}, improvement: {improvement:<10.2f} ')
                             
                     else:
-                        logger.info('  Epoch {:<3} complete. | Elapsed time: {:<3.1f} seconds.'.format(epoch, elapsed_time))
+                        logger.info('  Epoch {:<3} complete. | Elapsed time: {:<3.2f} seconds.'.format(epoch, elapsed_time))
 
                     if not self.time_limit is None and self.total_time >= self.time_limit:
                         logger.info('Time limit reached, stopping training.')
@@ -423,6 +425,24 @@ class LocusRegressor:
         return self._fit(corpus, reinit=False)
 
 
+    def _get_test_corpus_states(self, corpus):
+
+        temp_corpus_states = {
+            corp.name : self.CORPUS_STATE(corp, 
+                        pi_prior=self.corpus_states[corp.name].pi_prior,
+                        n_components=self.n_components,
+                        dtype = self.dtype, 
+                        random_state = self.random_state,
+                        subset_sample=1)
+            for corp in corpus.corpuses
+        }
+
+        for state in temp_corpus_states.values():
+            state.update_mutation_rate(self.model_state)
+
+        return temp_corpus_states
+    
+
     def predict(self,corpus):
         '''
         For each sample in corpus, predicts the expectation of the signature compositions.
@@ -441,13 +461,14 @@ class LocusRegressor:
 
         n_samples = len(corpus)
         
-        gamma = self._inference(
+        sstas = self._inference(
             gamma = self._init_doc_variables(n_samples),
             corpus = corpus,
-            shared_correlates = self.shared_correlates,
-        )[0]
+            model_state = self.model_state,
+            corpus_states = self._get_test_corpus_states(corpus),
+        )
 
-        E_gamma = gamma/gamma.sum(-1, keepdims = True)
+        E_gamma = sstas.gamma/sstas.gamma.sum(-1, keepdims = True)
         
         return E_gamma
 
@@ -472,20 +493,14 @@ class LocusRegressor:
             logger.warn('This model was not trained to completion, results may be innaccurate')
             
         n_samples = len(corpus)
-        
-        gamma, _,_,_, entropy_sstats, weighted_phis = \
-            self._inference(
-                gamma = self._init_doc_variables(n_samples),
-                corpus = corpus,
-                shared_correlates = self.shared_correlates,
-            )
-        
+
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             
             return self._bound(
                     corpus = corpus, 
-                    gamma = gamma,
+                    corpus_states=self._get_test_corpus_states(corpus),
+                    model_state = self.model_state,
                     likelihood_scale=self.n_samples/n_samples,
                 )
 

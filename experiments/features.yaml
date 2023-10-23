@@ -1,0 +1,40 @@
+
+samples:
+  stomach :
+    roadmap_id : E110
+    vcfs :
+      - EJDFLSKJ
+      - 13r32LSDKJF
+  
+
+genome : ~/genomes/hg19/hg19.chrom.sizes
+fasta : ~/genomes/hg19/hg19.fa
+blacklist : ~/genomes/hg19/blacklist_regions.bed
+datadir : data/fullgenome_features/
+binsize : 10000
+normalization_script : experiments/normalization_script.py
+
+
+roadmap:
+  url : https://egg2.wustl.edu/roadmap/data/byFileType/signal/consolidatedImputed/{signal}/{sample}-{signal}.imputed.{type}.signal.bigwig
+  features:
+    FractionalMethylation:
+      - DNAMethylSBS
+    pval:
+      - H3K27ac
+      - H3K4me1
+      - H3K4me3
+      - H3K9me3
+      - H3K27me3
+      - H3K27ac
+      - H3K36me3
+    LogRPKM:
+      - RNAseq
+
+
+user_supplied:
+  features:
+    pos_strand : data/strand_featurization/pos_genes.bed
+    neg_strand : data/strand_featurization/neg_genes.bed
+
+

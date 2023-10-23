@@ -1,9 +1,56 @@
 
 import numpy as np
-from scipy.optimize import minimize, LinearConstraint
+from scipy.optimize import minimize
 import logging
 from functools import partial
+#from numba import njit
 beta_logger = logging.getLogger('Beta optimizer')
+
+
+#@njit
+def _objective_jac_regularization(beta_mu, beta_nu, tau):
+    tau_sq = tau**2
+    objective = -1/(2*tau_sq)*np.sum( np.square(beta_mu) + np.square(beta_nu) ) + np.sum(np.log(beta_nu))
+
+    mu_jac = -1/tau_sq * beta_mu
+    std_jac = -1/tau_sq * beta_nu + 1/beta_nu
+
+    dim = beta_mu.shape[0]
+    jac = np.empty(dim*2, dtype=np.float64)
+    jac[:dim] = mu_jac; jac[dim:] = std_jac
+
+    return -objective, -jac #np.concatenate([mu_jac, std_jac])
+
+    
+#@njit
+def _objective_jac_sample(
+        beta_mu, 
+        beta_nu,*,
+        # suffstats calculated before optimization
+        X_matrix,
+        gamma,
+        nonzero_indices,
+        deriv_second_term,
+        weighted_phis,
+    ):
+
+    locus_logmu = beta_mu @ X_matrix # F x F, L -> L
+    std_inner = beta_nu @ X_matrix
+    
+    locus_expectation = gamma * np.exp(locus_logmu + 1/2*np.square(std_inner)) # L
+
+    objective = np.sum(weighted_phis * locus_logmu[nonzero_indices]) - locus_expectation.sum(axis = -1)
+            
+    mu_jac = deriv_second_term - locus_expectation @ X_matrix.T 
+    
+    std_jac =  -(std_inner*locus_expectation) @ X_matrix.T
+    
+    dim = beta_mu.shape[0]
+    jac = np.empty(dim*2, dtype=np.float64)
+    jac[:dim] = mu_jac; jac[dim:] = std_jac
+
+    return -objective, -jac #np.concatenate([mu_jac, std_jac], axis = np.int64(1)).reshape(-1)
+
 
 
 class BetaOptimizer:
@@ -35,46 +82,9 @@ class BetaOptimizer:
                 'X_matrix' : X_matrix,
                 }
 
-        return partial(BetaOptimizer._objective_jac_sample, **optim_kwargs)
+        return partial(_objective_jac_sample, **optim_kwargs)
 
 
-    @staticmethod
-    def _objective_jac_regularization(beta_mu, beta_nu, tau):
-        tau_sq = tau**2
-        objective = -1/(2*tau_sq)*np.sum( np.square(beta_mu) + np.square(beta_nu) ) + np.sum(np.log(beta_nu))
-
-        mu_jac = -1/tau_sq * beta_mu
-        std_jac = -1/tau_sq * beta_nu + 1/beta_nu
-
-        return -objective, -np.concatenate([mu_jac, std_jac])
-
-
-    @staticmethod
-    def _objective_jac_sample(
-            beta_mu, 
-            beta_nu,*,
-            # suffstats calculated before optimization
-            X_matrix,
-            gamma,
-            nonzero_indices,
-            deriv_second_term,
-            weighted_phis,
-        ):
-
-        locus_logmu = beta_mu @ X_matrix # F x F, L -> L
-        std_inner = beta_nu @ X_matrix
-        
-        locus_expectation = gamma * np.exp(locus_logmu + 1/2*np.square(std_inner)) # L
-
-        objective = np.sum(weighted_phis * locus_logmu[nonzero_indices]) - locus_expectation.sum(axis = -1)
-               
-        mu_jac = deriv_second_term - locus_expectation @ X_matrix.T 
-        
-        std_jac =  -(std_inner*locus_expectation) @ X_matrix.T
-        
-        return -objective, -np.squeeze(np.concatenate([mu_jac, std_jac], axis = 1))
-
-    
     @staticmethod
     def optimize(
         tau = 1.,*, 
@@ -147,7 +157,7 @@ class BetaOptimizer:
                 obj+=_obj
                 jac+=_jac
 
-            _obj_reg, _jac_reg = BetaOptimizer._objective_jac_regularization(beta_mu, beta_nu, tau)
+            _obj_reg, _jac_reg = _objective_jac_regularization(beta_mu, beta_nu, tau)
 
             obj+=_obj_reg
             jac+=_jac_reg

@@ -3,7 +3,6 @@ import numpy as np
 from scipy.special import psi, gammaln, polygamma, gamma
 import logging
 logger = logging.getLogger(__name__)
-from collections import Counter 
 
 
 def dirichlet_multinomial_logprob(z, alpha):
