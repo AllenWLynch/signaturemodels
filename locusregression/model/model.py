@@ -377,7 +377,7 @@ class LocusRegressor:
                         if len(self.bounds) > 1:
                             improvement = self.bounds[-1] - (self.bounds[-2] if epoch > 1 else self.bounds[-1])
                             
-                            logger.info(f'  Epoch {epoch:<3} complete. | Elapsed time: {elapsed_time:<3.1f} seconds. '
+                            logger.info(f'  Epoch {epoch:<3} complete. | Elapsed time: {elapsed_time:<3.2f} seconds. '
                                         f'| Bound: { self.bounds[-1]:<10.2f}, improvement: {improvement:<10.2f} ')
                             
                     else:
