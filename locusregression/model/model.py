@@ -469,16 +469,14 @@ class LocusRegressor:
 
         n_samples = len(corpus)
         
-        sstas = self._inference(
+        sstats = self._inference(
             gamma = self._init_doc_variables(n_samples),
             corpus = corpus,
             model_state = self.model_state,
             corpus_states = self._get_test_corpus_states(corpus),
         )
 
-        E_gamma = sstas.gamma/sstas.gamma.sum(-1, keepdims = True)
-        
-        return E_gamma
+        return sstats.alpha_sstats
 
     
     def score(self, corpus):
@@ -518,8 +516,8 @@ class LocusRegressor:
         #self._weighted_trinuc_dists = self._get_weighted_trinuc_distribution(corpus)
 
         self._genome_trinuc_distribution = np.sum(
-            corpus.trinuc_distributions*\
-                corpus.exposures,
+            corpus.trinuc_distributions,
+                #*corpus.exposures,
             -1, keepdims= True
         )
 
@@ -639,7 +637,7 @@ class LocusRegressor:
         X_matrix = corpus.corpuses[0].X_matrix
         
         posterior_samples = np.random.randn(self.n_components, self.n_locus_features, n_samples)*self.model_state.beta_nu[:,:,None]\
-                 + self.model_statebeta_mu[:,:,None]
+                 + self.model_state.beta_mu[:,:,None]
 
         psi_unnormalized = np.exp(
             np.transpose(posterior_samples, [2,0,1]).dot(X_matrix) # n_samples, K, F x F,L -> n_samples,K,L
@@ -701,7 +699,7 @@ class LocusRegressor:
 
         psi_matrix = self.get_locus_distribution(corpus, n_samples=n_samples) # K, L
 
-        gamma = self.predict(corpus)
+        gamma = self.predict(corpus)[corpus.name]
 
         return np.squeeze(np.dot(gamma, psi_matrix))
     
