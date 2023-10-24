@@ -1,8 +1,12 @@
 
 rule all:
     input:
-        expand(config['datadir'] + '/{sample}_corpus.tsv', 
-            sample = [k + ':' + v['roadmap_id'] for k,v in config['samples'].items()]
+        #expand(config['datadir'] + '/{sample}_corpus.tsv', 
+        #    sample = [k + ':' + v['roadmap_id'] for k,v in config['samples'].items()]
+        expand(config['datadir'] + '/{sample}_features.normalized.tsv', 
+               sample = [v['roadmap_id'] for k,v in config['samples'].items()]
+        )
+        
 
 
 rule download_from_roadmap:
@@ -11,7 +15,7 @@ rule download_from_roadmap:
     params:
         url = lambda w : config['roadmap']['url'].format(sample = w.sample, signal = w.signal, type = w.type)
     shell:
-        'wget -O {output} {params.url}'
+        'curl {params.url} -o {output}'
 
 
 rule convert_to_bed:
@@ -72,19 +76,22 @@ def aggregate_inputs(w):
                 signal = signal, type = type
             )
             for signal, type in iterate_roadmap_config()
-        ] + \
-        [
-            rules.map_to_windows.output[0].format(
-                source = 'user', sample = w.sample, 
-                signal = signal, type = 'user'
-            )
-            for signal in config['user_supplied']['features'].keys()
         ]
+        
+'''
+[
+    rules.map_to_windows.output[0].format(
+        source = 'user', sample = w.sample, 
+        signal = signal, type = 'user'
+    )
+    for signal in config['user_supplied']['features'].keys()
+]
+'''
 
 
 
 def get_headers():
-    return '\t'.join(['#' + signal for signal, type in iterate_config()])
+    return '\t'.join(['#' + signal for signal, type in iterate_roadmap_config()])
 
 
 rule aggregate:
@@ -99,7 +106,7 @@ rule aggregate:
 
 
 rule normalize_features:
-    input: aggregate
+    input: rules.aggregate.output
     output: temp(config['datadir'] + '/{sample}_features.normalized.tsv')
     params:
         normalize_script = config['normalization_script']
@@ -109,14 +116,14 @@ rule normalize_features:
 
 rule make_corpus:
     input: 
-        features = normalize_features,
-        windows = make_windows,
+        features = rules.normalize_features.output,
+        windows = rules.make_windows.output,
     params:
         vcfs = lambda w : ' '.join(config['samples'][w.sample]['vcfs']),
         fasta = config['fasta'],
         genome = config['genome'],
     output:
-        lambda w : config['datadir'] + '/{w.sample}_corpus.h5'
+        config['datadir'] + '/{sample}_corpus.h5'
     shell:
         'locusregression make-corpus -vcfs {params.vcfs} '
         '-g {params.genome} -c {input.features} '

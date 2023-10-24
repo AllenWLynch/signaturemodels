@@ -1,19 +1,9 @@
-
-samples:
-  stomach :
-    roadmap_id : E110
-    vcfs :
-      - EJDFLSKJ
-      - 13r32LSDKJF
-  
-
-genome : ~/genomes/hg19/hg19.chrom.sizes
-fasta : ~/genomes/hg19/hg19.fa
-blacklist : ~/genomes/hg19/blacklist_regions.bed
-datadir : data/fullgenome_features/
+genome : /Users/allenwlynch/genomes/hg19.chrom.sizes
+fasta : /Users/allenwlynch/genomes/hg19.fa
+blacklist : /Users/allenwlynch/genomes/hg19.blacklist.bed
 binsize : 10000
-normalization_script : experiments/normalization_script.py
-
+normalization_script : normalize_features.py
+datadir : processing/
 
 roadmap:
   url : https://egg2.wustl.edu/roadmap/data/byFileType/signal/consolidatedImputed/{signal}/{sample}-{signal}.imputed.{type}.signal.bigwig
@@ -33,8 +23,6 @@ roadmap:
 
 
 user_supplied:
-  features:
-    pos_strand : data/strand_featurization/pos_genes.bed
-    neg_strand : data/strand_featurization/neg_genes.bed
+  features: []
 
 
