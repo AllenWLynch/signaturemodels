@@ -7,14 +7,13 @@ import numpy as np
 from collections import Counter
 import logging
 import tqdm
-from scipy import sparse
-
+import subprocess
+import tempfile
+import sys
 logger = logging.getLogger('DataReader')
 logger.setLevel(logging.INFO)
 
-#
-# SETTING UP MUTATION INDICES
-#
+
 class SbsRegion(Region):
 
     @property
@@ -24,6 +23,7 @@ class SbsRegion(Region):
     @property
     def alt(self):
         return self.annotation[1]
+
 
 
 complement = {'A' : 'T','T' : 'A','G' : 'C','C' : 'G'}
@@ -39,6 +39,7 @@ def convert_to_mutation(context, alt):
     return context, alt
 
 
+
 class VCF(object):
     CHROM = 0	
     POS = 1
@@ -46,43 +47,9 @@ class VCF(object):
     ALT = 4
 
 
-class Sample:
+def code_SBS_mutation(*,vcf_file, fasta_file, index = -1, 
+                      chr_prefix = '', sep = '\t', output = sys.stdout):
 
-    @staticmethod
-    def _read_mutations(vcf_file, genome_object, 
-                        sep = '\t', index = -1, chr_prefix = ''):
-
-        sbs_mutations = []
-        all_sbs = 0
-        
-        with open(vcf_file, 'r') as f:
-            
-            for line in f:
-                if not line[0] == '#':
-                    line = line.strip().split(sep)
-                    #assert len(line) == 12, 'This is not a valid VCF file. It should have twelve columns'
-
-                    if line[VCF.REF] in 'ATCG' and line[VCF.ALT] in 'ATCG': # check for SBS
-                        
-                        newregion = SbsRegion(
-                                chr_prefix + line[VCF.CHROM],int(line[VCF.POS])-1+index, int(line[VCF.POS])+2+index, # add some buffer indices for the context
-                                annotation=(line[VCF.REF], line[VCF.ALT])
-                            )
-                        
-                        all_sbs += 1
-                        if genome_object.contains_region(newregion):
-                            sbs_mutations.append(newregion)
-        
-        if all_sbs == 0:
-            logger.warn('\tVCF file {} contained no valid SBS mutations.')
-        elif len(sbs_mutations)/all_sbs < 0.5:
-            logger.warn('\tIt appears there was a mismatch between the names of chromosomes in your VCF file and genome file. '
-                       'Many mutations were rejected.')
-                
-        return RegionSet(sbs_mutations, genome_object)
-
-
-    @staticmethod
     def _get_context_mutation_idx(fasta_object, sbs):
 
         try:
@@ -97,32 +64,109 @@ class Sample:
             sbs.chromosome, str(sbs.start+1), newref, sbs.ref 
         )
 
-        #print(context, sbs.ref, sbs.alt)
         context, alt = convert_to_mutation(context, sbs.alt)
 
         return MUTATIONS_IDX[context][alt], CONTEXT_IDX[context]
+    
 
+    with Fasta(fasta_file) as fa:
+    
+        for line in vcf_file:
+            
+            if line.startswith('#'):
+                continue
+            
+            line = line.strip().split(sep)
+            mut_region = SbsRegion(
+                                    chr_prefix + line[VCF.CHROM],int(line[VCF.POS])-1+index, int(line[VCF.POS])+2+index, # add some buffer indices for the context
+                                    annotation=(line[VCF.REF], line[VCF.ALT])
+                                )
+            
+            mut, context = _get_context_mutation_idx(fa, mut_region)
+
+            print(
+                mut_region.chromosome, mut_region.start, mut_region.end,f'{context}:{mut}',
+                sep = '\t',
+                file = output,
+            )
+
+
+
+class Sample:
 
     @staticmethod
-    def _collect_windows(sbs_set, window_set):
-
-        window_intersections = sbs_set.map_intersects(window_set)
+    def featurize_mutations(vcf_file, regions_file, fasta_file,
+                        sep = '\t', index = -1, chr_prefix = ''):
         
-        window_intersections = sparse.hstack([
-            sparse.csr_matrix((window_intersections.shape[0],1)),
-            window_intersections
-        ]).argmax(1) - 1
-        
-        return np.ravel(window_intersections)
+        with tempfile.NamedTemporaryFile() as tmp:
+
+            filter_process = subprocess.Popen(
+                ['bcftools','view','-v','snps','-O','v', vcf_file],
+                stdout = subprocess.PIPE,
+                universal_newlines=True,
+                bufsize=10000,
+            )
 
 
-    @staticmethod
-    def _aggregate_counts(mutation_indices, context_indices, locus_indices):
+            '''
+            Code mutation converts a line of a vcf file into a mutational code.
+            For SBS mutations, the code is a context-mutation pair, so a line of the ouput would look like:
+            
+            chr1    1000    1001    12:3
 
-        aggregated = Counter(zip(mutation_indices, context_indices, locus_indices))
+            Where 12 is the context code and 3 is the mutation code.
+            '''
+            code_process = subprocess.Popen(
+                ['locusregression','code-sbs',
+                    '-fa',fasta_file,
+                    '-sep', sep,
+                    '--index',str(index),
+                    '--chr-prefix',chr_prefix],
+                stdin=filter_process.stdout,
+                stdout = subprocess.PIPE,
+                universal_newlines=True,
+                bufsize=10000,
+            )
 
-        mutations, contexts, loci = list(zip(*aggregated.keys()))
-        counts = list(aggregated.values())
+            map_process = subprocess.Popen(
+                ['bedtools','map',
+                '-a', regions_file, 
+                '-b', '-', 
+                '-sorted',
+                '-c','4','-o','collapse', 
+                '-delim',','],
+                stdin=code_process.stdout,
+                stdout=tmp,
+                universal_newlines=True,
+                bufsize=10000,
+            )
+            
+            map_process.communicate(); code_process.communicate(); filter_process.communicate()
+
+            #print( map_process.returncode, code_process.returncode, filter_process.returncode )
+            
+            if not all([p.returncode == 0 for p in [map_process, code_process, filter_process]]):
+                raise RuntimeError('Sample processing failed. See error message above.')
+
+            mutations=[]; contexts=[]; loci=[]; counts=[]
+
+            with open(tmp.name, 'r') as f:
+                
+                for locus_idx, line in enumerate(f):
+
+                    line = line.strip().split('\t')
+                    if line[-1] == '.':
+                        continue
+
+                    mutation_codes = line[-1].split(',')
+                    mutation_codes = [tuple(map(int, code.split(':'))) for code in mutation_codes]
+                    codes_and_counts = Counter(mutation_codes)
+
+                    for code, count in codes_and_counts.items():
+                        mutations.append(code[0])
+                        contexts.append(code[1])
+                        loci.append(locus_idx)
+                        counts.append(count)
 
         return {
             'mutation' : np.array(mutations), 
@@ -130,36 +174,7 @@ class Sample:
             'locus' : np.array(loci), 
             'count' : np.array(counts)
         }
-
-
-    @staticmethod
-    def featurize_mutations(vcf, fasta_object, genome_object, window_set, 
-        sep = '\t', index= -1, chr_prefix = ''):
-
-        sbs_set = Sample._read_mutations(vcf, genome_object, 
-            sep = sep, index = index, chr_prefix = chr_prefix)
-
-        mutation_indices, context_indices = list(zip(*[
-            Sample._get_context_mutation_idx(fasta_object, sbs) for sbs in sbs_set.regions
-        ]))
-
-        locus_indices = Sample._collect_windows(sbs_set, window_set)
-        
-        unmatched_mask = locus_indices == -1
-        
-        if unmatched_mask.sum() > 0:
-            unmatched_percent = unmatched_mask.sum()/unmatched_mask.size*100
-
-            if unmatched_percent > 25:
-                logger.warn(f'\t{unmatched_percent:.2f}% of mutations were not mapped to a genomic window.')
-            else:
-                logger.warn(f'\t{unmatched_percent:.2f}% mutations did not intersect with any provided windows, filtering these out.')
-
-        return Sample._aggregate_counts(
-            np.array(mutation_indices)[~unmatched_mask], 
-            np.array(context_indices)[~unmatched_mask], 
-            np.array(locus_indices)[~unmatched_mask]
-        )
+      
 
 
 class CorpusReader:
@@ -167,17 +182,38 @@ class CorpusReader:
     corpus_class = Corpus
 
     @classmethod
+    def create_trinuc_file(cls,
+            fasta_file,
+            regions_file,
+            output,
+            n_jobs = 1,
+            sep = '\t',
+        ):
+
+        windows = cls.read_windows(regions_file, None, sep = sep)
+
+        with Fasta(fasta_file) as fa:
+            trinuc_distributions = cls.get_trinucleotide_distributions(
+                        windows, fa, n_jobs=n_jobs
+                    )
+            
+        np.savez(output, x = trinuc_distributions)
+
+
+
+    @classmethod
     def create_corpus(cls, 
             sep = '\t', 
             index = -1,
             chr_prefix = '', 
             n_jobs = 1,
-            exposure_files = None,*,
+            exposure_files = None,
+            trinuc_file = None,*,
             correlates_file,
             fasta_file,
-            genome_file,
             vcf_files,
             regions_file,
+            corpus_name,
         ):
 
         if exposure_files is None:
@@ -186,10 +222,9 @@ class CorpusReader:
         elif len(exposure_files) > 1:
             assert len(exposure_files) == len(vcf_files), \
                 'If providing exposure files, provide one for the whole corpus, or one per sample.'
+            
 
-        genome = Genome.from_file(genome_file)
-
-        windows = cls.read_windows(regions_file, genome, sep = sep)
+        windows = cls.read_windows(regions_file, None, sep = sep)
 
         if len(exposure_files) > 0:
             exposures = cls.calculate_exposures(
@@ -203,34 +238,39 @@ class CorpusReader:
             )
         
         features, feature_names = cls.read_correlates(
-            correlates_file, windows, required_columns=None)
+            correlates_file, windows, required_columns=None
+        )
 
+        samples = cls.collect_vcfs(
+            vcf_files = vcf_files, 
+            fasta_file = fasta_file, 
+            regions_file = regions_file,
+            index = index,
+            sep = sep,
+            chr_prefix = chr_prefix,
+        )
 
-        with Fasta(fasta_file) as fa:
+        trinuc_distributions = None
+        if trinuc_file is None:
+            with Fasta(fasta_file) as fa:
+                trinuc_distributions = cls.get_trinucleotide_distributions(
+                            windows, fa, n_jobs=n_jobs
+                        )    
+        else:
+            trinuc_distributions = cls.read_trinuc_distribution(trinuc_file)
 
-            samples = cls.collect_vcfs(
-                vcf_files = vcf_files, 
-                fasta_object = fa, 
-                genome_object = genome,
-                window_set = windows,
-                index = index,
-                sep = sep,
-                chr_prefix = chr_prefix,
-            )
-
-            trinuc_distributions = cls.get_trinucleotide_distributions(
-                windows, fa, n_jobs=n_jobs
-            )
+            assert trinuc_distributions.shape[0] == len(windows), \
+                'The number of trinucleotide distributions provided in {} does not match the number of specified windows.\n'\
 
         shared = True
         if exposures.shape[0] == 1:
-            samples = [{**sample, 'window_size' : exposures} 
+            samples = [{**sample, 'exposures' : exposures} 
                     for sample in samples]
             
         else:
             shared = False
             samples = [
-                {**sample, 'window_size' : exposure[None,:]}
+                {**sample, 'exposures' : exposure[None,:]}
                 for sample, exposure in zip(samples, exposures)
             ]
 
@@ -239,8 +279,14 @@ class CorpusReader:
             feature_names = feature_names,
             X_matrix = features.T,
             trinuc_distributions = trinuc_distributions.T,
-            shared_correlates= shared
+            shared_exposures = shared,
+            name = corpus_name,
         )
+
+
+    @staticmethod
+    def read_trinuc_distribution(trinuc_file):
+        return np.load(trinuc_file)['x']
 
 
     @staticmethod
@@ -300,7 +346,7 @@ class CorpusReader:
                         missing_cols = set(required_columns).difference(columns)
 
                         if len(missing_cols) > 0:
-                            raise ValueError('The required correlate{} was missing from file: {}.\n All correlates must be specified for all samples'.format(
+                            raise ValueError('The required correlate {} was missing from file: {}.\n All correlates must be specified for all samples'.format(
                                     's ' + ', '.join(missing_cols) if len(missing_cols) > 1 else ' ' + list(missing_cols)[0], correlates_file
                                 ))
                         else:
@@ -332,8 +378,6 @@ class CorpusReader:
 
         correlates = np.array(correlates)
 
-        #correlates = StandardScaler().fit_transform(correlates)
-
         return correlates, columns + ['constant']
 
 
@@ -360,11 +404,12 @@ class CorpusReader:
                     try:
                         
                         windows.append(
-                            Region(*line[:3], annotation= {'name' : line[4]} if len(line) > 3 else None)
+                            Region(*line[:3], annotation= {'name' : line[3]} if len(line) > 3 else None)
                         )
                         
                     except ValueError as err:
                         raise ValueError('Could not ingest line {}: {}'.format(lineno, txt)) from err
+                    
 
         last_w = windows[0]
         for w in windows[1:]:
@@ -373,15 +418,13 @@ class CorpusReader:
                 f'Last window: {last_w.chromosome}-{last_w.start}, next window: {w.chromosome}-{w.start}\n'\
                 'IF YOU HAVE ALREADY MADE CORRELATES AND EXPOSURES TSVs, DO NOT FORGET TO REORDER THOSE SO THAT THEY MATCH WITH THE CORRECT WINDOWS!'
 
-        windows = RegionSet(windows, genome_object)
-
         return windows
 
 
 
     @staticmethod
     def collect_vcfs(vcf_files, sep = '\t', index = -1, chr_prefix = '',*,
-                     fasta_object, genome_object, window_set):
+                     fasta_file, regions_file):
         
         logger.info('Reading VCF files ...')
         samples = []
@@ -390,7 +433,7 @@ class CorpusReader:
             logger.info('Featurizing {}'.format(vcf))
             
             samples.append(
-                Sample.featurize_mutations(vcf, fasta_object, genome_object, window_set,
+                Sample.featurize_mutations(vcf, regions_file = regions_file, fasta_file = fasta_file,
                                           sep = sep, index = index, chr_prefix = chr_prefix)
             )
         
@@ -416,8 +459,6 @@ class CorpusReader:
 
     @staticmethod
     def get_trinucleotide_distributions(window_set, fasta_object, n_jobs = 1):
-    
-        #return np.ones((len(window_set), 32))/32
         
         def count_trinucs(chrom, start, end, fasta_object):
 

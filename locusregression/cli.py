@@ -1,4 +1,6 @@
-from .corpus import CorpusReader, save_corpus, stream_corpus, MetaCorpus, fetch_roadmap_features
+from .corpus import CorpusReader, save_corpus, stream_corpus, \
+    MetaCorpus, fetch_roadmap_features, code_SBS_mutation
+
 from .model import LocusRegressor, load_model, logger, GBTRegressor
 from .tuning import tune_model
 from .simulation import SimulatedCorpus, coef_l1_distance, signature_cosine_distance
@@ -60,7 +62,8 @@ def write_dataset(
         index = -1,
         chr_prefix = '',*,
         fasta_file,
-        genome_file,
+        trinuc_file,
+        corpus_name,
         regions_file,
         vcf_files,
         exposure_files,
@@ -70,11 +73,12 @@ def write_dataset(
 
     shared_args = dict(
         fasta_file = fasta_file, 
-        genome_file = genome_file,
+        trinuc_file = trinuc_file,
         regions_file = regions_file,
         vcf_files = vcf_files,
         sep = sep, index = index,
         chr_prefix = chr_prefix,
+        corpus_name = corpus_name
     )
 
     if exposure_files is None:
@@ -96,11 +100,13 @@ dataset_sub = subparsers.add_parser('make-corpus',
     help= 'Read VCF files and genomic correlates to compile a formatted dataset'
           ' for locus modeling.'
     )
+
+dataset_sub.add_argument('--corpus-name','-n', type = str, required = True, help = 'Name of corpus, must be unique if modeling with other corpuses.')
 dataset_sub.add_argument('--vcf-files', '-vcf', nargs = '+', type = file_exists, required = True,
     help = 'list of VCF files containing SBS mutations.')
 dataset_sub.add_argument('--fasta-file','-fa', type = file_exists, required = True, help = 'Sequence file, used to find context of mutations.')
-dataset_sub.add_argument('--genome-file','-g', type = file_exists, required = True, 
-    help = 'Also known as a "chromsizes" file. Gives the name and length of each chromosome.')
+#dataset_sub.add_argument('--genome-file','-g', type = file_exists, required = True, 
+#    help = 'Also known as a "chromsizes" file. Gives the name and length of each chromosome.')
 dataset_sub.add_argument('--regions-file','-r', type = file_exists, required = True,
     help = 'Bed file of format with columns (chromosome, start, end) which defines the windows used to represent genomic loci in the model. '
             'The provided regions may be discontinuous, but MUST be in sorted order (run "sort -k1,1 -k2,2 --check <file>").')
@@ -116,7 +122,8 @@ dataset_sub.add_argument('--exposure-files','-e', type = file_exists, nargs = '+
            'Exposures are positive scalars which the user calculates to reflect technical influences on the number of mutations one expects to '
            'find within each region. The exposures may be proportional to number of reads falling within each region, or some other '
            'metric to quantify sensitivity to call mutations.')
-
+dataset_sub.add_argument('--trinuc-file','-trinuc', type = file_exists,default=None,
+                         help = 'Pre-calculated trinucleotide context file.')
 dataset_sub.add_argument('--output','-o', type = valid_path, required = True, help = 'Where to save compiled corpus.')
 
 dataset_sub.add_argument('--sep','-sep',default ='\t',type = str, help = 'Separator for VCF file.')
@@ -125,10 +132,17 @@ dataset_sub.add_argument('--index','-i',default = -1,type = int,
                                 'set this to "-1".')
 
 dataset_sub.add_argument('--chr-prefix', default= '', help='Append the chromosome names in VCF files with this prefix. Useful if you are using UCSC reference materials.')
-
 dataset_sub.set_defaults(func = write_dataset)
     
-    
+
+trinuc_sub = subparsers.add_parser('trinucs', help = 'Write trinucleotide context file for a given genome.')
+trinuc_sub.add_argument('--fasta-file','-fa', type = file_exists, required = True, help = 'Sequence file, used to find context of mutations.')
+trinuc_sub.add_argument('--regions-file','-r', type = file_exists, required = True)
+trinuc_sub.add_argument('--output','-o', type = valid_path, required = True, help = 'Where to save compiled corpus.')
+trinuc_sub.add_argument('--sep','-sep',default ='\t',type = str, help = 'Separator for windows file.')
+trinuc_sub.set_defaults(func = CorpusReader.create_trinuc_file)
+
+
 def train_model(
         locus_subsample = 0.125,
         batch_size = 128,
@@ -415,12 +429,23 @@ def _fetch_roadmap_wrapper(**kw):
     logging.basicConfig(level=logging.INFO)
     fetch_roadmap_features(**kw)
 
-roadmap_sub = subparsers.add_parser('get-roadmap-features', help = 'Download and summarize Roadmap Epigenomics data for a given cell type.')
+roadmap_sub = subparsers.add_parser('fetch-marks', help = 'Download and summarize Roadmap Epigenomics data for a given cell type.')
 roadmap_sub.add_argument('--roadmap-id','-id', type = str, required=True,)
 roadmap_sub.add_argument('--windows-file','-w', type = file_exists, required=True,)
 roadmap_sub.add_argument('--output','-o', type = argparse.FileType('w'), default=sys.stdout)
 roadmap_sub.add_argument('--n-jobs','-j', type = posint, default=1)
 roadmap_sub.set_defaults(func = _fetch_roadmap_wrapper)
+
+
+code_sub = subparsers.add_parser('code-sbs')
+code_sub.set_defaults(func = code_SBS_mutation)
+code_sub.add_argument('--vcf-file','-vcf', type = argparse.FileType('r'), default=sys.stdin)
+code_sub.add_argument('--fasta-file','-fa', type = file_exists, required=True)
+code_sub.add_argument('--output','-o', type = argparse.FileType('w'), default=sys.stdout)
+code_sub.add_argument('--sep','-sep', type = str, default = '\t')
+code_sub.add_argument('--index','-i', type = int, default = -1)
+code_sub.add_argument('--chr-prefix', type = str, default = '')
+
 
 
 def main():
