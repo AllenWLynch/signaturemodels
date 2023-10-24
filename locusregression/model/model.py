@@ -10,7 +10,6 @@ from ._model_state import ModelState, CorpusState
 import time
 import warnings
 
-#from sklearn.base import BaseEstimator
 import logging
 logger = logging.getLogger('LocusRegressor')
 
@@ -34,6 +33,15 @@ class LocusRegressor:
     SSTATS = _sstats
     
     n_contexts = 32
+
+    @classmethod
+    def sample_params(cls, randomstate):
+        return dict(
+            seed = randomstate.randint(0, 100000000),
+            tau = randomstate.choice([1, 16, 48, 128]),
+            kappa = randomstate.choice([0.5, 0.6, 0.7]),
+        )
+    
 
     @classmethod
     def load(cls, filename):
@@ -356,7 +364,7 @@ class LocusRegressor:
                     
                     self.model_state.update_state(sstats, learning_rate_fn(epoch))
                     
-                    if epoch >= 10:
+                    if epoch >= 10 and self.empirical_bayes:
                         for corpus_state in self.corpus_states.values():
                             corpus_state.update_alpha(sstats, learning_rate_fn(epoch))
 
@@ -616,7 +624,7 @@ class LocusRegressor:
 
         Parameters
         ----------
-        corpus : dict, entry from a corpus, or a corpus of length one
+        corpus : Corpus or MetaCorpus
             A sample from a corpus
 
         Returns
@@ -626,16 +634,12 @@ class LocusRegressor:
 
         '''
 
-        if isinstance(corpus, dict):
-            corpus = [corpus]
-        else:
-            assert len(corpus) == 1 or corpus.shared_correlates, \
-                'This function is only available for corpuses with shared genomic correlates, or for single records from a corpus.'
+        assert len(corpus.corpuses) == 1, 'This function is only available for a single feature matrix - no MetaCorpuses.'
 
-        X_matrix = next(iter(corpus))['X_matrix']
+        X_matrix = corpus.corpuses[0].X_matrix
         
-        posterior_samples = np.random.randn(self.n_components, self.n_locus_features, n_samples)*self.beta_nu[:,:,None]\
-                 + self.beta_mu[:,:,None]
+        posterior_samples = np.random.randn(self.n_components, self.n_locus_features, n_samples)*self.model_state.beta_nu[:,:,None]\
+                 + self.model_statebeta_mu[:,:,None]
 
         psi_unnormalized = np.exp(
             np.transpose(posterior_samples, [2,0,1]).dot(X_matrix) # n_samples, K, F x F,L -> n_samples,K,L
@@ -692,13 +696,9 @@ class LocusRegressor:
             in a sample.
 
         '''
+        assert len(corpus.corpuses) == 1, 'This function is only available for a single feature matrix - no MetaCorpuses.'
+        assert len(corpus) == 1, 'This function only works for a single sample. Select a sample from a corpus using "corpus.subset_samples(1)".'
 
-        if isinstance(corpus, dict):
-            corpus = [corpus]
-        else:
-            assert len(corpus) == 1, \
-                'This function is only available for single records from a corpus.'
-            
         psi_matrix = self.get_locus_distribution(corpus, n_samples=n_samples) # K, L
 
         gamma = self.predict(corpus)

@@ -1,5 +1,5 @@
 from .corpus import CorpusReader, save_corpus, stream_corpus, MetaCorpus, fetch_roadmap_features
-from .model import LocusRegressor, load_model, logger
+from .model import LocusRegressor, load_model, logger, GBTRegressor
 from .tuning import tune_model
 from .simulation import SimulatedCorpus, coef_l1_distance, signature_cosine_distance
 import argparse
@@ -223,7 +223,9 @@ def tune(
     factor = 3,
     train_size = 0.7,
     max_time = 900,
-    tune_subsample= False,*,
+    tune_subsample= False,
+    model_type = 'regression',
+    locus_subsample_rates = [0.0625, 0.125, 0.25],*,
     output,
     corpuses,
     min_components, 
@@ -251,6 +253,8 @@ def tune(
         factor = factor,
         max_time=max_time,
         tune_subsample= tune_subsample,
+        model_type=model_type,
+        locus_subsample_rates=locus_subsample_rates,
         **model_params,
     )
 
@@ -281,11 +285,13 @@ tune_sub.add_argument('--max-time', '-t', type = posint, default=900,
 tune_optional.add_argument('--factor','-f',type = posint, default = 3,
     help = 'Successive halving reduction factor for each iteration')
 tune_optional.add_argument('--tune-subsample', action = 'store_true', default=False)
+tune_optional.add_argument('--locus-subsample-rates','-rates', type = posfloat, nargs = '+', default = [0.0625, 0.125, 0.25])
 #tune_optional.add_argument('--successive-halving','-halving', action = 'store_true',
 #    default= False, help='Use the successive halving algorithm for tuning.')
 
 model_options = tune_sub.add_argument_group('Model arguments')
 
+model_options.add_argument('--model-type','-model', choices=['regression','gbt'], default='regression')
 model_options.add_argument('--locus-subsample','-sub', type = posfloat, default = 0.125,
     help = 'Whether to use locus subsampling to speed up training via stochastic variational inference.')
 model_options.add_argument('--batch-size','-batch', type = posint, default = 128,
@@ -322,12 +328,19 @@ def retrain_best(trial_num = None,*,
     else:
         best_trial = results[trial_num]
 
+    if best_trial['model_type'] == 'regression':
+        basemodel = LocusRegressor
+    elif best_trial['model_type'] == 'gbt':
+        basemodel = GBTRegressor
+    else:
+        raise ValueError(f'Unknown model type {best_trial["model_type"]}')
+
     params = extract_params(best_trial)
     param_string = '\n\t'.join([f'{param}: {v}' for param, v in params.items()])
 
     print('Training model with params:\n\t' + param_string)
 
-    model = LocusRegressor(**params, eval_every=10, quiet=True).fit(dataset)
+    model = basemodel(**params, eval_every=10, quiet=True).fit(dataset)
 
     model.save(output)
 

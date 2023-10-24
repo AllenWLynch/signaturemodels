@@ -2,30 +2,39 @@
 from .hyperband import run_hyperband
 from functools import partial
 from ..model import LocusRegressor
+from ..model import GBTRegressor
 from ..model import logger
 from ..corpus import train_test_split
 import logging
 
 
 def random_model(randomstate,
-                    min_components = 2, 
-                    max_components = 10,
-                    model_params = {},
-                    tune_subsample = True,
-                    ):
+                min_components = 2, 
+                max_components = 10,
+                model_params = {},
+                tune_subsample = True,
+                locus_subsample_rates = [0.0625, 0.125, 0.25,],
+                model_type = 'regression',
+                ):
+    
+    if model_type == 'regression':
+        basemodel = LocusRegressor
+    elif model_type == 'gbt':
+        basemodel = GBTRegressor
+    else:
+        raise ValueError(f'Unknown model type {model_type}')
+    
 
     if tune_subsample:
-        model_params['locus_subsample'] = randomstate.choice([0.0625, 0.125, 0.25,])
+        model_params['locus_subsample'] = randomstate.choice(locus_subsample_rates)
         model_params['batch_size'] = randomstate.choice([32,64,128])
         
 
-    return LocusRegressor(
+    return basemodel(
             num_epochs=1000, 
             eval_every = 1000,
             n_components = randomstate.randint(min_components, max_components),
-            seed = randomstate.randint(0, 100000000),
-            tau = randomstate.choice([1, 16, 48, 128]),
-            kappa = randomstate.choice([0.5, 0.6, 0.7]),
+            **basemodel.sample_params(randomstate),
             **model_params
         )
 
@@ -37,7 +46,7 @@ def eval_params(model, resources,*, train, test):
     return model.score(test)
 
 
-def get_records(trial_num, bracket, model, loss, resources):
+def get_records(trial_num, bracket, model, loss, resources, model_type = 'regression'):
     
     record = {
             'bracket' : bracket,
@@ -50,6 +59,7 @@ def get_records(trial_num, bracket, model, loss, resources):
             'resources' : resources,
             'score' : loss,
             'trial_num' : trial_num,
+            'model_type' : model_type,
         }
 
     return record
@@ -65,6 +75,8 @@ def tune_model(corpus,
     factor = 3,
     successive_halving=False,*,
     tune_subsample = False,
+    model_type = 'regression',
+    locus_subsample_rates = [0.0625, 0.125, 0.25,],
     min_components, max_components,
     **model_params):
     
@@ -98,9 +110,11 @@ def tune_model(corpus,
                 max_components = max_components,
                 model_params = model_params,
                 tune_subsample = tune_subsample,
+                model_type = model_type,
+                locus_subsample_rates = locus_subsample_rates,
             ),
             partial(eval_params, train = train, test = test),
-            get_records,
+            partial(get_records, model_type = model_type),
             factor = factor,
             max_resources = max_time,
             successive_halving = successive_halving,
