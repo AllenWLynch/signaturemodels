@@ -40,13 +40,13 @@ First, we need to define some genomic regions which will serve as our "windows",
 consider a locus. There are many ways one could define these regions, and simply dividing the genome into 
 high-resolution 10-kilobase bins as I do is but one option.
 
-To make this tutorial run faster, we will only model mutations on the chr1 of 96 esophogeal adenocarcino samples from
-the PCAWG dataset, so we define a new genome with only the first chromosome:
+To start, I define a "genome" or "chrom sizes" file from a fasta:
 
 .. code-block:: bash
     
     $ mkdir -p tutorial
-    $ head -n1 hg19.chrom.sizes > tutorial/genome.txt
+    $ samtools faidx ~/genomes/hg19.fa
+    $ cut -f1-2 ~/genomes/hg19.fa.fai | sort -k1,1 | grep -vE "^chr[0-9Un]_" > tutorial/genome.txt
 
 When modeling the full genome, it is a good idea to define a genome with only main chromosomes (chr1-N), removing alt scaffolds, etc.
 
@@ -75,28 +75,33 @@ remove ENCODE blacklist regions from your region set:
     $ bedtools intersect -v -a tutorial/regions.bed -b encode.blacklist.bed > tutorial/filtered_regions.bed \
         && mv tutorial/filtered_regions.bed tutorial/regions.bed
 
+The last annotation set up step is to generate a trinucleotide context distribution matrix, which helps the model to adjust for
+sequence content differences across the genome:
+
+.. code-block:: bash
+
+    $ locusregression trinucs -r tutorial/regions.bed -fa ~/genomes/hg19.fa -o tutorial/trinucs.npz
+
+
+
 **Correlates**
 
-Next, we need to associate each of our windows with values for some interesting genomic correlates. For example, if I have 1-kilobase
-binned data for expression, replication timing, and H3K27ac in bed files, I can use:
+Next, we need to associate each of our windows with values for some interesting genomic correlates. I provide a method to download
+and process RoadMap data for a given cell line or cell type. All you must provide are the RoadMap ID of interest (in this case for 
+Esophogeal cells), and the regions file.
 
 .. code-block:: bash
 
-    $ cat expression.bed | grep -v "NA" | sort -k1,1 -k2,2n | \
-        bedtools map -a tutorial/regions.bed -b - -o sum -sorted -null 0.0 | \
-        cut -f4 > tutorial/expression.tsv
+    $ locusregression -id E079 -w tutorial/regions.bed -j 5 -o tutorial/E110-marks.tsv
 
-to aggregate and map that track data to our windows. We can do the same for the other correlates:
+Check the output of this method to see the output format:
 
 .. code-block:: bash
 
-    $ cat replication_timing.bed | grep -v "NA" | sort -k1,1 -k2,2n | \
-        bedtools map -a tutorial/regions.bed -b - -o sum -sorted -null 0.0 | \
-        cut -f4 > tutorial/replication_timing.tsv
+    $ head tutorial/correlates.tsv
 
-    $ cat h3k27ac.bed | grep -v "NA" | sort -k1,1 -k2,2n | \
-        bedtools map -a tutorial/regions.bed -b - -o sum -sorted -null 0.0 | \
-        cut -f4 > tutorial/h3k27ac.tsv
+A typical correlates file is a tab-separated matrix which has the same number of rows as the windows file. Each column is
+annotated with a name prepended with "#". You can expand this correlates file as need to add additional features.
 
 ..
 
@@ -109,15 +114,6 @@ to aggregate and map that track data to our windows. We can do the same for the 
 **The locusregression software will not adjust the features you provide, so
 be sure to standardize them beforehand.**
 
-Finally, we can merge all of these correlates into one file:
-
-.. code-block:: bash
-
-    $ echo -e "#expression\t#replication_timing\t#h3k27ac" > tutorial/correlates.tsv
-    $ paste tutorial/expression.tsv tutorial/replication_timing.tsv tutorial/h3k27ac.tsv >> tutorial/correlates.tsv
-
-First, I added a commented header line to help the LocusRegression model keep track of what features 
-are being used. Then, I just pasted together the files for each correlate.
 
 **Exposures**
 
@@ -139,31 +135,29 @@ Provide exposures as a single column of positive values (a header is optional an
 
 The exposure file is the only optional input.
 
-..
-
-    **Note:**
-    Here, I model genomes from esophogeal cells, which I may assume all have similar genomic features/expression/etc. 
-    Thus, I use only one "correlates" file which speeds up model calculation. If you wish to model a heterogeneous 
-    collection of cells -biologically or technically- you can provide a sample-specific correlate and exposure file
-    for each VCF file of mutations.
-
 
 **Compiling a corpus**
 
-With all of our data gathered and munged, we can compile a "corpus": a normalized and reformatted view of 
-the data which is read by the LocusRegression model. For a list of VCF files stored in vcfs.txt:
+A "Corpus" is a a normalized and reformatted view of the data which is read by the LocusRegression model, and
+associates a set of mutations from multiple VCFs to some genomic correlates. The 
+structure of your corpus also helps LocusRegression find the fastest method to perform parameter updates. 
+Since we could assume samples from a certain cancer type have similar correlates, we can group all of the 
+VCFs from a certain cancer type to type-specific correlates. If you wish to model multiple types together, 
+just provide multiple corpuses to any of the methods below.
+
+To produce a corpus for some hypothetical set of samples stored in `vcfs.txt`:
 
 .. code-block:: bash
 
     $ locusregression make-corpus \
         -vcf `cat vcfs.txt` \
         -fa hg19.fa \
-        --genome tutorial/genome.txt \
         --regions-file tutorial/regions.bed \
         --correlates-file tutorial/correlates.tsv \
-        -o tutorial/corpus.pkl
+        --trinuc tutorial/trinucs.npz \
+        -o tutorial/corpus.h5
 
-This will save the corpus to *tutorial/corpus.pkl*.
+This will save the corpus to *tutorial/corpus.h5*.
 
 
 1. How many processes?
@@ -175,7 +169,7 @@ with a HyperBand bandit to find the number of components which produces a descri
 generalizeable model. This process can be parallelized for faster tuning.
 
 To run the *tune* command, you have to give the path to corpus, as well as the minimum and maximum
-bounds on the number of components to try. This command outputs a *tsv* file of scores for different
+bounds on the number of components to try. This command outputs a *json* file of scores for different
 model configurations.
 
 .. code-block:: bash
@@ -184,7 +178,9 @@ model configurations.
         --corpus tutorial/corpus.pkl \
         -min 3 -max 12 \
         --n-jobs 5 \
-        -o tutorial/data.json \
+        --locus-subsample-rate 0.01 0.05 0.1
+        --tune-subsample \
+        -o tutorial/tune_results.json \
 
     Running HyperBand with 8 jobs.
     Bracket 1: Evaluating 8 models
@@ -232,17 +228,16 @@ Here, four or five components gives a good fit for the dataset.
 1. Training the model
 ---------------------
 
-To train the representative model for the dataset, provide paths for the corpus and output, then
-specify the chosen number of components using the "--n-components" argument. Also, be sure to provide
-the seed of the best performing model from the tuning stage.
+To train the representative model for the dataset, provide paths for the corpus, output, and 
+the tuning results. By default, locusregression will choose the best model to retrain. If 
+desired, you can choose some other model configuration by specifying `--trial-num <num>`. 
 
 .. code-block:: bash
 
-    $ locusregression train-model \
+    $ locusregression retrin \
         -d tutorial/corpus.pkl \
         -o tutorial/model.pkl \
-        --n-components 5
-        --seed 2
+        --tune-results tutorial/tune_results.json
 
 
 4. Analysis

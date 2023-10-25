@@ -85,7 +85,7 @@ def code_SBS_mutation(*,vcf_file, fasta_file, index = -1,
             mut, context = _get_context_mutation_idx(fa, mut_region)
 
             print(
-                mut_region.chromosome, mut_region.start, mut_region.end,f'{context}:{mut}',
+                mut_region.chromosome, mut_region.start, mut_region.end,f'{mut}:{context}',
                 sep = '\t',
                 file = output,
             )
@@ -105,6 +105,7 @@ class Sample:
                 stdout = subprocess.PIPE,
                 universal_newlines=True,
                 bufsize=10000,
+                stderr = subprocess.DEVNULL,
             )
 
 

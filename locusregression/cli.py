@@ -1,5 +1,6 @@
 from .corpus import CorpusReader, save_corpus, stream_corpus, \
     MetaCorpus, fetch_roadmap_features, code_SBS_mutation
+from .corpus import logger as reader_logger
 
 from .model import LocusRegressor, load_model, logger, GBTRegressor
 from .tuning import tune_model
@@ -80,6 +81,9 @@ def write_dataset(
         chr_prefix = chr_prefix,
         corpus_name = corpus_name
     )
+
+    logging.basicConfig(level=logging.INFO)
+    reader_logger.setLevel(logging.INFO)
 
     if exposure_files is None:
         exposure_files = []
