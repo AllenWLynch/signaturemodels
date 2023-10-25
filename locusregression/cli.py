@@ -165,6 +165,7 @@ def train_model(
         n_components,
         corpuses,
         output,
+        empirical_bayes = False,
     ):
     
     model = LocusRegressor(
@@ -184,6 +185,7 @@ def train_model(
         eval_every = eval_every,
         tau = tau,
         kappa = kappa,
+        empirical_bayes=empirical_bayes,
     )
     
     if len(corpuses) == 1:
@@ -220,6 +222,7 @@ trainer_optional.add_argument('--batch-size','-batch', type = posint, default = 
     help = 'Use minibatch updates via stochastic variational inference.')
 trainer_optional.add_argument('--time-limit','-time', type = posint, default = None,
     help = 'Time limit in seconds for model training.')
+trainer_optional.add_argument('--empirical-bayes','-eb', action = 'store_true', default=False,)
 trainer_optional.add_argument('--tau', type = posint, default = 1)
 trainer_optional.add_argument('--kappa', type = posfloat, default=0.5)
 trainer_optional.add_argument('--eval-every', '-eval', type = posint, default = 10,
@@ -243,6 +246,8 @@ def tune(
     max_time = 900,
     tune_subsample= False,
     model_type = 'regression',
+    empirical_bayes = False,
+    pi_prior = 1.,
     locus_subsample_rates = [0.0625, 0.125, 0.25],*,
     output,
     corpuses,
@@ -273,6 +278,8 @@ def tune(
         tune_subsample= tune_subsample,
         model_type=model_type,
         locus_subsample_rates=locus_subsample_rates,
+        empirical_bayes=empirical_bayes,
+        pi_prior=pi_prior,
         **model_params,
     )
 
@@ -314,6 +321,9 @@ model_options.add_argument('--locus-subsample','-sub', type = posfloat, default 
     help = 'Whether to use locus subsampling to speed up training via stochastic variational inference.')
 model_options.add_argument('--batch-size','-batch', type = posint, default = 128,
     help = 'Batch size for stochastic variational inference.')
+model_options.add_argument('--empirical-bayes','-eb', action = 'store_true', default=False,)
+model_options.add_argument('--pi-prior', '-pi', type = posfloat, default = 1.,
+    help = 'Dirichlet prior over sample mixture compositions. A value > 1 will give more dense compositions, which <1 finds more sparse compositions.')
 
 tune_sub.set_defaults(func = tune)
 

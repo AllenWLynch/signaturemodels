@@ -64,7 +64,7 @@ class LocusRegressor:
         tau = 1,
         eval_every = 50,
         time_limit = None,
-        empirical_bayes = True,
+        empirical_bayes = False,
         batch_size = None,
     ):
         '''
@@ -106,15 +106,6 @@ class LocusRegressor:
         with open(filename, 'wb') as f:
             pickle.dump(self, f)
         
-        
-    def _init_doc_variables(self, n_samples, is_bound = False):
-
-        random_state = self.random_state if not is_bound else self.bound_random_state
-
-        gamma = random_state.gamma(100., 1./100., 
-                                   (n_samples, self.n_components) # n_genomes by n_components
-                                  ).astype(self.dtype, copy=False)
-        return gamma
     
 
     @staticmethod
@@ -136,7 +127,7 @@ class LocusRegressor:
             corpus_state,
         ):
     
-        sample_sstats = self._sample_inference(
+        sample_sstats, _ = self._sample_inference(
             gamma0 = self._init_doc_variables(1, is_bound=True)[0],
             sample = sample,
             model_state = model_state,
@@ -200,7 +191,9 @@ class LocusRegressor:
     
     
     def _sample_inference(self,
-        likelihood_scale = 1.,*,
+        locus_subsample_rate = 1.,
+        batch_subsample_rate = 1.,
+        learning_rate = 1.,*,
         gamma0,
         sample,
         model_state,
@@ -221,7 +214,8 @@ class LocusRegressor:
             old_gamma = gamma.copy()
             exp_Elog_gamma = np.exp(log_dirichlet_expectation(gamma)[:,None])
 
-            gamma = estep_update(exp_Elog_gamma, corpus_state.alpha, flattend_phi, count_g)
+            gamma = estep_update(exp_Elog_gamma, corpus_state.alpha, flattend_phi, count_g,
+                                 likelihood_scale=locus_subsample_rate)
 
             if np.abs(gamma - old_gamma).mean() < self.difference_tol:
                 logger.debug(f'E-step converged after {s} iterations.')
@@ -229,8 +223,11 @@ class LocusRegressor:
         else:
             logger.debug('E-step did not converge. If this happens frequently, consider increasing "estep_iterations".')
 
+
+        gamma = (1 - learning_rate)*gamma0 + learning_rate*gamma
+
         exp_Elog_gamma = np.exp(log_dirichlet_expectation(gamma)[:,None])
-        phi_matrix = np.outer(exp_Elog_gamma, 1/np.dot(flattend_phi.T, exp_Elog_gamma))*flattend_phi*likelihood_scale
+        phi_matrix = np.outer(exp_Elog_gamma, 1/np.dot(flattend_phi.T, exp_Elog_gamma))*flattend_phi/(batch_subsample_rate*locus_subsample_rate)
         
         weighted_phi = phi_matrix * count_g.T
 
@@ -239,12 +236,14 @@ class LocusRegressor:
             sample=sample,
             weighted_phi=weighted_phi,
             gamma=gamma,
-        )
+        ), gamma
         
 
     
-    def _inference(self,
-            likelihood_scale = 1.,*,
+    def _inference(self,*,
+            locus_subsample_rate,
+            batch_subsample_rate,
+            learning_rate,
             corpus,
             model_state,
             corpus_states,
@@ -256,23 +255,38 @@ class LocusRegressor:
             for corp in corpus.corpuses
         }
 
+        gammas = []
         for gamma_g, sample in zip(gamma, corpus):
 
-            sstat_collections[sample.corpus_name] += \
-                    self._sample_inference(
+            sample_sstats, sample_new_gamma = self._sample_inference(
                         sample = sample,
                         gamma0 = gamma_g, 
-                        likelihood_scale = likelihood_scale,
+                        locus_subsample_rate = locus_subsample_rate,
+                        batch_subsample_rate = batch_subsample_rate,
+                        learning_rate = learning_rate,
                         model_state = model_state,
                         corpus_state = corpus_states[sample.corpus_name]
                     )
 
-        return self.SSTATS.MetaSstats(sstat_collections, self.model_state)
+            sstat_collections[sample.corpus_name] += sample_sstats
+            gammas.append(sample_new_gamma)
+
+        return self.SSTATS.MetaSstats(sstat_collections, self.model_state), np.vstack(gammas)
         
 
     def update_mutation_rates(self):
         for corpusstate in self.corpus_states.values():
             corpusstate.update_mutation_rate(self.model_state)
+
+
+    def _init_doc_variables(self, n_samples, is_bound = False):
+
+        random_state = self.bound_random_state if is_bound else self.random_state
+
+        gamma = random_state.gamma(100., 1./100., 
+                                (n_samples, self.n_components) # n_genomes by n_components
+                                ).astype(self.dtype, copy=False)
+        return gamma
 
 
     def _fit(self,corpus, reinit = True):
@@ -288,7 +302,6 @@ class LocusRegressor:
         self.n_samples, self.feature_names = len(corpus), corpus.feature_names
         
         n_subsample_loci = int(self.n_loci * self.locus_subsample)
-        likelihood_scale = 1/(self.locus_subsample * self.batch_size/self.n_samples)
 
         self.random_state = np.random.RandomState(self.seed)
         self.bound_random_state = np.random.RandomState(self.seed + 1)
@@ -315,16 +328,20 @@ class LocusRegressor:
                 [], [], 0, 0
             
             self.corpus_states = {
-                corp.name : self.CORPUS_STATE(corp, 
-                            pi_prior=self.pi_prior,
-                            n_components=self.n_components,
-                            dtype = self.dtype, 
-                            random_state = self.random_state,
-                            subset_sample=1)
+                corp.name : self.CORPUS_STATE(
+                                corp, 
+                                pi_prior=self.pi_prior,
+                                n_components=self.n_components,
+                                dtype = self.dtype, 
+                                random_state = self.random_state,
+                                subset_sample=1
+                            )
                 for corp in corpus.corpuses
             }
 
             self.update_mutation_rates()
+
+            self._gamma = self._init_doc_variables(self.n_samples)
 
 
         with warnings.catch_warnings():
@@ -336,9 +353,8 @@ class LocusRegressor:
                     start_time = time.time()
                     
                     if batch_svi:
-                        inner_corpus = corpus.subset_samples(
-                            self.random_state.choice(self.n_samples, size = self.batch_size, replace = False)
-                        )
+                        update_samples = self.random_state.choice(self.n_samples, size = self.batch_size, replace = False)
+                        inner_corpus = corpus.subset_samples(update_samples)
                     else:
                         inner_corpus = corpus
                     
@@ -354,15 +370,20 @@ class LocusRegressor:
                         inner_corpus_states = self.corpus_states
                     
 
-                    sstats = self._inference(
-                                likelihood_scale = likelihood_scale,
+                    sstats, new_gamma = self._inference(
+                                locus_subsample_rate=self.locus_subsample,
+                                batch_subsample_rate=self.batch_size/self.n_samples,
+                                learning_rate=learning_rate_fn(epoch),
                                 corpus = inner_corpus,
                                 model_state = self.model_state,
                                 corpus_states = inner_corpus_states,
-                                gamma = self._init_doc_variables(len(inner_corpus)),
+                                gamma = self._gamma[update_samples]
                             )
                     
+                    self._gamma[update_samples, :] = new_gamma.copy()
+
                     self.model_state.update_state(sstats, learning_rate_fn(epoch))
+                    
                     
                     if epoch >= 10 and self.empirical_bayes:
                         for corpus_state in self.corpus_states.values():
@@ -426,6 +447,8 @@ class LocusRegressor:
 
         self._calc_signature_sstats(corpus)
 
+        #gamma_hat = self.predict(corpus)
+
         return self
 
 
@@ -469,11 +492,14 @@ class LocusRegressor:
 
         n_samples = len(corpus)
         
-        sstats = self._inference(
+        sstats, _ = self._inference(
             gamma = self._init_doc_variables(n_samples),
             corpus = corpus,
             model_state = self.model_state,
             corpus_states = self._get_test_corpus_states(corpus),
+            locus_subsample_rate=1.,
+            batch_subsample_rate=1.,
+            learning_rate=1.,
         )
 
         return sstats.alpha_sstats

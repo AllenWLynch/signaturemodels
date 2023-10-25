@@ -124,6 +124,7 @@ class CorpusState(ModelState):
     corpus-specific priors over signatures
     '''
 
+
     def __init__(self, corpus,*,pi_prior,n_components, dtype, random_state,
                  subset_sample = 1):
 
@@ -135,9 +136,10 @@ class CorpusState(ModelState):
         self.n_features, self.n_loci = corpus.shape
         self.subset_sample = subset_sample
         
+        self.n_samples = len(corpus)
+        
         self.alpha = np.ones(self.n_components)\
             .astype(self.dtype, copy=False)*self.pi_prior
-
 
 
     def subset_corpusstate(self, corpus, locus_subset):
@@ -157,7 +159,7 @@ class CorpusState(ModelState):
         try:
             newstate._log_denom = self._log_denom
         except AttributeError:
-            newstate._logvar = self._logvar
+            newstate._logvar = self._logvar[:, locus_subset]
 
         return newstate
 
@@ -183,6 +185,12 @@ class CorpusState(ModelState):
         
         _alpha = update_alpha(self.alpha, sstats.alpha_sstats[self.corpus.name])
         self._svi_update('alpha', _alpha, learning_rate)
+
+
+    def update_gamma(self, sstats, learning_rate):
+            
+        _gamma = sstats.gamma_sstats[self.corpus.name]
+        self._svi_update('gamma', _gamma, learning_rate)
 
 
     @property
