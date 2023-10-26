@@ -16,12 +16,17 @@ In this tutorial, I will explain how to:
 3. Infer parameters of the generative model
 4. Analyze the results
 
-To start, you need to have the *locusregression* package and *bedtools* installed in a conda environemnt. You can check this
-quickly by running:
+To start, you need to have the *locusregression* package, *bedtools*, *bcftools*, and *bigWigAverageOverBed* installed in a conda environemnt. You can check this quickly by running:
 
 .. code-block:: bash
 
-    $ locusregression && bedtools
+    $ locusregression && bedtools && bcftools && bigWigAverageOverBed
+
+If one of these is not installed:
+
+.. code-block:: bash
+
+    $ conda install -c conda-forge -c bioconda -y bedtools bcftools ucsc-bigwigaverageoverbed 
     
 Next, for data you will need:
 
