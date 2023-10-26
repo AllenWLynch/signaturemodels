@@ -21,7 +21,7 @@ install the package using pip:
 
     (base) $ conda create --name locusregression -c conda-forge python>=3.6 pip seaborn
     (base) $ conda activate locusregression
-    (locusregression) $ pip install git+https://github.com/AllenWLynch/signaturemodels.git
+    (locusregression) $ pip install git+https://github.com/AllenWLynch/signaturemodels.git@refactor
 
 Dependencies
 ------------
