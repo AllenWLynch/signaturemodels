@@ -1,5 +1,6 @@
 from .corpus import CorpusReader, save_corpus, stream_corpus, \
-    MetaCorpus, fetch_roadmap_features, code_SBS_mutation, train_test_split
+    MetaCorpus, fetch_roadmap_features, code_SBS_mutation, \
+    train_test_split, load_corpus
     
 from .corpus import logger as reader_logger
 
@@ -466,6 +467,46 @@ code_sub.add_argument('--sep','-sep', type = str, default = '\t')
 code_sub.add_argument('--index','-i', type = int, default = -1)
 code_sub.add_argument('--chr-prefix', type = str, default = '')
 
+
+def split_corpus(*,corpus, train_output, test_output, train_prop,
+                 seed = 0):
+
+    corpus = load_corpus(corpus)
+
+    train, test = train_test_split(corpus, train_size=train_prop, seed = seed)
+
+    save_corpus(train, train_output)
+    save_corpus(test, test_output)
+
+
+split_parser = subparsers.add_parser('split-corpus', help='Partition a corpus into training and test sets.')
+split_parser.add_argument('--corpus','-d', type = file_exists, required=True)
+split_parser.add_argument('--train-output','-to', type = valid_path, required=True)
+split_parser.add_argument('--test-output', '-vo', type = valid_path, required=True)
+split_parser.add_argument('--train-prop', '-p', type = posfloat, default=0.7)
+split_parser.add_argument('--seed', '-s', type = posint, default=0)
+split_parser.set_defaults(func = split_corpus)
+
+
+def score(*,model, corpuses):
+
+    if len(corpuses) == 1:
+        dataset = stream_corpus(corpuses[0])
+    else:
+        dataset = MetaCorpus(*[
+            stream_corpus(corpus) for corpus in corpuses
+        ])
+
+    model = load_model(model)
+
+    print(model.score(dataset))
+
+
+score_parser = subparsers.add_parser('score', help='Score a model on a corpus.')
+score_parser.add_argument('--model','-m', type = file_exists, required=True)
+score_parser.add_argument('--corpuses', '-d', type = file_exists, nargs = '+', required=True,
+    help = 'Path to compiled corpus file/files.')
+score_parser.set_defaults(func = score)
 
 
 def main():

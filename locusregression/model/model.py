@@ -59,7 +59,7 @@ class LocusRegressor:
         bound_tol = 1e-2,
         quiet = False,
         n_jobs = 1,
-        locus_subsample = 0.125,
+        locus_subsample = 1,
         kappa = 0.5,
         tau = 1,
         eval_every = 50,
@@ -343,7 +343,6 @@ class LocusRegressor:
             self.update_mutation_rates()
 
             self._gamma = self._init_doc_variables(self.n_samples)
-
 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")

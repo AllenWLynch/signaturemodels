@@ -83,7 +83,6 @@ sequence content differences across the genome:
     $ locusregression trinucs -r tutorial/regions.bed -fa genomes/hg19.fa -o tutorial/trinucs.npz
 
 
-
 **Correlates**
 
 Next, we need to associate each of our windows with values for some interesting genomic correlates. I provide a method to download
@@ -99,6 +98,10 @@ Check the output of this method to see the output format:
 .. code-block:: bash
 
     $ head tutorial/correlates.tsv
+
+.. csv-table:: 
+    :file: example_features.tsv
+    :header-rows: 1
 
 A typical correlates file is a tab-separated matrix which has the same number of rows as the windows file. Each column is
 annotated with a name prepended with "#". You can expand this correlates file as need to add additional features.
@@ -160,7 +163,7 @@ To produce a corpus for some hypothetical set of samples stored in `vcfs.txt`:
 This will save the corpus to *tutorial/corpus.h5*.
 
 
-2. How many processes?
+1. How many processes?
 ----------------------
 
 Choosing the number of mixture components to describe a process is a perenial problem in topic modeling,
@@ -175,7 +178,7 @@ model configurations.
 .. code-block:: bash
 
     $ locusregression tune \    
-        --corpus tutorial/corpus.pkl \
+        --corpus tutorial/corpus.h5 \
         -min 3 -max 12 \
         --n-jobs 5 \
         --locus-subsample-rate 0.01 0.05 0.1
@@ -225,6 +228,14 @@ for more epochs (granted more resources). This process repeats until a group of 
 
 Here, four or five components gives a good fit for the dataset.
 
+If you already know how many processes are present in a sample, you can just do the following, and skip
+step 3:
+
+.. code-block:: bash
+
+    $ locusregression train-model -k 5 -d tutorial/corpus.h5 -o tutorial/model.pkl
+
+ 
 3. Training the model
 ---------------------
 
