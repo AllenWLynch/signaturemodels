@@ -13,12 +13,14 @@ class ModelState:
                 n_components, 
                 random_state, 
                 n_features, 
+                empirical_bayes,
                 dtype):
         
         assert isinstance(n_components, int) and n_components > 1
         self.n_components = n_components
         self.n_features = n_features
         self.random_state = random_state
+        self.empirical_bayes = empirical_bayes
 
         self.tau = np.ones(self.n_components)
 
@@ -97,7 +99,11 @@ class ModelState:
 
     def update_state(self, sstats, learning_rate):
         
-        for param in ['beta','lambda','rho','tau']:
+        update_params = ['beta','lambda','rho']
+        if self.empirical_bayes:
+            update_params.append('tau')
+        
+        for param in update_params:
             self.__getattribute__('update_' + param)(sstats, learning_rate) # call update function
 
         self.update_signature_distribution() # update pre-calculated pure functions of model state 

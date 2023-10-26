@@ -107,6 +107,7 @@ class HyperBand:
         max_resources = 300,
         factor = 3,
         max_candidates = np.inf,
+        max_brackets = np.inf,
         successive_halving = False,*,
         random_model_function,
     ):
@@ -117,7 +118,7 @@ class HyperBand:
         self.randomstate = np.random.RandomState(seed)
     
         self.max_resources = max_resources
-        self.s_max = floor( log(self.max_resources)/log(self.factor) )
+        self.s_max = min( floor( log(self.max_resources)/log(self.factor) ), max_brackets )
         self.budget = (self.s_max + 1)*self.max_resources
 
         self.brackets = [
@@ -176,6 +177,7 @@ def run_hyperband(
     seed = 0,
     n_jobs = 1,
     max_candidates = np.inf,
+    max_brackets = np.inf,
 ):
     
     band = HyperBand(
@@ -196,7 +198,12 @@ def run_hyperband(
 
             bracket, model, resources = input_queue.get(True)
 
-            loss = eval_func(model, resources)
+            try:
+                loss = eval_func(model, resources)
+            except Exception as err:
+                loss = -np.inf
+
+            print('Failure occurred:\n' + repr(err))
 
             output_queue.put(
                 (bracket, model, loss, resources)

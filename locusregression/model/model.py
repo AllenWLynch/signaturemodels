@@ -19,7 +19,7 @@ from functools import partial
 import locusregression.model._sstats as _sstats
 
 
-#@njit
+#@njit(parallel = True)
 def estep_update(exp_Elog_gamma, alpha, flattend_phi, count_g, likelihood_scale = 1):
     gamma_sstats = exp_Elog_gamma*np.dot(flattend_phi, count_g/np.dot(flattend_phi.T, exp_Elog_gamma))
     gamma_sstats = gamma_sstats.reshape(-1)
@@ -57,7 +57,7 @@ class LocusRegressor:
         difference_tol = 1e-3,
         estep_iterations = 1000,
         bound_tol = 1e-2,
-        quiet = True,
+        quiet = False,
         n_jobs = 1,
         locus_subsample = 0.125,
         kappa = 0.5,
@@ -321,7 +321,8 @@ class LocusRegressor:
                 n_components=self.n_components,
                 random_state=self.random_state,
                 n_features=self.n_locus_features,
-                dtype = np.float32
+                empirical_bayes = self.empirical_bayes,
+                dtype = self.dtype
             )
 
             self.bounds, self.elapsed_times, self.total_time, self.epochs_trained = \
@@ -356,6 +357,7 @@ class LocusRegressor:
                         update_samples = self.random_state.choice(self.n_samples, size = self.batch_size, replace = False)
                         inner_corpus = corpus.subset_samples(update_samples)
                     else:
+                        update_samples = np.arange(self.n_samples)
                         inner_corpus = corpus
                     
                     if locus_svi:

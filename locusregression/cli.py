@@ -1,5 +1,6 @@
 from .corpus import CorpusReader, save_corpus, stream_corpus, \
-    MetaCorpus, fetch_roadmap_features, code_SBS_mutation
+    MetaCorpus, fetch_roadmap_features, code_SBS_mutation, train_test_split
+    
 from .corpus import logger as reader_logger
 
 from .model import LocusRegressor, load_model, logger, GBTRegressor
@@ -160,7 +161,7 @@ def train_model(
         estep_iterations = 1000,
         eval_every = 20,
         bound_tol = 1e-2,
-        quiet = True,
+        verbose = False,
         n_jobs = 1,*,
         n_components,
         corpuses,
@@ -172,13 +173,12 @@ def train_model(
         locus_subsample = locus_subsample,
         batch_size = batch_size,
         seed = seed, 
-        dtype = np.float32,
         pi_prior = pi_prior,
         num_epochs = num_epochs, 
         difference_tol = difference_tol,
         estep_iterations = estep_iterations,
+        quiet = not verbose,
         bound_tol = bound_tol,
-        quiet = quiet,
         n_components = n_components,
         n_jobs= n_jobs,
         time_limit=time_limit,
@@ -234,8 +234,9 @@ trainer_optional.add_argument('--num-epochs', '-epochs', type = posint, default 
     help = 'Maximum number of epochs to train.')
 trainer_optional.add_argument('--bound-tol', '-tol', type = posfloat, default=1e-2,
     help = 'Early stop criterion, stop training if objective score does not increase by this much after one epoch.')
+trainer_optional.add_argument('--verbose','-v',action = 'store_true', default = False,)
 trainer_sub.set_defaults(func = train_model)
-    
+
 
 def tune(
     locus_subsample = 0.125,
@@ -248,6 +249,7 @@ def tune(
     model_type = 'regression',
     empirical_bayes = False,
     pi_prior = 1.,
+    time_per_epoch = None,
     locus_subsample_rates = [0.0625, 0.125, 0.25],*,
     output,
     corpuses,
@@ -280,6 +282,7 @@ def tune(
         locus_subsample_rates=locus_subsample_rates,
         empirical_bayes=empirical_bayes,
         pi_prior=pi_prior,
+        time_per_epoch = time_per_epoch,
         **model_params,
     )
 
@@ -307,10 +310,13 @@ tune_optional = tune_sub.add_argument_group('Optional arguments')
 tune_sub.add_argument('--max-time', '-t', type = posint, default=900,
     help = 'Maximum length of time to allow training during'
             ' successive halving/Hyperband. This should be set high enough such that the model converges to a solution.')
-tune_optional.add_argument('--factor','-f',type = posint, default = 3,
+tune_optional.add_argument('--factor','-f',type = posint, default = 4,
     help = 'Successive halving reduction factor for each iteration')
 tune_optional.add_argument('--tune-subsample', action = 'store_true', default=False)
 tune_optional.add_argument('--locus-subsample-rates','-rates', type = posfloat, nargs = '+', default = [0.0625, 0.125, 0.25])
+tune_optional.add_argument('--time-per-epoch','-epoch', type = posint, default=None,
+    help = 'Time for each update step in model, used to time out approximately how long to let a model train until convergence.')
+
 #tune_optional.add_argument('--successive-halving','-halving', action = 'store_true',
 #    default= False, help='Use the successive halving algorithm for tuning.')
 

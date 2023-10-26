@@ -45,8 +45,8 @@ To start, I define a "genome" or "chrom sizes" file from a fasta:
 .. code-block:: bash
     
     $ mkdir -p tutorial
-    $ samtools faidx ~/genomes/hg19.fa
-    $ cut -f1-2 ~/genomes/hg19.fa.fai | sort -k1,1 | grep -vE "^chr[0-9Un]_" > tutorial/genome.txt
+    $ samtools faidx genomes/hg19.fa
+    $ cut -f1-2 genomes/hg19.fa.fai | sort -k1,1 | grep -vE "^chr[0-9Un]_" > tutorial/genome.txt
 
 When modeling the full genome, it is a good idea to define a genome with only main chromosomes (chr1-N), removing alt scaffolds, etc.
 
@@ -80,7 +80,7 @@ sequence content differences across the genome:
 
 .. code-block:: bash
 
-    $ locusregression trinucs -r tutorial/regions.bed -fa ~/genomes/hg19.fa -o tutorial/trinucs.npz
+    $ locusregression trinucs -r tutorial/regions.bed -fa genomes/hg19.fa -o tutorial/trinucs.npz
 
 
 
@@ -160,7 +160,7 @@ To produce a corpus for some hypothetical set of samples stored in `vcfs.txt`:
 This will save the corpus to *tutorial/corpus.h5*.
 
 
-1. How many processes?
+2. How many processes?
 ----------------------
 
 Choosing the number of mixture components to describe a process is a perenial problem in topic modeling,
@@ -225,7 +225,7 @@ for more epochs (granted more resources). This process repeats until a group of 
 
 Here, four or five components gives a good fit for the dataset.
 
-1. Training the model
+3. Training the model
 ---------------------
 
 To train the representative model for the dataset, provide paths for the corpus, output, and 
@@ -234,7 +234,7 @@ desired, you can choose some other model configuration by specifying `--trial-nu
 
 .. code-block:: bash
 
-    $ locusregression retrin \
+    $ locusregression retrain \
         -d tutorial/corpus.pkl \
         -o tutorial/model.pkl \
         --tune-results tutorial/tune_results.json
@@ -355,5 +355,53 @@ Finally, to get the posterior distribution over processes for each sample, you c
     processes = model.predict(corpus)
 
 
+5. Summary
+----------
 
+Altogether, the steps to start an analysis are:
 
+.. code-block:: bash
+
+    #1. Set up genome annotations
+
+    #1.1 Make genome file
+    $ samtools faidx genomes/hg19.fa
+    $ cut -f1-2 genomes/hg19.fa.fai | sort -k1,1 | grep -vE "^chr[0-9Un]_" > tutorial/genome.txt
+    
+    #1.2 Make windows file 
+    $ bedtools makewindows -g tutorial/genome.txt -w 10000 > tutorial/regions.bed
+    $ sort -k1,1 -k2,2n --check tutorial/regions.bed
+    
+    $ bedtools intersect -v -a tutorial/regions.bed -b encode.blacklist.bed > tutorial/filtered_regions.bed \
+        && mv tutorial/filtered_regions.bed tutorial/regions.bed
+
+    #1.3 Make trinucleotide file
+    $ locusregression trinucs -r tutorial/regions.bed -fa genomes/hg19.fa -o tutorial/trinucs.npz
+
+    #2. Make features matrix
+    $ locusregression -id E079 -w tutorial/regions.bed -j 5 -o tutorial/E110-marks.tsv
+
+    $ <normalization script here, I use scikit-learn\'s PowerTransformer>
+
+    #3. Compile corpus
+    $ locusregression make-corpus \
+        -vcf `cat vcfs.txt` \
+        -fa hg19.fa \
+        --regions-file tutorial/regions.bed \
+        --correlates-file tutorial/correlates.tsv \
+        --trinuc tutorial/trinucs.npz \
+        -o tutorial/corpus.h5
+
+    # 4. Find hyperparameters 
+    $ locusregression tune \    
+        --corpus tutorial/corpus.pkl \
+        -min 3 -max 12 \
+        --n-jobs 5 \
+        --tune-subsample \
+        -o tutorial/tune_results.json
+
+    # 5. Retrain final model on whole corpus
+    $ locusregression retrain \
+        -d tutorial/corpus.pkl \
+        -o tutorial/model.pkl \
+        --tune-results tutorial/tune_results.json

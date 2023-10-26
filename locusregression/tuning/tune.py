@@ -71,12 +71,15 @@ def tune_model(corpus,
     n_jobs = 1, 
     seed = 0,
     train_size = 0.7,
-    max_time = 900,
-    factor = 3,
+    max_time = 100000000,
+    factor = 4,
     successive_halving=False,*,
     tune_subsample = False,
     model_type = 'regression',
     locus_subsample_rates = [0.0625, 0.125, 0.25,],
+    max_candidates = 150,
+    max_brackets = 4,
+    time_per_epoch = None,
     min_components, max_components,
     **model_params):
     
@@ -90,17 +93,20 @@ def tune_model(corpus,
 
     logger.setLevel(logging.ERROR)
     #logging.basicConfig(level = logging.ERROR)
-        
-    warmup_epochs = 10
-    test_model = LocusRegressor(
-        n_components=min_components + (max_components - min_components)//2,
-        **model_params,
-        num_epochs=warmup_epochs,
-    ).fit(corpus)
 
-    time_per_epoch = sum(test_model.elapsed_times)/warmup_epochs # the first iteration is usually twice as long as subsequent iterations
-    max_time = min(max_time, int(time_per_epoch * 200))
+    if time_per_epoch is None:
+        print('Estimating how long it will typically take to fit a model...')
+        warmup_epochs = 10
+        test_model = LocusRegressor(
+            n_components=min_components + (max_components - min_components)//2,
+            **model_params,
+            num_epochs=warmup_epochs,
+        ).fit(corpus)
 
+        time_per_epoch = sum(test_model.elapsed_times)/warmup_epochs # the first iteration is usually twice as long as subsequent iterations
+    
+    
+    max_time = min(max_time, int(time_per_epoch * 400))
     print(f'Allocating {max_time} seconds for each trial.')
 
 
@@ -121,4 +127,5 @@ def tune_model(corpus,
             seed = seed,
             max_candidates= max_candidates,
             n_jobs= n_jobs,
+            max_brackets = max_brackets,
         )
