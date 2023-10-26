@@ -158,7 +158,8 @@ To produce a corpus for some hypothetical set of samples stored in `vcfs.txt`:
         --regions-file tutorial/regions.bed \
         --correlates-file tutorial/correlates.tsv \
         --trinuc tutorial/trinucs.npz \
-        -o tutorial/corpus.h5
+        -o tutorial/corpus.h5 \
+        --chr-prefix chr # the VCF files only have numbers, but RefSeq has "chr1", for example
 
 This will save the corpus to *tutorial/corpus.h5*.
 
@@ -181,7 +182,6 @@ model configurations.
         --corpus tutorial/corpus.h5 \
         -min 3 -max 12 \
         --n-jobs 5 \
-        --locus-subsample-rate 0.01 0.05 0.1
         --tune-subsample \
         -o tutorial/tune_results.json \
 
