@@ -100,7 +100,7 @@ Check the output of this method to see the output format:
     $ head tutorial/correlates.tsv
 
 .. csv-table:: 
-    :file: example_features.tsv
+    :file: docs/example_features.tsv
     :header-rows: 1
 
 A typical correlates file is a tab-separated matrix which has the same number of rows as the windows file. Each column is
