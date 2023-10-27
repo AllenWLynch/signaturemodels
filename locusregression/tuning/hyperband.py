@@ -202,8 +202,7 @@ def run_hyperband(
                 loss = eval_func(model, resources)
             except Exception as err:
                 loss = -np.inf
-
-            print('Failure occurred:\n' + repr(err))
+                print('Failure occurred:\n' + repr(err))
 
             output_queue.put(
                 (bracket, model, loss, resources)
