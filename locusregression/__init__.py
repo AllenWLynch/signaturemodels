@@ -4,4 +4,4 @@ from .tuning import *
 from . import simulation
 from .cli import main
 
-__version__ = '0.0.3a'
+__version__ = '0.1.0a'

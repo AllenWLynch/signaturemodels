@@ -16,12 +16,17 @@ In this tutorial, I will explain how to:
 3. Infer parameters of the generative model
 4. Analyze the results
 
-To start, you need to have the *locusregression* package and *bedtools* installed in a conda environemnt. You can check this
-quickly by running:
+To start, you need to have the *locusregression* package, *bedtools*, *bcftools*, and *bigWigAverageOverBed* installed in a conda environemnt. You can check this quickly by running:
 
 .. code-block:: bash
 
-    $ locusregression && bedtools
+    $ locusregression && bedtools && bcftools && bigWigAverageOverBed
+
+If one of these is not installed:
+
+.. code-block:: bash
+
+    $ conda install -c conda-forge -c bioconda -y bedtools bcftools ucsc-bigwigaverageoverbed 
     
 Next, for data you will need:
 
@@ -100,7 +105,7 @@ Check the output of this method to see the output format:
     $ head tutorial/correlates.tsv
 
 .. csv-table:: 
-    :file: example_features.tsv
+    :file: docs/example_features.tsv
     :header-rows: 1
 
 A typical correlates file is a tab-separated matrix which has the same number of rows as the windows file. Each column is
@@ -158,7 +163,8 @@ To produce a corpus for some hypothetical set of samples stored in `vcfs.txt`:
         --regions-file tutorial/regions.bed \
         --correlates-file tutorial/correlates.tsv \
         --trinuc tutorial/trinucs.npz \
-        -o tutorial/corpus.h5
+        -o tutorial/corpus.h5 \
+        --chr-prefix chr # the VCF files only have numbers, but RefSeq has "chr1", for example
 
 This will save the corpus to *tutorial/corpus.h5*.
 
@@ -181,7 +187,6 @@ model configurations.
         --corpus tutorial/corpus.h5 \
         -min 3 -max 12 \
         --n-jobs 5 \
-        --locus-subsample-rate 0.01 0.05 0.1
         --tune-subsample \
         -o tutorial/tune_results.json \
 
