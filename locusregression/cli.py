@@ -5,17 +5,20 @@ from .corpus import CorpusReader, save_corpus, stream_corpus, \
 from .corpus import logger as reader_logger
 
 from .model import LocusRegressor, load_model, logger, GBTRegressor
-from .tuning import tune_model
+from .tuning import run_trial, create_study, load_study
 from .simulation import SimulatedCorpus, coef_l1_distance, signature_cosine_distance
 import argparse
 from argparse import ArgumentTypeError
 import os
-import numpy as np
 import sys
 import logging
-import json
 import pickle
 import logging
+
+
+import warnings
+from optuna.exceptions import ExperimentalWarning
+warnings.filterwarnings("ignore", category=ExperimentalWarning)
 
 
 def posint(x):
@@ -52,6 +55,19 @@ def valid_path(x):
             raise ArgumentTypeError('File {} cannot be written. Invalid path.'.format(x)) from err
     
     return x
+
+
+def _load_dataset(corpuses):
+
+    if len(corpuses) == 1:
+        dataset = stream_corpus(corpuses[0])
+    else:
+        dataset = MetaCorpus(*[
+            stream_corpus(corpus) for corpus in corpuses
+        ])
+
+    return dataset
+
 
 
 parser = argparse.ArgumentParser(
@@ -189,15 +205,10 @@ def train_model(
         empirical_bayes=empirical_bayes,
     )
     
-    if len(corpuses) == 1:
-        dataset = stream_corpus(corpuses[0])
-    else:
-        dataset = MetaCorpus(*[
-            stream_corpus(corpus) for corpus in corpuses
-        ])
-
     logging.basicConfig(level=logging.INFO)
     logger.setLevel(logging.INFO)
+
+    dataset = _load_dataset(corpuses)
     
     model.fit(dataset)
     
@@ -237,159 +248,6 @@ trainer_optional.add_argument('--bound-tol', '-tol', type = posfloat, default=1e
     help = 'Early stop criterion, stop training if objective score does not increase by this much after one epoch.')
 trainer_optional.add_argument('--verbose','-v',action = 'store_true', default = False,)
 trainer_sub.set_defaults(func = train_model)
-
-
-def tune(
-    locus_subsample = 0.125,
-    batch_size = 128,
-    n_jobs = 1,
-    factor = 3,
-    train_size = 0.7,
-    max_time = 900,
-    tune_subsample= False,
-    model_type = 'regression',
-    empirical_bayes = False,
-    pi_prior = 1.,
-    time_per_epoch = None,
-    locus_subsample_rates = [0.0625, 0.125, 0.25],*,
-    output,
-    corpuses,
-    min_components, 
-    max_components,
-):
-
-    model_params = dict(
-        locus_subsample=locus_subsample,
-        batch_size = batch_size,
-    )
-    
-    if len(corpuses) == 1:
-        dataset = stream_corpus(corpuses[0])
-    else:
-        dataset = MetaCorpus(*[
-            stream_corpus(corpus) for corpus in corpuses
-        ])
-
-    results = tune_model(
-        dataset,
-        n_jobs = n_jobs,
-        train_size = train_size,
-        min_components = min_components,
-        max_components = max_components,
-        factor = factor,
-        max_time=max_time,
-        tune_subsample= tune_subsample,
-        model_type=model_type,
-        locus_subsample_rates=locus_subsample_rates,
-        empirical_bayes=empirical_bayes,
-        pi_prior=pi_prior,
-        time_per_epoch = time_per_epoch,
-        **model_params,
-    )
-
-    with open(output,'w') as f:
-        json.dump(results, f)
-    
-
-tune_sub = subparsers.add_parser('tune', help = 'Tune number of signatures for LocusRegression model on a pre-compiled corpus using the'
-    'hyperband or successive halving algorithm.')
-
-tune_required = tune_sub.add_argument_group('Required arguments')
-tune_required.add_argument('--corpuses', '-d', type = file_exists, nargs = '+', required=True,
-    help = 'Path to compiled corpus file/files.')
-tune_required.add_argument('--output','-o', type = valid_path, required=True,
-    help = 'Where to save tuning results.')
-tune_required.add_argument('--max-components','-max',type = posint, required=True,
-    help= 'Maximum number of components to test for fit on dataset.')
-tune_required.add_argument('--min-components','-min',type = posint, required=True,
-    help= 'Maximum number of components to test for fit on dataset.')
-tune_required.add_argument('--n-jobs','-j', type = posint, required= True,
-    help = 'Number of concurrent jobs to run.')
-
-tune_optional = tune_sub.add_argument_group('Optional arguments')
-
-tune_sub.add_argument('--max-time', '-t', type = posint, default=900,
-    help = 'Maximum length of time to allow training during'
-            ' successive halving/Hyperband. This should be set high enough such that the model converges to a solution.')
-tune_optional.add_argument('--factor','-f',type = posint, default = 4,
-    help = 'Successive halving reduction factor for each iteration')
-tune_optional.add_argument('--tune-subsample', action = 'store_true', default=False)
-tune_optional.add_argument('--locus-subsample-rates','-rates', type = posfloat, nargs = '+', default = [0.0625, 0.125, 0.25])
-tune_optional.add_argument('--time-per-epoch','-epoch', type = posint, default=None,
-    help = 'Time for each update step in model, used to time out approximately how long to let a model train until convergence.')
-
-#tune_optional.add_argument('--successive-halving','-halving', action = 'store_true',
-#    default= False, help='Use the successive halving algorithm for tuning.')
-
-model_options = tune_sub.add_argument_group('Model arguments')
-
-model_options.add_argument('--model-type','-model', choices=['regression','gbt'], default='regression')
-model_options.add_argument('--locus-subsample','-sub', type = posfloat, default = 0.125,
-    help = 'Whether to use locus subsampling to speed up training via stochastic variational inference.')
-model_options.add_argument('--batch-size','-batch', type = posint, default = 128,
-    help = 'Batch size for stochastic variational inference.')
-model_options.add_argument('--empirical-bayes','-eb', action = 'store_true', default=False,)
-model_options.add_argument('--pi-prior', '-pi', type = posfloat, default = 1.,
-    help = 'Dirichlet prior over sample mixture compositions. A value > 1 will give more dense compositions, which <1 finds more sparse compositions.')
-
-tune_sub.set_defaults(func = tune)
-
-
-
-def retrain_best(trial_num = None,*,
-    tune_results, corpuses, output):
-
-    if len(corpuses) == 1:
-        dataset = stream_corpus(corpuses[0])
-    else:
-        dataset = MetaCorpus(*[
-            stream_corpus(corpus) for corpus in corpuses
-        ])
-
-    logging.basicConfig(level=logging.INFO)
-    logger.setLevel(logging.INFO)
-
-    with open(tune_results, 'r') as f:
-        results = json.load(f)
-
-    def extract_params(trial):
-        return {param[6:] : v for param, v in trial.items() if param[:6] == 'param_'}
-
-    max_resoures = max([r['resources'] for r in results])
-
-    if trial_num is None:
-        fully_trained = [r for r in results if r['resources'] == max_resoures and r['score'] < 0]
-        best_trial = sorted(fully_trained, key = lambda r : r['score'])[-1]
-    else:
-        best_trial = results[trial_num]
-
-    if best_trial['model_type'] == 'regression':
-        basemodel = LocusRegressor
-    elif best_trial['model_type'] == 'gbt':
-        basemodel = GBTRegressor
-    else:
-        raise ValueError(f'Unknown model type {best_trial["model_type"]}')
-
-    params = extract_params(best_trial)
-    param_string = '\n\t'.join([f'{param}: {v}' for param, v in params.items()])
-
-    print('Training model with params:\n\t' + param_string)
-
-    model = basemodel(**params, eval_every=10, quiet=True).fit(dataset)
-
-    model.save(output)
-
-retrain_sub = subparsers.add_parser('retrain', help = 'From tuning results, retrain a chosen or the best model.')
-retrain_sub .add_argument('--corpuses', '-d', type = file_exists, nargs = '+', required=True,
-    help = 'Path to compiled corpus file/files.')
-retrain_sub .add_argument('--output','-o', type = valid_path, required=True,
-    help = 'Where to save trained model.')
-retrain_sub.add_argument('--tune-results','-r',type = file_exists, required=True,
-    help = 'Filepath to tuning results.')
-retrain_sub.add_argument('--trial-num','-t', type = posint, default=None,
-    help= 'If left unset, will retrain model with best params from tuning results.\nIf provided, will retrain model parameters from the "trial_num"th trial.')
-
-retrain_sub.set_defaults(func = retrain_best)
 
 
 def run_simulation(*,config, prefix):
@@ -490,12 +348,7 @@ split_parser.set_defaults(func = split_corpus)
 
 def score(*,model, corpuses):
 
-    if len(corpuses) == 1:
-        dataset = stream_corpus(corpuses[0])
-    else:
-        dataset = MetaCorpus(*[
-            stream_corpus(corpus) for corpus in corpuses
-        ])
+    dataset = _load_dataset(corpuses)
 
     model = load_model(model)
 
@@ -507,6 +360,130 @@ score_parser.add_argument('--model','-m', type = file_exists, required=True)
 score_parser.add_argument('--corpuses', '-d', type = file_exists, nargs = '+', required=True,
     help = 'Path to compiled corpus file/files.')
 score_parser.set_defaults(func = score)
+
+
+
+
+trial_parser = subparsers.add_parser('run-trial', help='Run a single trial of hyperparameter tuning.')
+trial_parser.add_argument('study-name',type = str)
+trial_parser.add_argument('--storage','-s', type = str, default=None)
+trial_parser.add_argument('--iters','-i', type = posint, default=1)
+trial_parser.set_defaults(func = run_trial)
+
+
+
+tune_sub = subparsers.add_parser('create-study', help = 'Tune number of signatures for LocusRegression model on a pre-compiled corpus using the'
+    'hyperband or successive halving algorithm.')
+
+tune_required = tune_sub.add_argument_group('Required arguments')
+tune_required.add_argument('--corpuses', '-d', type = file_exists, nargs = '+', required=True,
+    help = 'Path to compiled corpus file/files.')
+tune_required.add_argument('--study-name','-sn', type = str, required=True,
+                           help = 'Name of study, used to store tuning results in a database.')
+tune_required.add_argument('--max-components','-max',type = posint, required=True,
+    help= 'Maximum number of components to test for fit on dataset.')
+tune_required.add_argument('--min-components','-min',type = posint, required=True,
+    help= 'Maximum number of components to test for fit on dataset.')
+
+tune_optional = tune_sub.add_argument_group('Tuning arguments')
+
+tune_optional.add_argument('--storage',type = str, default=None,
+                            help = 'Address path to database to store tuning results, for example "sqlite:///tuning.db" '
+                                   'or "mysql://user:password@host:port/dbname", if one is using a remote database. '
+                                   'If left unset, will store tuning results in a local file.'
+                            )
+tune_optional.add_argument('--factor','-f',type = posint, default = 4,
+    help = 'Successive halving reduction factor for each iteration')
+tune_optional.add_argument('--tune-subsample', action = 'store_true', default=False)
+tune_optional.add_argument('--locus-subsample-rates','-rates', type = posfloat, nargs = '+', default = [0.0625, 0.125, 0.25])
+
+model_options = tune_sub.add_argument_group('Model arguments')
+
+model_options.add_argument('--num-epochs', '-e', type = posint, default=500,
+    help = 'Maximum number of epochs to allow training during'
+            ' successive halving/Hyperband. This should be set high enough such that the model converges to a solution.')
+model_options.add_argument('--model-type','-model', choices=['regression','gbt'], default='regression')
+model_options.add_argument('--locus-subsample','-sub', type = posfloat, default = 0.125,
+    help = 'Whether to use locus subsampling to speed up training via stochastic variational inference.')
+model_options.add_argument('--batch-size','-batch', type = posint, default = 128,
+    help = 'Batch size for stochastic variational inference.')
+model_options.add_argument('--empirical-bayes','-eb', action = 'store_true', default=False,)
+model_options.add_argument('--pi-prior', '-pi', type = posfloat, default = 1.,
+    help = 'Dirichlet prior over sample mixture compositions. A value > 1 will give more dense compositions, which <1 finds more sparse compositions.')
+tune_sub.set_defaults(func = create_study)
+
+
+
+def summarize_study(*,study_name, output, storage = None):
+
+    study, *_ = load_study(study_name, storage)
+    
+    study.trials_dataframe().to_csv(output, index = False)
+
+
+summarize_parser = subparsers.add_parser('summarize-study', help = 'Summarize tuning results from a study.')
+summarize_parser.add_argument('study-name',type = str)
+summarize_parser.add_argument('--output','-o', type = valid_path, required=True)
+summarize_parser.add_argument('--storage','-s', type = str, default=None)
+summarize_parser.set_defaults(func = summarize_study)
+
+
+def retrain_best(trial_num = None,
+                 storage = None, 
+                 verbose = False,*,
+                 study_name, output):
+    
+    logging.basicConfig(level=logging.INFO)
+    logger.setLevel(logging.INFO)
+
+    study, dataset, attrs = load_study(study_name, storage)
+
+    if trial_num is None:
+        best_trial = study.best_trial
+    else:
+        best_trial = study.trials[trial_num]
+
+    model_params = attrs['model_params']
+    model_params.update(best_trial.params)
+
+    if attrs['model_type'] == 'regression':
+        basemodel = LocusRegressor
+    elif attrs['model_type'] == 'gbt':
+        basemodel = GBTRegressor
+    else:
+        raise ValueError(f'Unknown model type {best_trial["model_type"]}')
+    
+    print(
+        'Training model with params:\n' + \
+        '\n'.join(
+            [f'\t{k} = {v}' for k,v in model_params.items()]
+        ),
+        file = sys.stderr,
+    )
+
+    model = basemodel(
+            eval_every = 1000000,
+            quiet= not verbose,
+            **model_params,
+            seed = best_trial.number,
+            num_epochs=attrs['num_epochs'],
+        )
+
+    model.fit(dataset)
+
+    model.save(output)
+
+
+retrain_sub = subparsers.add_parser('retrain', help = 'From tuning results, retrain a chosen or the best model.')
+retrain_sub.add_argument('study-name',type = str)
+retrain_sub.add_argument('--storage','-s', type = str, default=None)
+retrain_sub.add_argument('--verbose','-v',action = 'store_true', default = False,)
+retrain_sub .add_argument('--output','-o', type = valid_path, required=True,
+    help = 'Where to save trained model.')
+retrain_sub.add_argument('--trial-num','-t', type = posint, default=None,
+    help= 'If left unset, will retrain model with best params from tuning results.\nIf provided, will retrain model parameters from the "trial_num"th trial.')
+
+retrain_sub.set_defaults(func = retrain_best)
 
 
 def main():

@@ -169,7 +169,7 @@ To produce a corpus for some hypothetical set of samples stored in `vcfs.txt`:
 This will save the corpus to *tutorial/corpus.h5*.
 
 
-1. How many processes?
+2. How many processes?
 ----------------------
 
 Choosing the number of mixture components to describe a process is a perenial problem in topic modeling,
@@ -177,61 +177,59 @@ LocusRegression notwithstanding. Here, I employ random search of the model hyper
 with a HyperBand bandit to find the number of components which produces a descriptive but 
 generalizeable model. This process can be parallelized for faster tuning.
 
-To run the *tune* command, you have to give the path to corpus, as well as the minimum and maximum
-bounds on the number of components to try. This command outputs a *json* file of scores for different
-model configurations.
+First, create a new "study", which will attempt to find the best hyperparameters for a certain model 
+and data configuration:
 
 .. code-block:: bash
 
-    $ locusregression tune \    
-        --corpus tutorial/corpus.h5 \
+    $ locusregression create-study \    
+        --corpuses tutorial/corpus.h5 \
         -min 3 -max 12 \
-        --n-jobs 5 \
         --tune-subsample \
-        -o tutorial/tune_results.json \
+        --study-name tutorial.1
 
-    Running HyperBand with 8 jobs.
-    Bracket 1: Evaluating 8 models
-    Bracket 2: Evaluating 15 models
-    Bracket 3: Evaluating 24 models
-    Evaluating model configurations:   100%|██████████████████████| 1282/1282 [00:27<07:35,  2.67it/s]
+    [I 2023-10-29 16:12:11,918] A new study created in Journal with name: tutorial.1
 
 
-We can plot the results in the *tutorial/data.json* file to see which values for *n_components* make sense
-for the dataset:
+Now, by running the command:
+
+.. code-block:: bash
+
+    $ locusregression run-trial tutorial.1
+
+and referencing the study name, a model is trained with a random set of hyperparameters and the result 
+saved to the study. This process can be repeated as many times as desired, and can be parallelized.
+I recommend running 100-200 trials to get a good sense of the hyperparameter space. Trials can be run
+serially:
+
+.. code-block:: bash
+
+    $ for i in {1..100}; do locusregression run-trial tutorial.1 > $i.log 2>&1; done
+
+
+or, in parallel while controlling the number of cores by having each process run a certain number of trials:
+
+.. code-block:: bash
+
+    $ for i in {1..5}; do locusregression run-trial tutorial.1 -i 40 > $i.log 2>&1 & done
+
+The command above launches five processes in the background, each of which tries 40 model configurations.
+Using a slurm server, one can simultaneously run numerous trials in different processes. I recommend
+allocating 1500MB and 1 CPU per trial.
+
+One can visualize the study results using the `optuna` module:
 
 .. code-block:: python
 
-    import pandas as pd
-    import matplotlib.pyplot as plt
-    import seaborn as sns
-    import numpy as np
+    from optuna.visualization.matplotlib import *
+    from locusregression import load_study
 
-    data = pd.read_json('tutorial/data.json', sep = '\t')
-
-    data['log_resources'] = np.log(data.resources)
-
-    sns.scatterplot(
-        data = data,
-        x = 'param_n_components',
-        y = 'score',
-        hue = 'log_resources',
-        palette='mako',
-        s = 50,
-        edgecolor = 'black',
-        ax = ax,
-    )
-    sns.despine()
-    ax.set(ylabel = 'Score', xlabel = 'N components')
+    study, dataset, training_attrs = load_study('tutorial.1')
+    plot_slice(study, params = ['n_components'])
 
 .. image:: images/tuning.svg
     :width: 400
 
-The HyperBand algorith runs "tournaments", where models are trained for a certain number of 
-epochs, then tested. The best performing models are promoted to the next iteration and trained 
-for more epochs (granted more resources). This process repeats until a group of winners is chosen.
-
-Here, four or five components gives a good fit for the dataset.
 
 If you already know how many processes are present in a sample, you can just do the following, and skip
 step 3:
@@ -244,19 +242,18 @@ step 3:
 3. Training the model
 ---------------------
 
-To train the representative model for the dataset, provide paths for the corpus, output, and 
-the tuning results. By default, locusregression will choose the best model to retrain. If 
+To train the representative model for the dataset, use the `locusregression retrain` command, 
+again referencing the study name. By default, locusregression will choose the best model to retrain. If 
 desired, you can choose some other model configuration by specifying `--trial-num <num>`. 
 
 .. code-block:: bash
 
     $ locusregression retrain \
-        -d tutorial/corpus.pkl \
-        -o tutorial/model.pkl \
-        --tune-results tutorial/tune_results.json
+        tutorial.1 \
+        -o tutorial/model.pkl
 
 
-4. Analysis
+1. Analysis
 -----------
 
 For this section, it is most natural to use an interactive tool like Jupyter notebooks to explore

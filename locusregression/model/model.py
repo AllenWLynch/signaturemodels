@@ -35,11 +35,10 @@ class LocusRegressor:
     n_contexts = 32
 
     @classmethod
-    def sample_params(cls, randomstate):
+    def sample_params(cls, trial):
         return dict(
-            seed = randomstate.randint(0, 100000000),
-            tau = randomstate.choice([1, 16, 48, 128]),
-            kappa = randomstate.choice([0.5, 0.6, 0.7]),
+            tau = trial.suggest_categorical('tau', [1, 1, 1, 16, 48, 128]),
+            kappa = trial.suggest_categorical('kappa', [0.5, 0.5, 0.5, 0.6, 0.7]),
         )
     
 
@@ -303,8 +302,6 @@ class LocusRegressor:
         
         n_subsample_loci = int(self.n_loci * self.locus_subsample)
 
-        self.random_state = np.random.RandomState(self.seed)
-        self.bound_random_state = np.random.RandomState(self.seed + 1)
         
         assert self.n_locus_features < self.n_loci, \
             'The feature matrix should be of shape (N_features, N_loci) where N_features << N_loci. The matrix you provided appears to be in the wrong orientation.'
@@ -317,6 +314,10 @@ class LocusRegressor:
                 reinit = True
 
         if reinit:
+
+            self.random_state = np.random.RandomState(self.seed)
+            self.bound_random_state = np.random.RandomState(self.seed + 1)
+
             self.model_state = self.MODEL_STATE(
                 n_components=self.n_components,
                 random_state=self.random_state,
@@ -347,86 +348,81 @@ class LocusRegressor:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
 
-            try:
-                for epoch in range(self.epochs_trained+1, self.num_epochs+1):
+            for epoch in range(self.epochs_trained+1, self.num_epochs+1):
 
-                    start_time = time.time()
-                    
-                    if batch_svi:
-                        update_samples = self.random_state.choice(self.n_samples, size = self.batch_size, replace = False)
-                        inner_corpus = corpus.subset_samples(update_samples)
-                    else:
-                        update_samples = np.arange(self.n_samples)
-                        inner_corpus = corpus
-                    
-                    if locus_svi:
-                        update_loci = self.random_state.choice(self.n_loci, size = n_subsample_loci, replace = False)
-                        inner_corpus = inner_corpus.subset_loci(update_loci)
-
-                        inner_corpus_states = {
-                            name : state.subset_corpusstate(inner_corpus.get_corpus(name), update_loci)
-                            for name, state in self.corpus_states.items()
-                        }
-                    else:
-                        inner_corpus_states = self.corpus_states
-                    
-
-                    sstats, new_gamma = self._inference(
-                                locus_subsample_rate=self.locus_subsample,
-                                batch_subsample_rate=self.batch_size/self.n_samples,
-                                learning_rate=learning_rate_fn(epoch),
-                                corpus = inner_corpus,
-                                model_state = self.model_state,
-                                corpus_states = inner_corpus_states,
-                                gamma = self._gamma[update_samples]
-                            )
-                    
-                    self._gamma[update_samples, :] = new_gamma.copy()
-
-                    self.model_state.update_state(sstats, learning_rate_fn(epoch))
-                    
-                    
-                    if epoch >= 10 and self.empirical_bayes:
-                        for corpus_state in self.corpus_states.values():
-                            corpus_state.update_alpha(sstats, learning_rate_fn(epoch))
-
-                    self.update_mutation_rates()
-
-                    elapsed_time = time.time() - start_time
-                    self.elapsed_times.append(elapsed_time)
-                    self.total_time += elapsed_time
-                    self.epochs_trained+=1
-
-                    if epoch % self.eval_every == 0:
-                        
-                        self.bounds.append(self._bound(
-                            corpus = corpus,
-                            model_state = self.model_state,
-                            corpus_states = self.corpus_states,
-                            likelihood_scale=1,
-                        ))
-
-                        if len(self.bounds) > 1:
-                            improvement = self.bounds[-1] - (self.bounds[-2] if epoch > 1 else self.bounds[-1])
-                            
-                            logger.info(f'  Epoch {epoch:<3} complete. | Elapsed time: {elapsed_time:<3.2f} seconds. '
-                                        f'| Bound: { self.bounds[-1]:<10.2f}, improvement: {improvement:<10.2f} ')
-                            
-                    elif not self.quiet:
-                        logger.info('  Epoch {:<3} complete. | Elapsed time: {:<3.2f} seconds.'.format(epoch, elapsed_time))
-
-                    if not self.time_limit is None and self.total_time >= self.time_limit:
-                        logger.info('Time limit reached, stopping training.')
-                        break
-
+                start_time = time.time()
+                
+                if batch_svi:
+                    update_samples = self.random_state.choice(self.n_samples, size = self.batch_size, replace = False)
+                    inner_corpus = corpus.subset_samples(update_samples)
                 else:
-                    pass
+                    update_samples = np.arange(self.n_samples)
+                    inner_corpus = corpus
+                
+                if locus_svi:
+                    update_loci = self.random_state.choice(self.n_loci, size = n_subsample_loci, replace = False)
+                    inner_corpus = inner_corpus.subset_loci(update_loci)
 
-            except KeyboardInterrupt:
+                    inner_corpus_states = {
+                        name : state.subset_corpusstate(inner_corpus.get_corpus(name), update_loci)
+                        for name, state in self.corpus_states.items()
+                    }
+                else:
+                    inner_corpus_states = self.corpus_states
+                
+
+                sstats, new_gamma = self._inference(
+                            locus_subsample_rate=self.locus_subsample,
+                            batch_subsample_rate=self.batch_size/self.n_samples,
+                            learning_rate=learning_rate_fn(epoch),
+                            corpus = inner_corpus,
+                            model_state = self.model_state,
+                            corpus_states = inner_corpus_states,
+                            gamma = self._gamma[update_samples]
+                        )
+                
+                self._gamma[update_samples, :] = new_gamma.copy()
+
+                self.model_state.update_state(sstats, learning_rate_fn(epoch))
+                
+                
+                if epoch >= 10 and self.empirical_bayes:
+                    for corpus_state in self.corpus_states.values():
+                        corpus_state.update_alpha(sstats, learning_rate_fn(epoch))
+
+                self.update_mutation_rates()
+
+                elapsed_time = time.time() - start_time
+                self.elapsed_times.append(elapsed_time)
+                self.total_time += elapsed_time
+                self.epochs_trained+=1
+
+                if epoch % self.eval_every == 0:
+                    
+                    self.bounds.append(self._bound(
+                        corpus = corpus,
+                        model_state = self.model_state,
+                        corpus_states = self.corpus_states,
+                        likelihood_scale=1,
+                    ))
+
+                    if len(self.bounds) > 1:
+                        improvement = self.bounds[-1] - (self.bounds[-2] if epoch > 1 else self.bounds[-1])
+                        
+                        logger.info(f'  Epoch {epoch:<3} complete. | Elapsed time: {elapsed_time:<3.2f} seconds. '
+                                    f'| Bound: { self.bounds[-1]:<10.2f}, improvement: {improvement:<10.2f} ')
+                        
+                elif not self.quiet:
+                    logger.info('  Epoch {:<3} complete. | Elapsed time: {:<3.2f} seconds.'.format(epoch, elapsed_time))
+
+                if not self.time_limit is None and self.total_time >= self.time_limit:
+                    logger.info('Time limit reached, stopping training.')
+                    break
+
+            else:
                 pass
-        
-        self.trained = True
 
+        self.trained = True
         return self
 
 
@@ -444,7 +440,12 @@ class LocusRegressor:
         Model with inferred parameters.
 
         '''
-        self._fit(corpus)
+
+        try:
+            self._fit(corpus)
+        except KeyboardInterrupt:
+            logger.info('Training interrupted by user.')
+            pass
 
         self._calc_signature_sstats(corpus)
 
