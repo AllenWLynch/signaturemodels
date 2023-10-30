@@ -143,8 +143,7 @@ class Sample:
             )
             
             map_process.communicate(); code_process.communicate(); filter_process.communicate()
-
-            #print( map_process.returncode, code_process.returncode, filter_process.returncode )
+            tmp.flush()
             
             if not all([p.returncode == 0 for p in [map_process, code_process, filter_process]]):
                 raise RuntimeError('Sample processing failed. See error message above.')

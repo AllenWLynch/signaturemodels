@@ -96,7 +96,7 @@ Esophogeal cells), and the regions file.
 
 .. code-block:: bash
 
-    $ locusregression -id E079 -w tutorial/regions.bed -j 5 -o tutorial/E110-marks.tsv
+    $ locusregression -id E079 -w tutorial/regions.bed -j 5 -o tutorial/correlates.tsv
 
 Check the output of this method to see the output format:
 
@@ -111,14 +111,26 @@ Check the output of this method to see the output format:
 A typical correlates file is a tab-separated matrix which has the same number of rows as the windows file. Each column is
 annotated with a name prepended with "#". You can expand this correlates file as need to add additional features.
 
-..
+Besides RoadMap, you can also use any other genomic correlate you wish. For instance, you could download a bigWig file of
+gene expression and use the `locusregression ingest-bigwig` or `locusregression ingest-bedgraph` tool to get the average expression in each window:
 
-    **Note:**
-    Again, it is very important to keep these data sorted and normalized. Above, 
-    I include the `-sorted` flag in `bedtools map` to ensure ensure this. Also, I
-    set `-null 0.0` so that winows which are not included in the track are still
-    assigned a numerical value.
-    
+.. code-block:: bash
+
+    $ locusregression ingest-bigwig \
+        example.bigwig \
+        -w tutorial/regions.bed \
+        -norm power \
+        -name GEX \
+        -o tutorial/expression.tsv
+
+This method requires a feature name and optionally a normalization method. The `power` normalization 
+is a zero-safe log transformation followed by standardization. Other options are `standardize` and `minmax`,
+which convert features to z-scores or fixes their ranges to 0-1, respectively. If no normalization is desired,
+just omit the `-norm` flag.
+
+You can put together any ad-hoc combination of features into one tsv file using the `paste` command.
+
+
 **The locusregression software will not adjust the features you provide, so
 be sure to standardize them beforehand.**
 
@@ -169,7 +181,7 @@ To produce a corpus for some hypothetical set of samples stored in `vcfs.txt`:
 This will save the corpus to *tutorial/corpus.h5*.
 
 
-2. How many processes?
+1. How many processes?
 ----------------------
 
 Choosing the number of mixture components to describe a process is a perenial problem in topic modeling,

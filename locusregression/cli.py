@@ -1,6 +1,4 @@
-from .corpus import CorpusReader, save_corpus, stream_corpus, \
-    MetaCorpus, fetch_roadmap_features, code_SBS_mutation, \
-    train_test_split, load_corpus
+from .corpus import *
     
 from .corpus import logger as reader_logger
 
@@ -250,82 +248,6 @@ trainer_optional.add_argument('--verbose','-v',action = 'store_true', default = 
 trainer_sub.set_defaults(func = train_model)
 
 
-def run_simulation(*,config, prefix):
-    
-    with open(config, 'rb') as f:
-        configuration = pickle.load(f)
-
-    corpus_path = prefix + 'corpus.h5'
-    params_path = prefix + 'generative_params.pkl'
-    assert valid_path(corpus_path)
-    assert valid_path(params_path)
-
-    corpus, generative_parameters = SimulatedCorpus.create(
-        **configuration
-    )
-
-    save_corpus(corpus, corpus_path)
-
-    with open(params_path, 'wb') as f:
-        pickle.dump(generative_parameters, f)
-    
-
-
-simulation_sub = subparsers.add_parser('simulate', help = 'Create a simulated dataset of cells with mutations')
-simulation_sub.add_argument('--config','-c', type = file_exists, required=True,
-        help = 'Pickled configuration file for the simulation.'
-)
-simulation_sub.add_argument('--prefix','-p', type = str, required=True,
-        help = 'Prefix under which to save generative params and corpus.'
-)
-simulation_sub.set_defaults(func = run_simulation)
-
-
-def evaluate_model(*,simulation_params, model):
-
-    model = load_model(model)
-
-    with open(simulation_params, 'rb') as f:
-        params = pickle.load(f)
-
-    coef_l1 = coef_l1_distance(model, params)
-    signature_cos = signature_cosine_distance(model, params)
-
-    print('coef_L1_dist','signature_cos_sim', sep = '\t')
-    print(coef_l1, signature_cos, sep = '\t')
-
-
-eval_sub = subparsers.add_parser('eval-sim', help = 'Evaluate a trained model against a simulation\'s generative parameters.')
-eval_sub.add_argument('--simulation-params','-sim', type = file_exists, required=True,
-        help = 'File path to generative parameters of simulation')
-
-eval_sub.add_argument('--model','-m', type = file_exists, required=True,
-        help = 'File path to model.')
-
-eval_sub.set_defaults(func = evaluate_model)
-
-def _fetch_roadmap_wrapper(**kw):
-    logging.basicConfig(level=logging.INFO)
-    fetch_roadmap_features(**kw)
-
-roadmap_sub = subparsers.add_parser('fetch-marks', help = 'Download and summarize Roadmap Epigenomics data for a given cell type.')
-roadmap_sub.add_argument('--roadmap-id','-id', type = str, required=True,)
-roadmap_sub.add_argument('--windows-file','-w', type = file_exists, required=True,)
-roadmap_sub.add_argument('--output','-o', type = argparse.FileType('w'), default=sys.stdout)
-roadmap_sub.add_argument('--n-jobs','-j', type = posint, default=1)
-roadmap_sub.set_defaults(func = _fetch_roadmap_wrapper)
-
-
-code_sub = subparsers.add_parser('code-sbs')
-code_sub.set_defaults(func = code_SBS_mutation)
-code_sub.add_argument('--vcf-file','-vcf', type = argparse.FileType('r'), default=sys.stdin)
-code_sub.add_argument('--fasta-file','-fa', type = file_exists, required=True)
-code_sub.add_argument('--output','-o', type = argparse.FileType('w'), default=sys.stdout)
-code_sub.add_argument('--sep','-sep', type = str, default = '\t')
-code_sub.add_argument('--index','-i', type = int, default = -1)
-code_sub.add_argument('--chr-prefix', type = str, default = '')
-
-
 def split_corpus(*,corpus, train_output, test_output, train_prop,
                  seed = 0):
 
@@ -484,6 +406,101 @@ retrain_sub.add_argument('--trial-num','-t', type = posint, default=None,
     help= 'If left unset, will retrain model with best params from tuning results.\nIf provided, will retrain model parameters from the "trial_num"th trial.')
 
 retrain_sub.set_defaults(func = retrain_best)
+
+
+def _fetch_roadmap_wrapper(**kw):
+    logging.basicConfig(level=logging.INFO)
+    fetch_roadmap_features(**kw)
+
+roadmap_sub = subparsers.add_parser('fetch-marks', help = 'Download and summarize Roadmap Epigenomics data for a given cell type.')
+roadmap_sub.add_argument('--roadmap-id','-id', type = str, required=True,)
+roadmap_sub.add_argument('--windows-file','-w', type = file_exists, required=True,)
+roadmap_sub.add_argument('--output','-o', type = argparse.FileType('w'), default=sys.stdout)
+roadmap_sub.add_argument('--n-jobs','-j', type = posint, default=1)
+roadmap_sub.set_defaults(func = _fetch_roadmap_wrapper)
+
+
+bigwig_sub = subparsers.add_parser('ingest-bigwig', help = 'Summarize bigwig file for a given cell type.')
+bigwig_sub.add_argument('bigwig-file', type = file_exists)
+bigwig_sub.add_argument('--windows-file','-w', type = file_exists, required=True,)
+bigwig_sub.add_argument('--normalization','-norm', choices=['power','standardize','minmax'], default=None)
+bigwig_sub.add_argument('--feature-name','-name', type = str, required=True,)
+bigwig_sub.add_argument('--output','-o', type = argparse.FileType('w'), default=sys.stdout)
+bigwig_sub.set_defaults(func = process_bigwig)
+
+
+bedgraph_sub = subparsers.add_parser('ingest-bedgraph', help = 'Summarize bigwig file for a given cell type.')
+bedgraph_sub.add_argument('bedgraph-file', type = file_exists)
+bedgraph_sub.add_argument('--windows-file','-w', type = file_exists, required=True,)
+bedgraph_sub.add_argument('--normalization','-norm', choices=['power','standardize','minmax'], default=None)
+bedgraph_sub.add_argument('--feature-name','-name', type = str, required=True,)
+bedgraph_sub.add_argument('--output','-o', type = argparse.FileType('w'), default=sys.stdout)
+bedgraph_sub.set_defaults(func = process_bigwig)
+
+
+code_sub = subparsers.add_parser('code-sbs')
+code_sub.set_defaults(func = code_SBS_mutation)
+code_sub.add_argument('--vcf-file','-vcf', type = argparse.FileType('r'), default=sys.stdin)
+code_sub.add_argument('--fasta-file','-fa', type = file_exists, required=True)
+code_sub.add_argument('--output','-o', type = argparse.FileType('w'), default=sys.stdout)
+code_sub.add_argument('--sep','-sep', type = str, default = '\t')
+code_sub.add_argument('--index','-i', type = int, default = -1)
+code_sub.add_argument('--chr-prefix', type = str, default = '')
+
+
+def run_simulation(*,config, prefix):
+    
+    with open(config, 'rb') as f:
+        configuration = pickle.load(f)
+
+    corpus_path = prefix + 'corpus.h5'
+    params_path = prefix + 'generative_params.pkl'
+    assert valid_path(corpus_path)
+    assert valid_path(params_path)
+
+    corpus, generative_parameters = SimulatedCorpus.create(
+        **configuration
+    )
+
+    save_corpus(corpus, corpus_path)
+
+    with open(params_path, 'wb') as f:
+        pickle.dump(generative_parameters, f)
+    
+
+
+simulation_sub = subparsers.add_parser('simulate', help = 'Create a simulated dataset of cells with mutations')
+simulation_sub.add_argument('--config','-c', type = file_exists, required=True,
+        help = 'Pickled configuration file for the simulation.'
+)
+simulation_sub.add_argument('--prefix','-p', type = str, required=True,
+        help = 'Prefix under which to save generative params and corpus.'
+)
+simulation_sub.set_defaults(func = run_simulation)
+
+
+def evaluate_model(*,simulation_params, model):
+
+    model = load_model(model)
+
+    with open(simulation_params, 'rb') as f:
+        params = pickle.load(f)
+
+    coef_l1 = coef_l1_distance(model, params)
+    signature_cos = signature_cosine_distance(model, params)
+
+    print('coef_L1_dist','signature_cos_sim', sep = '\t')
+    print(coef_l1, signature_cos, sep = '\t')
+
+
+eval_sub = subparsers.add_parser('eval-sim', help = 'Evaluate a trained model against a simulation\'s generative parameters.')
+eval_sub.add_argument('--simulation-params','-sim', type = file_exists, required=True,
+        help = 'File path to generative parameters of simulation')
+
+eval_sub.add_argument('--model','-m', type = file_exists, required=True,
+        help = 'File path to model.')
+
+eval_sub.set_defaults(func = evaluate_model)
 
 
 def main():
