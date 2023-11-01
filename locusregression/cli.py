@@ -67,6 +67,18 @@ def _load_dataset(corpuses):
     return dataset
 
 
+def _get_basemodel(model_type):
+
+    if model_type == 'regression':
+        basemodel = LocusRegressor
+    elif model_type == 'gbt':
+        basemodel = GBTRegressor
+    else:
+        raise ValueError(f'Unknown model type {model_type}')
+
+    return basemodel
+
+
 
 parser = argparse.ArgumentParser(
     formatter_class=argparse.ArgumentDefaultsHelpFormatter,
@@ -177,14 +189,18 @@ def train_model(
         eval_every = 20,
         bound_tol = 1e-2,
         verbose = False,
-        n_jobs = 1,*,
+        n_jobs = 1,
+        empirical_bayes = False,
+        model_type = 'regression',*,
         n_components,
         corpuses,
         output,
-        empirical_bayes = False,
+        
     ):
+
+    basemodel = _get_basemodel(model_type)
     
-    model = LocusRegressor(
+    model = basemodel(
         locus_subsample = locus_subsample,
         batch_size = batch_size,
         seed = seed, 
@@ -226,6 +242,7 @@ trainer_required .add_argument('--output','-o', type = valid_path, required=True
 
 trainer_optional = trainer_sub.add_argument_group('Optional arguments')
 
+trainer_optional.add_argument('--model-type','-model', choices=['regression','gbt'], default='regression')
 trainer_optional.add_argument('--locus-subsample','-sub', type = posfloat, default = 0.125,
     help = 'Whether to use locus subsampling to speed up training via stochastic variational inference.')
 trainer_optional.add_argument('--batch-size','-batch', type = posint, default = 128,
@@ -368,12 +385,7 @@ def retrain_best(trial_num = None,
     model_params = attrs['model_params']
     model_params.update(best_trial.params)
 
-    if attrs['model_type'] == 'regression':
-        basemodel = LocusRegressor
-    elif attrs['model_type'] == 'gbt':
-        basemodel = GBTRegressor
-    else:
-        raise ValueError(f'Unknown model type {best_trial["model_type"]}')
+    basemodel = _get_basemodel(attrs["model_type"])
     
     print(
         'Training model with params:\n' + \

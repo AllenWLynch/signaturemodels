@@ -3,7 +3,7 @@ from sklearn.tree import DecisionTreeRegressor
 import numpy as np
 import logging
 from scipy.optimize import line_search
-
+from functools import partial
 logger = logging.getLogger('Trees')
 
 class TreeFitError(ValueError):
@@ -84,6 +84,10 @@ class MutationRateLoss(RegressionLossFunction):
 
 
 
+def _tree_predict(x,*,alpha, learning_rate, tree):
+    return alpha*learning_rate*0.1*tree.predict(x)
+
+
 def optim_tree(learning_rate = 1.,*,
         beta_sstats,
         logmus, 
@@ -142,4 +146,9 @@ def optim_tree(learning_rate = 1.,*,
         logger.info('Tree rejected')
         raise TreeFitError()
 
-    return lambda x : alpha*learning_rate*0.1*tree.predict(x)
+
+    return partial(_tree_predict,
+                alpha = alpha,
+                learning_rate = learning_rate,
+                tree = tree    
+            )

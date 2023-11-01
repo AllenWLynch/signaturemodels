@@ -18,6 +18,7 @@ config = {
     'H3K36me3' : 'pval',
 }
 
+
 ROADMAP_URL = 'https://egg2.wustl.edu/roadmap/data/byFileType/signal/consolidatedImputed/{signal}/{sample}-{signal}.imputed.{type}.signal.bigwig'
 
 def _check_windows_file(windows_file):
@@ -39,7 +40,8 @@ def normalize_covariate(*,track_file, output, feature_name,
         track = np.array( [float(x.strip()) for x in track] )[:,np.newaxis]
 
     if normalization == 'power':
-        track = PowerTransformer().fit_transform(track)
+        track = PowerTransformer(standardize = False).fit_transform(track)
+        track = MinMaxScaler().fit_transform(track)
     elif normalization == 'standardize':
         track = StandardScaler().fit_transform(track)
     elif normalization == 'minmax':
@@ -154,7 +156,10 @@ def fetch_roadmap_features(*,roadmap_id, windows_file, output, n_jobs = 1):
                     )
 
 
-        with Pool(n_jobs) as pool:
+        for signal, track_type in config.items():
+            _summarize_bigwig(signal, track_type, aggregated_files[signal])
+
+        '''with Pool(n_jobs) as pool:
 
             for signal, track_type in config.items():
                 pool.apply_async(
@@ -163,7 +168,7 @@ def fetch_roadmap_features(*,roadmap_id, windows_file, output, n_jobs = 1):
                 )
 
             pool.close()
-            pool.join()
+            pool.join()'''
 
         logger.info(f'Merging features ...')
 

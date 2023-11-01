@@ -9,13 +9,15 @@ class GBTModelState(ModelState):
                 n_components, 
                 random_state, 
                 n_features, 
+                empirical_bayes,
                 dtype):
         
         assert isinstance(n_components, int) and n_components > 1
         self.n_components = n_components
         self.n_features = n_features
         self.random_state = random_state
-
+        self.empirical_bayes = empirical_bayes
+        
         self.delta = self.random_state.gamma(100, 1/100, 
                                                (n_components, self.n_contexts),
                                               ).astype(dtype, copy=False)
