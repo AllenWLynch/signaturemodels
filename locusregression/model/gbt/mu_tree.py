@@ -22,8 +22,8 @@ class MutationRateLoss(RegressionLossFunction):
         '''
 
         objective = np.dot(y, raw_predictions) \
-            - np.sum(y) * np.log( np.sum( sample_weight * np.exp(raw_predictions) ) ) \
-            - 1/2*np.sum(raw_predictions**2)
+            - np.sum(y) * np.log( np.sum( sample_weight * np.exp(raw_predictions) ) ) #\
+            #- 1/2*np.sum(raw_predictions**2)
         
         return -objective
 
@@ -38,7 +38,7 @@ class MutationRateLoss(RegressionLossFunction):
         exposure = kargs['sample_weight']
         y_hat = exposure*np.exp(raw_predictions)
 
-        grads = y - np.sum(y)/np.sum(y_hat) * y_hat - raw_predictions
+        grads = y - np.sum(y)/np.sum(y_hat) * y_hat #- raw_predictions
 
         return grads
 
@@ -48,7 +48,7 @@ class MutationRateLoss(RegressionLossFunction):
         exposure = kargs['sample_weight']
         y_hat = exposure*np.exp(raw_predictions)
 
-        hess = -np.sum(y)/np.square(np.sum(y_hat)) * (y_hat * np.sum(y_hat) + y_hat**2) - 1
+        hess = -np.sum(y)/np.square(np.sum(y_hat)) * (y_hat * np.sum(y_hat) + y_hat**2)# - 1
 
         return -hess
 
@@ -85,7 +85,7 @@ class MutationRateLoss(RegressionLossFunction):
 
 
 def _tree_predict(x,*,alpha, learning_rate, tree):
-    return alpha*learning_rate*0.1*tree.predict(x)
+    return alpha*learning_rate*tree.predict(x)
 
 
 def optim_tree(learning_rate = 1.,*,

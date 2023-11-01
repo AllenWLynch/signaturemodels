@@ -504,7 +504,9 @@ class LocusRegressor:
             learning_rate=1.,
         )
 
-        return sstats.alpha_sstats
+        return {corpus_name : gamma/gamma.sum(1, keepdims = True) 
+                for corpus_name, gamma in sstats.alpha_sstats.items()
+                }
 
     
     def score(self, corpus):
