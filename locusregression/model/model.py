@@ -901,7 +901,7 @@ class LocusRegressor:
 
         if ax is None:
             if figsize is None:
-                figsize = (self.n_locus_features/2, 1.25)
+                figsize = (self.n_locus_features/3, 1.25)
 
             _, ax = plt.subplots(1,1,figsize= figsize)
 
@@ -981,7 +981,7 @@ class LocusRegressor:
         
         if ax is None:
             if figsize is None:
-                figsize = (2*self.n_locus_features/2, 2*1.25)
+                figsize = (2*self.n_locus_features/3, 2*1)
 
             _, ax = plt.subplots(1,1,figsize= figsize)
 
@@ -1045,7 +1045,7 @@ class LocusRegressor:
 
     def plot_summary(self, fontsize = 7):
         
-        coefplot_width = self.n_locus_features/2
+        coefplot_width = self.n_locus_features/3
         figwidth = coefplot_width + 5.5
 
         _, ax = plt.subplots(
