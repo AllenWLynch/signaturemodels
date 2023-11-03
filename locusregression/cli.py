@@ -1,7 +1,5 @@
 from .corpus import *
-    
 from .corpus import logger as reader_logger
-
 from .model import LocusRegressor, load_model, logger, GBTRegressor
 from .tuning import run_trial, create_study, load_study
 from .simulation import SimulatedCorpus, coef_l1_distance, signature_cosine_distance
@@ -12,9 +10,9 @@ import sys
 import logging
 import pickle
 import logging
-
-
 import warnings
+from matplotlib.pyplot import savefig
+
 from optuna.exceptions import ExperimentalWarning
 warnings.filterwarnings("ignore", category=ExperimentalWarning)
 
@@ -92,7 +90,6 @@ def write_dataset(
         chr_prefix = '',*,
         fasta_file,
         trinuc_file,
-        corpus_name,
         regions_file,
         vcf_files,
         exposure_files,
@@ -107,7 +104,6 @@ def write_dataset(
         vcf_files = vcf_files,
         sep = sep, index = index,
         chr_prefix = chr_prefix,
-        corpus_name = corpus_name
     )
 
     logging.basicConfig(level=logging.INFO)
@@ -123,6 +119,7 @@ def write_dataset(
         **shared_args, 
         exposure_files = exposure_files,
         correlates_file = correlates_file,
+        corpus_name = os.path.abspath(output),
     )
 
     save_corpus(dataset, output)
@@ -133,7 +130,7 @@ dataset_sub = subparsers.add_parser('make-corpus',
           ' for locus modeling.'
     )
 
-dataset_sub.add_argument('--corpus-name','-n', type = str, required = True, help = 'Name of corpus, must be unique if modeling with other corpuses.')
+#dataset_sub.add_argument('--corpus-name','-n', type = str, required = True, help = 'Name of corpus, must be unique if modeling with other corpuses.')
 dataset_sub.add_argument('--vcf-files', '-vcf', nargs = '+', type = file_exists, required = True,
     help = 'list of VCF files containing SBS mutations.')
 dataset_sub.add_argument('--fasta-file','-fa', type = file_exists, required = True, help = 'Sequence file, used to find context of mutations.')
@@ -418,6 +415,84 @@ retrain_sub.add_argument('--trial-num','-t', type = posint, default=None,
     help= 'If left unset, will retrain model with best params from tuning results.\nIf provided, will retrain model parameters from the "trial_num"th trial.')
 
 retrain_sub.set_defaults(func = retrain_best)
+
+
+def predict(*,model, corpuses, output):
+
+    dataset = _load_dataset(corpuses)
+
+    model = load_model(model)
+
+    sample_names, predictions = model.predict(dataset)
+
+    print('',*['Component ' + str(i) for i in range(model.n_components)], sep = ',', file = output)
+    for sample_name, prediction in zip(sample_names, predictions):
+        print(sample_name, *prediction, sep = ',', file = output)
+
+predict_sub = subparsers.add_parser('model-predict', help = 'Predict exposures for each sample.')
+predict_sub.add_argument('model', type = file_exists)
+predict_sub.add_argument('--corpuses', '-d', type = file_exists, nargs = '+', required=True,
+                         help = 'Path to compiled corpus file/files.')
+predict_sub.add_argument('--output','-o', type =  argparse.FileType('w'), required=True)
+predict_sub.set_defaults(func = predict)
+
+
+def summary_plot(*,model, output):
+    model = load_model(model)
+    model.plot_summary()
+    savefig(output, bbox_inches='tight', dpi = 300)
+
+summary_plot_parser = subparsers.add_parser('model-plot-summary', help = 'Plot summary of model components.')
+summary_plot_parser.add_argument('model', type = file_exists)
+summary_plot_parser.add_argument('--output','-o', type = valid_path, required=True,
+                                 help = 'Path to save plot, the file extension determines the format')
+summary_plot_parser.set_defaults(func = summary_plot)
+
+
+def multidimensional_plot(*, model, output, cluster_distance):
+    model = load_model(model)
+    model.plot_compare_coefficients(cluster_distance = cluster_distance)
+    savefig(output, bbox_inches='tight', dpi = 300)
+
+multidimensional_plot_parser = subparsers.add_parser('model-plot-coefs', 
+                                                    help = 'Plot multidimensional coefficients comparison.')
+multidimensional_plot_parser.add_argument('model', type = file_exists)
+multidimensional_plot_parser.add_argument('--cluster-distance', '-dist', type = float, default=0.75,
+                                          help = 'Distance threshold for clustering coefficients. Increasing this value will result in fewer clusters.')
+multidimensional_plot_parser.add_argument('--output','-o', type = valid_path, required=True,
+                                    help = 'Path to save plot, the file extension determines the format')
+multidimensional_plot_parser.set_defaults(func = multidimensional_plot)
+
+
+def save_signatures(*, model, output):
+    
+    model = load_model(model)
+    
+    print('', *COSMIC_SORT_ORDER, sep = ',', file = output)
+    for i in range(model.n_components):
+        print('Component ' + str(i), *model.signature(i, return_error=False), sep = ',', file = output)
+
+signatures_parser = subparsers.add_parser('model-save-signatures', 
+                                          help = 'Save signatures to file.')
+signatures_parser.add_argument('model', type = file_exists)
+signatures_parser.add_argument('--output','-o', type =  argparse.FileType('w'), required=True)
+signatures_parser.set_defaults(func = save_signatures)
+
+
+def save_associations(*, model, output):
+
+    model = load_model(model)
+
+    print('', *model.feature_names, sep = ',', file = output)
+    for i in range(model.n_components):
+        print('Component ' + str(i), *model.model_state.beta_mu[i], sep = ',', file = output)
+
+associations_parser = subparsers.add_parser('model-save-associations',
+                                            help = 'Save associations to file.')
+associations_parser.add_argument('model', type = file_exists)
+associations_parser.add_argument('--output','-o', type = argparse.FileType('w'), required=True)
+associations_parser.set_defaults(func = save_associations)
+
 
 
 def _fetch_roadmap_wrapper(**kw):

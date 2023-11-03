@@ -128,12 +128,12 @@ COSMIC_SORT_ORDER = [
  'T[T>G]T']
 
 _transition_palette = {
-    ('C','A') : 'cyan',
-    ('C','G') : 'black',
-    ('C','T') : 'red',
-    ('T','A') : 'lightgrey',
-    ('T','C') : 'lime',
-    ('T','G') : 'pink'
+    ('C','A') : (0.33, 0.75, 0.98),
+    ('C','G') : (0.0, 0.0, 0.0),
+    ('C','T') : (0.85, 0.25, 0.22),
+    ('T','A') : (0.78, 0.78, 0.78),
+    ('T','C') : (0.51, 0.79, 0.24),
+    ('T','G') : (0.89, 0.67, 0.72)
 }
 
 MUTATION_PALETTE = [color for color in _transition_palette.values() for i in range(16)]

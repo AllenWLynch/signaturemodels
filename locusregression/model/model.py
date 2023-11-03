@@ -15,6 +15,7 @@ logger = logging.getLogger('LocusRegressor')
 import matplotlib.pyplot as plt
 import pickle
 from functools import partial
+from collections import defaultdict
 import locusregression.model._sstats as _sstats
 
 
@@ -213,7 +214,7 @@ class LocusRegressor:
             exp_Elog_gamma = np.exp(log_dirichlet_expectation(gamma)[:,None])
 
             gamma = estep_update(exp_Elog_gamma, corpus_state.alpha, flattend_phi, count_g,
-                                 likelihood_scale=locus_subsample_rate)
+                                 likelihood_scale=1/locus_subsample_rate)
 
             if np.abs(gamma - old_gamma).mean() < self.difference_tol:
                 logger.debug(f'E-step converged after {s} iterations.')
@@ -492,21 +493,31 @@ class LocusRegressor:
         '''
 
         n_samples = len(corpus)
-        
-        sstats, _ = self._inference(
-            gamma = self._init_doc_variables(n_samples),
-            corpus = corpus,
+
+        inference_kw = dict(
+            locus_subsample_rate = 1.,
+            batch_subsample_rate = 1.,
+            learning_rate = 1.,
             model_state = self.model_state,
-            corpus_states = self._get_test_corpus_states(corpus),
-            locus_subsample_rate=1.,
-            batch_subsample_rate=1.,
-            learning_rate=1.,
         )
 
-        return {corpus_name : gamma/gamma.sum(1, keepdims = True) 
-                for corpus_name, gamma in sstats.alpha_sstats.items()
-                }
+        corpus_states = self._get_test_corpus_states(corpus)
 
+        gammas = []; sample_names = []
+        for gamma_g, sample in zip(self._init_doc_variables(len(corpus)), corpus):
+
+            _, sample_new_gamma = self._sample_inference(
+                        sample = sample,
+                        gamma0 = gamma_g, 
+                        **inference_kw,
+                        corpus_state = corpus_states[sample.corpus_name]
+                    )
+            
+            sample_names.append(sample.name)
+            gammas.append(sample_new_gamma)
+
+        return sample_names, gammas/np.sum(gammas, axis = 1, keepdims = True)
+    
     
     def score(self, corpus):
         '''
@@ -824,7 +835,7 @@ class LocusRegressor:
             height = mean,
             x = COSMIC_SORT_ORDER,
             color = MUTATION_PALETTE,
-            width = 0.95,
+            width = 1,
             edgecolor = 'white',
             linewidth = 0.5,
             yerr = error,
@@ -834,7 +845,8 @@ class LocusRegressor:
         for s in ['left','right','top']:
             ax.spines[s].set_visible(False)
 
-        ax.set(yticks = [], xticks = [], xlim = (0,96))
+        ax.set(yticks = [], xticks = [], 
+               xlim = (0,96), ylim = (0, 1.1*max(mean + error)))
         ax.set_title('Component ' + str(component), fontsize = fontsize)
 
         return ax
@@ -956,7 +968,7 @@ class LocusRegressor:
 
 
 
-    def multidimensional_plot(self, ax = None, figsize = None,
+    def plot_compare_coefficients(self, ax = None, figsize = None,
                               reorder_features = True,
                               cluster_components = True,
                               cluster_distance = 0.75,
@@ -986,7 +998,30 @@ class LocusRegressor:
                 if max(set(clusters)) > 1 and mask_largest_cluster:
                     color_list = ['grey'] + color_list
 
+                assert len(clusters) <= len(color_list), \
+                    f'Number of clusters ({len(clusters)}) exceeds number of colors ({len(color_list)}).\n' \
+                    'Try using a larger palette, or increasing the cluster_distance paramter.'
+                
+
             component_colors = [color_list[cluster] for cluster in clusters]
+            num_clusters = len(set(clusters))
+
+            cluster_membership = defaultdict(list)
+            for component, cluster in enumerate(clusters):
+                cluster_membership[cluster].append(component)
+            
+            ax.legend(
+                [plt.Circle((0,0),0.5, color = color) for color in color_list[:num_clusters]],
+                ['Component: ' + ', '.join([str(c) for c in cluster_membership[cluster]]) for cluster in set(clusters)],
+                fontsize = fontsize,
+                loc = 'upper left',
+                bbox_to_anchor=(1.01, 1.0),
+                frameon = False,
+                title = 'Cluster',
+                title_fontsize = fontsize,
+                markerscale = 0.6
+            )
+            
 
         else:
             component_colors = ['black']*self.n_components
@@ -1034,7 +1069,4 @@ class LocusRegressor:
 
         return ax
 
-
-    def save_summary_tables(self):
-        pass
 

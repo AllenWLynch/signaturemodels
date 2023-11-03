@@ -1,5 +1,5 @@
 import numpy as np
-from locusregression.corpus.readers import Sample
+from locusregression.corpus.sbs_sample import SBSSample
 from locusregression.corpus.featurization import COSMIC_SORT_ORDER
 from locusregression.corpus.corpus import Corpus, InMemorySamples
 from locusregression.corpus.featurization import CONTEXT_IDX, MUTATIONS_IDX
@@ -138,6 +138,7 @@ class SimulatedCorpus:
                     pi = pi, 
                     n_mutations= n_mutations,
                     exposures = exposure[None,:],
+                    name = str(i),
                 )
             )
         
@@ -224,7 +225,7 @@ class SimulatedCorpus:
     @staticmethod
     def simulate_sample(randomstate,*,
             psi_matrix, trinuc_distributions, signatures,
-            pi, n_mutations, exposures,
+            pi, n_mutations, exposures, name,
             ):
 
         loci, contexts, mutations = [],[],[]
@@ -247,10 +248,14 @@ class SimulatedCorpus:
             contexts.append(context)
             mutations.append(mutation)
 
-        return {
-            **Sample._aggregate_counts(mutations, contexts, loci), 
-            'exposures' : exposures
-            }
+        return SBSSample(
+                        mutation=np.array(mutations), 
+                        context=np.array(contexts), 
+                        locus=np.array(loci), 
+                        count=np.ones(len(loci)).astype(int),
+                        name = name,
+                        exposures = exposures,
+                    )
 
 
     def from_model(
@@ -282,7 +287,7 @@ class SimulatedCorpus:
         exposures = np.ones((1, n_loci))
 
         samples = []
-        for pi, n_mutations in tqdm.tqdm(zip(cell_pi, cell_n_mutations),
+        for sample_num, (pi, n_mutations) in tqdm.tqdm(enumerate(zip(cell_pi, cell_n_mutations)),
             total = len(cell_pi), ncols = 100, desc = 'Generating samples'):
 
             samples.append(
@@ -294,6 +299,7 @@ class SimulatedCorpus:
                     pi = pi, 
                     n_mutations= n_mutations,
                     exposures = exposures.copy(),
+                    name = str(sample_num),
                 )
             )
         

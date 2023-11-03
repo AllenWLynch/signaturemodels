@@ -3,6 +3,7 @@ from abc import ABC, abstractmethod
 from collections import defaultdict
 import h5py as h5
 import logging
+from .sbs_sample import SBSSample
 logger = logging.getLogger('Corpus')
 
 class CorpusMixin(ABC):
@@ -23,7 +24,7 @@ class CorpusMixin(ABC):
         self._shared_exposures = shared_exposures
 
         if self._shared_exposures:
-            self._exposures = samples[0]['exposures']
+            self._exposures = samples[0].exposures
 
     @property
     def shape(self):
@@ -91,9 +92,11 @@ class SampleLoader:
         return len(self.subset_idx)
 
 
-    def _read_item(self, h5, i):
+    def _read_item(self, h5, idx):
         #logger.debug('Streaming from disk cache.')
-        return {k : h5[f'samples/{i}/{k}'][...] for k in h5[f'samples/{i}'].keys()}
+        #return {k : h5[f'samples/{i}/{k}'][...] for k in h5[f'samples/{i}'].keys()}
+        return SBSSample.read_h5_dataset(h5, f'samples/{idx}')
+
 
     def __iter__(self):
 
@@ -135,8 +138,9 @@ def save_corpus(corpus, filename):
         samples_group = f.create_group('samples')
 
         for i, sample in enumerate(corpus.samples):
-            for k, v in sample.items():
-                samples_group.create_dataset(f'{i}/{k}', data = v)
+            #for k, v in sample.items():
+            #    sample_dataset = samples_group.create_dataset(f'{i}/{k}', data = v)
+            sample.create_h5_dataset(samples_group, str(i))
 
 
 
@@ -151,7 +155,8 @@ def load_corpus(filename):
             X_matrix = f['data/X_matrix'][...],
             feature_names = f['data/X_matrix'].attrs['feature_names'],
             samples = InMemorySamples([
-                {k : f[f'samples/{i}/{k}'][...] for k in f[f'samples/{i}'].keys()}
+                #{k : f[f'samples/{i}/{k}'][...] for k in f[f'samples/{i}'].keys()}
+                SBSSample.read_h5_dataset(h5, f'samples/{i}')
                 for i in range(len(f['samples'].keys()))
             ]),
             shared_exposures=is_shared,
@@ -206,15 +211,15 @@ class Corpus(CorpusMixin):
     def __getitem__(self, idx):
         
         return dotdict({
-            **self.samples[idx],
+            **self.samples[idx].asdict(),
             'corpus_name' : self.name
         })
 
 
     def __iter__(self):
-
         for i in range(len(self)):
             yield self[i]
+
 
     @property
     def corpuses(self):
@@ -243,17 +248,18 @@ class Corpus(CorpusMixin):
         new_samples = []
         for sample in self.samples:
                         
-            mask = bool_array[sample['locus']]
+            mask = bool_array[sample.locus]
 
-            new_sample = {
-                'mutation' : sample['mutation'][mask],
-                'context' : sample['context'][mask],
-                'count' : sample['count'][mask],
-                'locus' : np.array([subsample_lookup[locus] for locus in sample['locus'][mask]]).astype(int), 
-                'exposures' : sample['exposures'][:,loci]
-            }
+            new_sample = SBSSample(**{
+                'mutation' : sample.mutation[mask],
+                'context' : sample.context[mask],
+                'count' : sample.count[mask],
+                'locus' : np.array([subsample_lookup[locus] for locus in sample.locus[mask]]).astype(int), 
+                'exposures' : sample.exposures[:,loci],   
+                'name' : sample.name,
+            })
 
-            total_mutations += new_sample['count'].sum()
+            total_mutations += new_sample.count.sum()
 
             new_samples.append(new_sample)
         
@@ -268,6 +274,7 @@ class Corpus(CorpusMixin):
             name = self.name,
         )
     
+
     def get_corpus(self, name):
         assert name == self.name
         return self
