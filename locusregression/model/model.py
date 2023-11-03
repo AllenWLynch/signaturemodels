@@ -1,8 +1,7 @@
 
 import numpy as np
-from .base import log_dirichlet_expectation, dirichlet_multinomial_logprob
-from scipy import stats
-import tqdm
+from .base import log_dirichlet_expectation
+from scipy.cluster import hierarchy
 #from numba import njit
 from locusregression.corpus import COSMIC_SORT_ORDER, SIGNATURE_STRINGS, MUTATION_PALETTE
 
@@ -804,10 +803,13 @@ class LocusRegressor:
         if return_error:
             return mean, error
         else:
-            return mean
+            return list(mean)
 
 
-    def plot_signature(self, component, ax = None, figsize = (6,1.25), normalization = 'local'):
+    def plot_signature(self, component, ax = None, 
+                       figsize = (5.5,1.25), 
+                       normalization = 'global', 
+                       fontsize=7):
         '''
         Plot signature.
         '''
@@ -822,9 +824,9 @@ class LocusRegressor:
             height = mean,
             x = COSMIC_SORT_ORDER,
             color = MUTATION_PALETTE,
-            width = 1,
+            width = 0.95,
             edgecolor = 'white',
-            linewidth = 1,
+            linewidth = 0.5,
             yerr = error,
             error_kw = {'alpha' : 0.5, 'linewidth' : 0.5}
         )
@@ -832,18 +834,53 @@ class LocusRegressor:
         for s in ['left','right','top']:
             ax.spines[s].set_visible(False)
 
-        ax.set(
-            yticks = [], xticks = [],
-            title = 'Component ' + str(component)
-            )
+        ax.set(yticks = [], xticks = [], xlim = (0,96))
+        ax.set_title('Component ' + str(component), fontsize = fontsize)
 
         return ax
 
 
+    def _order_features(self):
+        
+        feature_linkage = hierarchy.linkage(self.model_state.beta_mu.T)
+
+        feature_num_order = hierarchy.leaves_list(
+                            hierarchy.optimal_leaf_ordering(
+                                feature_linkage, 
+                                self.model_state.beta_mu.T
+                            )
+                        )
+        
+        feature_order = self.feature_names[feature_num_order]
+
+        return feature_order
+
+
+    def _cluster_component_associations(self, cluster_distance):
+
+        component_linkage = hierarchy.linkage(self.model_state.beta_mu)
+
+        clusters = hierarchy.fcluster(component_linkage, cluster_distance, 
+                                      criterion='distance') - 1
+        
+        cluster_ids, counts = np.unique(clusters, return_counts=True)
+
+        cluster_order = cluster_ids[np.argsort(counts)[::-1]]
+
+        cluster_order_map = dict(zip(cluster_order, range(len(cluster_ids))))
+        clusters = [cluster_order_map[c] for c in clusters]
+
+        return clusters
+
+
     def plot_coefficients(self, component, 
-        ax = None, figsize = (3,5), 
-        error_std_width = 3,
-        dotsize = 5):
+        ax = None, figsize = None, 
+        error_std_width = 5,
+        dotsize = 10,
+        color = 'black',
+        reorder_features = True,
+        fontsize = 8,
+    ):
         '''
         Plot regression coefficients with 99% confidence interval.
         '''
@@ -851,120 +888,153 @@ class LocusRegressor:
         assert isinstance(component, int) and 0 <= component < self.n_components
 
         if ax is None:
-            fig, ax = plt.subplots(1,1,figsize= figsize)
+            if figsize is None:
+                figsize = (self.n_locus_features/2, 1.25)
+
+            _, ax = plt.subplots(1,1,figsize= figsize)
 
         mu, nu = self.model_state.beta_mu[component,:], self.model_state.beta_nu[component,:]
 
-        ax.scatter(
-            x = mu,
-            y= self.feature_names, 
-            marker='s', s=dotsize, 
-            color='black'
+        ax.plot(
+            self.feature_names, mu,
+            color = color,
+            linewidth = 0.5,
+            zorder = 1,
         )
 
-        ax.axvline(x=0, linestyle='--', color='black', linewidth=1)
+        ax.scatter(
+            y = mu,
+            x= self.feature_names,  
+            s=dotsize*3, 
+            color= 'white',
+            zorder = 2,
+        )
+
+        ax.scatter(
+            y = mu,
+            x= self.feature_names,  
+            s=dotsize, 
+            color= color,
+            linewidths=0.25,
+            edgecolors='white',
+            zorder = 3
+        )
+
+        ax.axhline(0, linestyle='--', color='lightgrey', linewidth=0.5,
+                   zorder = 0)
 
         std_width = error_std_width/2
 
-        ax.hlines(
-            xmax= std_width*nu + mu,
-            xmin = -std_width*nu + mu,
-            y = self.feature_names, 
-            color = 'black'
+        ax.vlines(
+            ymax= std_width*nu + mu,
+            ymin = -std_width*nu + mu,
+            x = self.feature_names, 
+            color = color,
+            linewidth = 0.5,
+            zorder = 4,
             )
-
+        ax.xaxis.grid(True, color = 'lightgrey', linestyle = '--', linewidth = 0.5,
+                      zorder = 0)
         
-        ax.set(ylabel = 'Feature', xlabel = 'Coefficient',
-               title = 'Component ' + str(component),
-               )
+        #// remove the ticks from the y axis but not the labels
+        ax.tick_params(axis='x', which='both', length=0, labelsize = fontsize,
+                       rotation = 90)
+        ax.tick_params(axis='y', which='both', labelsize = fontsize)
 
-        for s in ['left','right','top']:
+        ax.set(xlabel = 'Feature', ylabel = 'Coefficient')
+        ax.xaxis.label.set_size(7); ax.yaxis.label.set_size(fontsize)
+
+        ax.set_title('Component ' + str(component), fontsize = fontsize)
+
+        for s in ['left','right','top', 'bottom']:
             ax.spines[s].set_visible(False)
+
+        if reorder_features:
+            ax.set_xticks(self._order_features())
 
         return ax
 
-    
-    def _model_conditional_log_prob(self,*,
-            beta, _lambda, rho,
-            alpha,
-            X_matrix,
-            mutation,
-            context,
-            locus,
-            count,
-            trinuc_distributions,
-            window_size
-        ):
 
-        mutation_matrix = _lambda[:,:,None] * rho
 
-        p_m_l = trinuc_distributions[context, locus]*mutation_matrix[:, context, mutation] \
-                 / np.dot(_lambda, trinuc_distributions[:,locus]) # K,C x C,L -> K,I
+    def multidimensional_plot(self, ax = None, figsize = None,
+                              reorder_features = True,
+                              cluster_components = True,
+                              cluster_distance = 0.75,
+                              mask_largest_cluster = True,
+                              palette = 'tab10',
+                              clusters = None,
+                              dotsize = 15,
+                              fontsize = 7,
+                            ):
         
-        mutrates = window_size*np.exp(beta @ X_matrix)
+        if ax is None:
+            if figsize is None:
+                figsize = (2*self.n_locus_features/2, 2*1.25)
 
-        p_l = mutrates[:, locus]/np.sum(mutrates, axis = -1, keepdims=True) # K,I
+            _, ax = plt.subplots(1,1,figsize= figsize)
+
+        if cluster_components:
+            
+            if isinstance(palette, str):
+                color_list = list(plt.get_cmap(palette).colors)
+            else:
+                color_list = palette
+
+            if clusters is None:
+                clusters = self._cluster_component_associations(cluster_distance)
+                
+                if max(set(clusters)) > 1 and mask_largest_cluster:
+                    color_list = ['grey'] + color_list
+
+            component_colors = [color_list[cluster] for cluster in clusters]
+
+        else:
+            component_colors = ['black']*self.n_components
+
+
+        for component, color in zip(range(self.n_components), component_colors):
+
+            self.plot_coefficients(component, 
+                                   ax = ax, 
+                                   color = color,
+                                   dotsize=dotsize,
+                                   reorder_features = False,
+                                   fontsize=fontsize,
+                                   )
+
+        if reorder_features:
+            ax.set_xticks(self._order_features())
+
+        return ax
+
+
+    def plot_summary(self, fontsize = 7):
         
-        p_ml_z = p_l*p_m_l*alpha[:,None]
+        coefplot_width = self.n_locus_features/2
+        figwidth = coefplot_width + 5.5
 
-        q_z = p_ml_z/p_ml_z.sum(axis = 0, keepdims = True)
-
-        z = np.argmax(np.log(q_z.T) + self.random_state.gumbel(size=q_z.T.shape), axis=1)
-
-        log_p_ml_z = (np.log(count) + np.log(p_m_l)[z, np.arange(len(z))] \
-            + np.log(p_l)[z, np.arange(len(z))]) # choose a likelihood for each observation
-
-        log_p_z_alpha = dirichlet_multinomial_logprob(z, np.array(alpha))
-
-        return log_p_z_alpha + np.sum(log_p_ml_z) 
-
-    
-    def _global_posterior_samples(self, size = 1000):
-
-        for i in range(size):
-
-            beta = self.beta_nu*self.random_state.randn(*self.beta_mu.shape) + self.beta_mu
-
-            _lambda = np.vstack([
-                self.random_state.dirichlet(self.delta[k])[None,:]
-                for k in range(self.n_components)
-            ])
-
-            rho = np.vstack([
-                np.expand_dims(np.vstack([
-                    self.random_state.dirichlet(self.omega[k, c])[None,:]
-                    for c in range(32)
-                ]), axis = 0)
-                for k in range(self.n_components)
-            ])
-
-            yield {'beta' : beta, '_lambda' : _lambda, 'rho' : rho}
-
-
-    def _log_posterior_importance_weight(self,*, beta, _lambda, rho):
-
-        p_prior = stats.norm(np.zeros_like(self.beta_mu), self.param_tau[:,None]).pdf(beta)
-        p_posterior = stats.norm(self.beta_mu, self.beta_nu).pdf(beta)
-
-        return np.log(p_prior).sum() - np.log(p_posterior).sum()
-
-    
-    def IS_marginal_likelihood(self, sample, corpus, alpha = None, size = 1000):
+        _, ax = plt.subplots(
+                            self.n_components, 2, 
+                            figsize = (figwidth, 1.25*self.n_components),
+                            sharex = 'col',
+                            gridspec_kw={
+                                'width_ratios': [coefplot_width, figwidth - coefplot_width]
+                                }
+                            )
         
-        if alpha is None:
-            alpha = self.alpha
+        for i in range(self.n_components):
 
-        logp_samples = []
-        for posterior in tqdm.tqdm(self._global_posterior_samples(size = size), ncols =100, total = size):
-            logp_samples.append(
-                #self._log_posterior_importance_weight(**posterior) + \
-                self._model_conditional_log_prob(
-                    **posterior, **sample, 
-                    X_matrix = corpus.X_matrix,
-                    trinuc_distributions= corpus.trinuc_distributions,
-                    alpha = alpha,
-                )
-            )
+            self.plot_signature(i, ax = ax[i,1], normalization='global', fontsize=fontsize)
+            self.plot_coefficients(i, ax = ax[i,0], fontsize=fontsize)
+            ax[i,0].set(xlabel = '', ylabel = 'Component ' + str(i), title = '')
+            ax[i,1].set(title = '')
+            ax[i,0].spines['bottom'].set_visible(False)
 
-        return logp_samples
+        ax[-1, 0].set(xlabel = 'Feature')
+
+        return ax
+
+
+    def save_summary_tables(self):
+        pass
 
