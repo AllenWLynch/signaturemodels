@@ -4,6 +4,7 @@ import tempfile
 import numpy as np
 from sklearn.preprocessing import StandardScaler, PowerTransformer, MinMaxScaler
 import logging
+import os
 logger = logging.getLogger('Roadmap downloader')
 logger.setLevel(logging.INFO)
 
@@ -20,6 +21,8 @@ config = {
 
 
 ROADMAP_URL = 'https://egg2.wustl.edu/roadmap/data/byFileType/signal/consolidatedImputed/{signal}/{sample}-{signal}.imputed.{type}.signal.bigwig'
+BIGWIG_NAME = '{sample}-{signal}.imputed.{type}.signal.bigwig'
+
 
 def _check_windows_file(windows_file):
 
@@ -57,12 +60,13 @@ def normalize_covariate(*,track_file, output, feature_name,
 
 
 def process_bigwig(*,bigwig_file, windows_file, output,
-                   feature_name = None, normalization = None):
+                   feature_name = None):
     
     _check_windows_file(windows_file)
 
-    with tempfile.NamedTemporaryFile() as bed, \
-        tempfile.NamedTemporaryFile() as track:
+    print('#' + feature_name, file= output, flush = True)
+
+    with tempfile.NamedTemporaryFile() as bed:
 
         subprocess.check_output(
                         ['bigWigAverageOverBed', bigwig_file, windows_file, bed.name],
@@ -70,58 +74,54 @@ def process_bigwig(*,bigwig_file, windows_file, output,
 
         cut_process = subprocess.Popen(
             ['cut','-f5', bed.name],
-            stdout = track,
+            stdout = output,
         )
         cut_process.communicate()
-        track.flush()
+        output.flush()
 
         if not cut_process.returncode == 0:
             raise RuntimeError('Command returned non-zero exit status')
-
-        normalize_covariate(track_file=track.name, 
-                            output=output,
-                            normalization=normalization,
-                            feature_name=feature_name
-                            )
+        
 
 
 def process_bedgraph(*,bedgraph_file, windows_file, output,
-                     column = 4, feature_name = None, normalization = None):
+                     column = 4, feature_name = None):
     
     _check_windows_file(windows_file)
-    
-    with tempfile.NamedTemporaryFile() as track:
 
-        map_process = subprocess.Popen(
-            ['bedtools', 'map','-a', windows_file, '-b', bedgraph_file, 
-            '-c', str(column), '-o', 'mean', 
-            '-sorted', '-null', '0.'],
-            stdout = subprocess.PIPE,
-            bufsize=1000,
-            universal_newlines=True,
-        )
+    print('#' + feature_name, file= output, flush = True)
 
-        cut_process = subprocess.Popen(
-            ['cut','-f5'],
-            stdin = map_process.stdout,
-            stdout = track,
-        )
+    map_process = subprocess.Popen(
+        ['bedtools', 'map','-a', windows_file, '-b', bedgraph_file, 
+        '-c', str(column), '-o', 'mean', 
+        '-sorted', '-null', '0.'],
+        stdout = subprocess.PIPE,
+        bufsize=1000,
+        universal_newlines=True,
+    )
 
-        cut_process.communicate(); map_process.communicate()
-        track.flush()
+    cut_process = subprocess.Popen(
+        ['cut','-f5'],
+        stdin = map_process.stdout,
+        stdout = output,
+    )
 
-        if not cut_process.returncode == 0 or not map_process.returncode == 0:
-            raise RuntimeError('Command returned non-zero exit status')
+    cut_process.communicate(); map_process.communicate()
+    output.flush()
 
-        normalize_covariate(track_file=track.name, 
-                            output=output,
-                            normalization=normalization,
-                            feature_name=feature_name
-                            )
+    if not cut_process.returncode == 0 or not map_process.returncode == 0:
+        raise RuntimeError('Command returned non-zero exit status')
+
     
 
 
-def fetch_roadmap_features(*,roadmap_id, windows_file, output, n_jobs = 1):
+def fetch_roadmap_features(*,roadmap_id, windows_file, output, 
+                           bigwig_dir = 'bigwigs', n_jobs = 1):
+
+    logger.info('Saving bigwigs to "{}" directory.'.format(bigwig_dir))
+
+    if not os.path.isdir(bigwig_dir):
+        os.makedirs(bigwig_dir)
 
     try:
 
@@ -132,43 +132,43 @@ def fetch_roadmap_features(*,roadmap_id, windows_file, output, n_jobs = 1):
 
         def _summarize_bigwig(signal, track_type, output_file):
 
-            with tempfile.NamedTemporaryFile() as bigwig, \
-                    tempfile.NamedTemporaryFile() as bed, \
-                    tempfile.NamedTemporaryFile() as track:
+            bw_kw = dict(
+                signal = signal,
+                sample = roadmap_id,
+                type = track_type
+            )
+            
+            bigwig_file = os.path.join(bigwig_dir, BIGWIG_NAME.format(**bw_kw))
 
-                _url = ROADMAP_URL.format(
-                    signal = signal,
-                    sample = roadmap_id,
-                    type = track_type
-                )
+            if not os.path.isfile(bigwig_file):
+                
+                _url = ROADMAP_URL.format(**bw_kw)
 
                 logger.info(f'Downloading from {_url}')
-                subprocess.check_output(['curl', _url, '-o', bigwig.name, '-f', '-s'])
+                
+                try:
+                    subprocess.check_output(['curl', _url, '-o', bigwig_file, '-f', '-s'])
+                except (Exception, KeyboardInterrupt) as err:
 
-                with open(output_file.name, 'w') as f:
-            
-                    process_bigwig(
-                        bigwig_file = bigwig.name,
-                        windows_file = windows_file,
-                        output = f,
-                        feature_name = signal,
-                        normalization = 'power',
-                    )
+                    logger.error(f'Failed to download {_url}, removing corrupted file.')
+                    os.remove(bigwig_file)
+                    raise RuntimeError(f'Failed to download {_url}') from err
+            else:
+                logger.info(f'Found {bigwig_file}, using downloaded version.')
 
+
+            with open(output_file.name, 'w') as f:
+        
+                process_bigwig(
+                    bigwig_file = bigwig_file,
+                    windows_file = windows_file,
+                    output = f,
+                    feature_name = signal,
+                )
 
         for signal, track_type in config.items():
             _summarize_bigwig(signal, track_type, aggregated_files[signal])
 
-        '''with Pool(n_jobs) as pool:
-
-            for signal, track_type in config.items():
-                pool.apply_async(
-                    _summarize_bigwig,
-                    args = (signal, track_type, aggregated_files[signal])
-                )
-
-            pool.close()
-            pool.join()'''
 
         logger.info(f'Merging features ...')
 

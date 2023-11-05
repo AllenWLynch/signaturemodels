@@ -62,15 +62,20 @@ class LambdaOptimizer:
     def optimize(delta0,*,
         trinuc_distributions,
         locus_sstats,
-        context_sstats):
+        context_sstats,
+        fixed_deltas = None,
+    ):
+        
+        def optim_component(k):
+            return LambdaOptimizer._optimize(
+                delta0 = delta0[k],
+                trinuc_distributions = trinuc_distributions,
+                context_sstats = context_sstats[k],
+                locus_sstats={ l : v[k] for l,v in locus_sstats.items() }
+            )
 
         return np.vstack([
-                LambdaOptimizer._optimize(
-                    delta0 = delta0[k],
-                    trinuc_distributions = trinuc_distributions,
-                    context_sstats = context_sstats[k],
-                    locus_sstats={ l : v[k] for l,v in locus_sstats.items() }
-                )
+                optim_component(k) if fixed_deltas is None or not fixed_deltas[k] else delta0[k]
                 for k in range(delta0.shape[0])
             ])
 

@@ -24,11 +24,12 @@ def create_study(
     batch_size = 32,
     factor = 3,
     train_size = 0.7,
-    tune_subsample= False,
+    skip_tune_subsample=False,
     model_type = 'regression',
     empirical_bayes = False,
     pi_prior = 1.,
     num_epochs = 500,
+    fix_signatures = None,
     locus_subsample_rates = [0.0625, 0.125, 0.25],
     storage = None,
     seed = 0,*,
@@ -46,6 +47,7 @@ def create_study(
         batch_size = batch_size,
         pi_prior = pi_prior,
         empirical_bayes = empirical_bayes,
+        fix_signatures = fix_signatures,
     )
 
     study = optuna.create_study(
@@ -70,12 +72,13 @@ def create_study(
     study.set_user_attr('min_components', min_components)
     study.set_user_attr('max_components', max_components)
     study.set_user_attr('model_params', model_params)
-    study.set_user_attr('tune_subsample', tune_subsample)
+    study.set_user_attr('tune_subsample', not skip_tune_subsample)
     study.set_user_attr('locus_subsample_rates', locus_subsample_rates)
     study.set_user_attr('model_type', model_type)
     study.set_user_attr('seed', seed)
     study.set_user_attr('train_size', train_size)
     study.set_user_attr('num_epochs', num_epochs)
+    
 
 
 

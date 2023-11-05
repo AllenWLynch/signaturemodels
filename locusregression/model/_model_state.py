@@ -4,17 +4,23 @@ from .base import log_dirichlet_expectation
 from .optim_beta import BetaOptimizer
 from .optim_lambda import LambdaOptimizer
 from .base import update_alpha, update_tau, dirichlet_bound
+from ..simulation import SimulatedCorpus, COSMIC_SIGS
 
 class ModelState:
 
     n_contexts = 32
 
-    def __init__(self,*,
+    def __init__(self,
+                fix_signatures = None,
+                pseudocounts = 10000,*,
                 n_components, 
                 random_state, 
                 n_features, 
                 empirical_bayes,
-                dtype):
+                genome_trinuc_distribution,
+                dtype,
+                **kw,
+            ):
         
         assert isinstance(n_components, int) and n_components > 1
         self.n_components = n_components
@@ -41,8 +47,41 @@ class ModelState:
         self.beta_nu = self.random_state.gamma(2., 0.005, 
                                (n_components, n_features)
                               ).astype(dtype, copy=False)
+        
+        if not fix_signatures is None:
+            self._fix_signatures(fix_signatures,
+                                 n_components = n_components,
+                                 genome_trinuc_distribution = genome_trinuc_distribution,
+                                 pseudocounts = pseudocounts
+                                )
+        else:
+            self.fixed_signatures = [False]*n_components
 
         self.update_signature_distribution()
+
+
+
+    def _fix_signatures(self, fix_signatures,*,
+                        n_components, 
+                        genome_trinuc_distribution, 
+                        pseudocounts = 10000):
+            
+        assert isinstance(fix_signatures, list) and len(fix_signatures) < n_components, \
+                'fix_signatures must be a list of signature names with a most n_components elements'
+        
+        self.fixed_signatures = [True]*len(fix_signatures) + [False]*(n_components - len(fix_signatures))
+
+        for i, sig in enumerate(fix_signatures):
+            
+            try:
+                COSMIC_SIGS[sig]
+            except KeyError:
+                raise ValueError(f'Unknown signature {sig}')
+            
+            sigmatrix = SimulatedCorpus.cosmic_sig_to_matrix(COSMIC_SIGS[sig])
+            
+            self.omega[i] = sigmatrix * pseudocounts + 1.
+            self.delta[i] = sigmatrix.sum(axis = -1) * pseudocounts/genome_trinuc_distribution.reshape(-1) + 1.
 
     
     def _svi_update(self, param, new_value, learning_rate):
@@ -60,7 +99,13 @@ class ModelState:
 
 
     def update_rho(self, sstats, learning_rate):
-        self._svi_update('omega', 1 + sstats.mutation_sstats, learning_rate)
+
+        new_rho = np.vstack([
+            np.expand_dims(1 + sstats.mutation_sstats[k] if not self.fixed_signatures[k] else self.omega[k], axis = 0)
+            for k in range(self.n_components)
+        ])
+
+        self._svi_update('omega', new_rho, learning_rate)
 
     
     def update_lambda(self, sstats, learning_rate):
@@ -70,6 +115,7 @@ class ModelState:
             trinuc_distributions = sstats.trinuc_distributions,
             context_sstats = sstats.context_sstats,
             locus_sstats = sstats.locus_sstats,
+            fixed_deltas=self.fixed_signatures,
         )
 
         self._svi_update('delta', _delta, learning_rate)

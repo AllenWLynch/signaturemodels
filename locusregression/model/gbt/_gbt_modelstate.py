@@ -5,18 +5,24 @@ from .mu_tree import optim_tree as optimize_mu, TreeFitError
 
 class GBTModelState(ModelState):
 
-    def __init__(self,*,
+    def __init__(self,
+                fix_signatures = None,
+                pseudocounts = 10000,
+                tree_learning_rate = 0.1,*,
                 n_components, 
                 random_state, 
                 n_features, 
                 empirical_bayes,
-                dtype):
+                genome_trinuc_distribution,
+                dtype
+                ):
         
         assert isinstance(n_components, int) and n_components > 1
         self.n_components = n_components
         self.n_features = n_features
         self.random_state = random_state
         self.empirical_bayes = empirical_bayes
+        self.tree_learning_rate = tree_learning_rate
         
         self.delta = self.random_state.gamma(100, 1/100, 
                                                (n_components, self.n_contexts),
@@ -26,9 +32,22 @@ class GBTModelState(ModelState):
                                                (n_components, self.n_contexts, 3),
                                               ).astype(dtype, copy = False)
         
-        self.mu_trees, self.nu_trees = [[] for i in range(n_components)],[[] for i in range(n_components)]
+        self.mu_trees = [[] for i in range(n_components)]
+        self.nu_trees = [[] for i in range(n_components)]
 
-        self.mu_tree_added, self.nu_tree_added = [False]*self.n_components, [False]*self.n_components
+        self.mu_tree_added = [False]*self.n_components
+        self.nu_tree_added = [False]*self.n_components
+
+
+        if not fix_signatures is None:
+            self._fix_signatures(fix_signatures,
+                                 n_components = n_components,
+                                 genome_trinuc_distribution = genome_trinuc_distribution,
+                                 pseudocounts = pseudocounts
+                                )
+        else:
+            self.fixed_signatures = [False]*n_components
+
 
         self.update_signature_distribution()
 
@@ -40,7 +59,7 @@ class GBTModelState(ModelState):
             try:
                 self.mu_trees[k].append(
                     optimize_mu(
-                        learning_rate=learning_rate,
+                        learning_rate=learning_rate*self.tree_learning_rate,
                         beta_sstats = [{ l : v[k] for l,v in stats.items() } for stats in sstats.beta_sstats],
                         logmus = [logmus[k] for logmus in sstats.logmus],
                         lognus = [lognus[k] for lognus in sstats.lognus],
@@ -53,6 +72,7 @@ class GBTModelState(ModelState):
 
             except TreeFitError:
                 pass
+
 
     def update_nu_tree(self, sstats, learning_rate):
         pass
@@ -86,6 +106,7 @@ class GBTModelState(ModelState):
         self.update_signature_distribution() # update pre-calculated pure functions of model state 
 
 
+
     def get_posterior_entropy(self):
 
         ent = 0
@@ -112,9 +133,7 @@ class GBTCorpusState(CorpusState):
                               ).astype(self.dtype, copy=False)
 
         self._lognu = np.zeros_like(self._logmu)
-                      #self.random_state.gamma(2, 0.005, 
-                      #         (self.n_components, self.n_loci) 
-                      #        ).astype(self.dtype, copy=False)
+                      
     
 
     def update_mutation_rate(self, model_state):
@@ -136,7 +155,9 @@ class GBTCorpusState(CorpusState):
         except IndexError:
             pass        
         
-        self.mu_tree_added, self.nu_tree_added = [False]*self.n_components, [False]*self.n_components
+        self.mu_tree_added = [False]*self.n_components
+        self.nu_tree_added = [False]*self.n_components
+
 
         self._logvar = 1/2*(self._lognu)**2
 

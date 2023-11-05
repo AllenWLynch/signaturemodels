@@ -188,7 +188,8 @@ def train_model(
         verbose = False,
         n_jobs = 1,
         empirical_bayes = False,
-        model_type = 'regression',*,
+        model_type = 'regression',
+        fix_signatures = None,*,
         n_components,
         corpuses,
         output,
@@ -198,6 +199,7 @@ def train_model(
     basemodel = _get_basemodel(model_type)
     
     model = basemodel(
+        fix_signatures=fix_signatures,
         locus_subsample = locus_subsample,
         batch_size = batch_size,
         seed = seed, 
@@ -246,6 +248,12 @@ trainer_optional.add_argument('--batch-size','-batch', type = posint, default = 
     help = 'Use minibatch updates via stochastic variational inference.')
 trainer_optional.add_argument('--time-limit','-time', type = posint, default = None,
     help = 'Time limit in seconds for model training.')
+trainer_optional.add_argument('--fix-signatures','-sigs', nargs='+', type = str, default = None,
+                              help = 'COSMIC signatures to fix as part of the generative model, referenced by name (SBS1, SBS2, etc.)\n '
+                                    'The number of signatures listed must be less than or equal to the number of components.\n '
+                                    'Any extra components will be initialized randomly and learned. If no signatures are provided, '
+                                    'all are learned de-novo.'
+                              )
 trainer_optional.add_argument('--empirical-bayes','-eb', action = 'store_true', default=False,)
 trainer_optional.add_argument('--tau', type = posint, default = 1)
 trainer_optional.add_argument('--kappa', type = posfloat, default=0.5)
@@ -330,11 +338,17 @@ tune_optional.add_argument('--storage',type = str, default=None,
                             )
 tune_optional.add_argument('--factor','-f',type = posint, default = 4,
     help = 'Successive halving reduction factor for each iteration')
-tune_optional.add_argument('--tune-subsample', action = 'store_true', default=False)
+tune_optional.add_argument('--skip-tune-subsample', action = 'store_true', default=False)
 tune_optional.add_argument('--locus-subsample-rates','-rates', type = posfloat, nargs = '+', default = [0.0625, 0.125, 0.25])
 
 model_options = tune_sub.add_argument_group('Model arguments')
 
+model_options.add_argument('--fix-signatures','-sigs', nargs='+', type = str, default = None,
+                              help = 'COSMIC signatures to fix as part of the generative model, referenced by name (SBS1, SBS2, etc.)\n '
+                                    'The number of signatures listed must be less than or equal to the number of components.\n '
+                                    'Any extra components will be initialized randomly and learned. If no signatures are provided, '
+                                    'all are learned de-novo.'
+                              )
 model_options.add_argument('--num-epochs', '-e', type = posint, default=500,
     help = 'Maximum number of epochs to allow training during'
             ' successive halving/Hyperband. This should be set high enough such that the model converges to a solution.')

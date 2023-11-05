@@ -55,6 +55,7 @@ class LocusRegressor:
         num_epochs = 300, 
         difference_tol = 1e-3,
         estep_iterations = 1000,
+        tree_learning_rate = 0.5,
         bound_tol = 1e-2,
         quiet = False,
         n_jobs = 1,
@@ -65,6 +66,7 @@ class LocusRegressor:
         time_limit = None,
         empirical_bayes = False,
         batch_size = None,
+        fix_signatures =  None,
     ):
         '''
         Params
@@ -98,14 +100,14 @@ class LocusRegressor:
         self.time_limit = time_limit
         self.empirical_bayes = empirical_bayes
         self.batch_size = batch_size
-
+        self.fix_signatures = fix_signatures
+        self.tree_learning_rate = tree_learning_rate
 
 
     def save(self, filename):
         with open(filename, 'wb') as f:
             pickle.dump(self, f)
         
-    
 
     @staticmethod
     def get_flattened_phi(*,model_state, sample, corpus_state):
@@ -288,6 +290,72 @@ class LocusRegressor:
         return gamma
 
 
+    def _init_model(self, corpus):
+
+        self.random_state = np.random.RandomState(self.seed)
+        self.bound_random_state = np.random.RandomState(self.seed + 1)
+
+        self._calc_signature_sstats(corpus)
+
+        if not self.fix_signatures is None:
+            logger.warn('Fixing signatures: ' + ', '.join(map(str, self.fix_signatures)) + ', these will not be updated during training.')
+        
+
+        self.model_state = self.MODEL_STATE(
+                n_components=self.n_components,
+                random_state=self.random_state,
+                n_features=self.n_locus_features,
+                empirical_bayes = self.empirical_bayes,
+                dtype = self.dtype,
+                fix_signatures = self.fix_signatures,
+                genome_trinuc_distribution = self._genome_trinuc_distribution,
+                tree_learning_rate = self.tree_learning_rate,
+        )
+
+        self.bounds, self.elapsed_times, self.total_time, self.epochs_trained = \
+            [], [], 0, 0
+        
+        self.corpus_states = {
+            corp.name : self.CORPUS_STATE(
+                            corp, 
+                            pi_prior=self.pi_prior,
+                            n_components=self.n_components,
+                            dtype = self.dtype, 
+                            random_state = self.random_state,
+                            subset_sample=1
+                        )
+            for corp in corpus.corpuses
+        }
+
+        self.update_mutation_rates()
+
+        self._gamma = self._init_doc_variables(self.n_samples)
+
+
+    def _subsample_corpus(self,*,corpus, batch_svi, locus_svi, n_subsample_loci):
+
+        if batch_svi:
+            update_samples = self.random_state.choice(self.n_samples, size = self.batch_size, replace = False)
+            inner_corpus = corpus.subset_samples(update_samples)
+        else:
+            update_samples = np.arange(self.n_samples)
+            inner_corpus = corpus
+        
+        if locus_svi:
+            update_loci = self.random_state.choice(self.n_loci, size = n_subsample_loci, replace = False)
+            inner_corpus = inner_corpus.subset_loci(update_loci)
+
+            inner_corpus_states = {
+                name : state.subset_corpusstate(inner_corpus.get_corpus(name), update_loci)
+                for name, state in self.corpus_states.items()
+            }
+        else:
+            inner_corpus_states = self.corpus_states
+
+        return inner_corpus, inner_corpus_states, update_samples
+
+
+
     def _fit(self,corpus, reinit = True):
         
         self.batch_size = len(corpus) if self.batch_size is None else min(self.batch_size, len(corpus))
@@ -301,7 +369,6 @@ class LocusRegressor:
         self.n_samples, self.feature_names = len(corpus), corpus.feature_names
         
         n_subsample_loci = int(self.n_loci * self.locus_subsample)
-
         
         assert self.n_locus_features < self.n_loci, \
             'The feature matrix should be of shape (N_features, N_loci) where N_features << N_loci. The matrix you provided appears to be in the wrong orientation.'
@@ -314,36 +381,8 @@ class LocusRegressor:
                 reinit = True
 
         if reinit:
-
-            self.random_state = np.random.RandomState(self.seed)
-            self.bound_random_state = np.random.RandomState(self.seed + 1)
-
-            self.model_state = self.MODEL_STATE(
-                n_components=self.n_components,
-                random_state=self.random_state,
-                n_features=self.n_locus_features,
-                empirical_bayes = self.empirical_bayes,
-                dtype = self.dtype
-            )
-
-            self.bounds, self.elapsed_times, self.total_time, self.epochs_trained = \
-                [], [], 0, 0
+            self._init_model(corpus)
             
-            self.corpus_states = {
-                corp.name : self.CORPUS_STATE(
-                                corp, 
-                                pi_prior=self.pi_prior,
-                                n_components=self.n_components,
-                                dtype = self.dtype, 
-                                random_state = self.random_state,
-                                subset_sample=1
-                            )
-                for corp in corpus.corpuses
-            }
-
-            self.update_mutation_rates()
-
-            self._gamma = self._init_doc_variables(self.n_samples)
 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
@@ -352,24 +391,13 @@ class LocusRegressor:
 
                 start_time = time.time()
                 
-                if batch_svi:
-                    update_samples = self.random_state.choice(self.n_samples, size = self.batch_size, replace = False)
-                    inner_corpus = corpus.subset_samples(update_samples)
-                else:
-                    update_samples = np.arange(self.n_samples)
-                    inner_corpus = corpus
-                
-                if locus_svi:
-                    update_loci = self.random_state.choice(self.n_loci, size = n_subsample_loci, replace = False)
-                    inner_corpus = inner_corpus.subset_loci(update_loci)
-
-                    inner_corpus_states = {
-                        name : state.subset_corpusstate(inner_corpus.get_corpus(name), update_loci)
-                        for name, state in self.corpus_states.items()
-                    }
-                else:
-                    inner_corpus_states = self.corpus_states
-                
+                inner_corpus, inner_corpus_states, update_samples = \
+                            self._subsample_corpus(
+                                                corpus = corpus, 
+                                                batch_svi = batch_svi, 
+                                                locus_svi = locus_svi, 
+                                                n_subsample_loci = n_subsample_loci
+                                                )
 
                 sstats, new_gamma = self._inference(
                             locus_subsample_rate=self.locus_subsample,
@@ -446,10 +474,6 @@ class LocusRegressor:
         except KeyboardInterrupt:
             logger.info('Training interrupted by user.')
             pass
-
-        self._calc_signature_sstats(corpus)
-
-        #gamma_hat = self.predict(corpus)
 
         return self
 
@@ -555,13 +579,12 @@ class LocusRegressor:
 
         #self._weighted_trinuc_dists = self._get_weighted_trinuc_distribution(corpus)
 
-        self._genome_trinuc_distribution = np.sum(
+        _genome_trinuc_distribution = np.sum(
             corpus.trinuc_distributions,
-                #*corpus.exposures,
             -1, keepdims= True
         )
 
-        self._genome_trinuc_distribution/=self._genome_trinuc_distribution.sum()
+        self._genome_trinuc_distribution = _genome_trinuc_distribution/_genome_trinuc_distribution.sum()
 
 
     def get_phi_locus_distribution(self, corpus):
@@ -954,7 +977,7 @@ class LocusRegressor:
         ax.tick_params(axis='y', which='both', labelsize = fontsize)
 
         ax.set(xlabel = 'Feature', ylabel = 'Coefficient')
-        ax.xaxis.label.set_size(7); ax.yaxis.label.set_size(fontsize)
+        ax.xaxis.label.set_size(fontsize); ax.yaxis.label.set_size(fontsize)
 
         ax.set_title('Component ' + str(component), fontsize = fontsize)
 
@@ -1039,7 +1062,9 @@ class LocusRegressor:
 
         if reorder_features:
             ax.set_xticks(self._order_features())
-
+        
+        ax.set(title = '')
+        
         return ax
 
 
