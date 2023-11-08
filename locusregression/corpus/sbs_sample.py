@@ -1,6 +1,7 @@
 from .featurization import MUTATIONS_IDX, CONTEXT_IDX
 from .genome_tools import Region
 
+import os
 import subprocess
 import tempfile
 import sys
@@ -58,7 +59,7 @@ def code_SBS_mutation(*,vcf_file, fasta_file, index = -1,
 
         context, alt = convert_to_mutation(context, sbs.alt)
 
-        return MUTATIONS_IDX[context][alt], CONTEXT_IDX[context]
+        return MUTATIONS_IDX[context][alt], CONTEXT_IDX[context], '{c1}[{c2}>{alt}]{c3}'.format(c1 = context[0], c2 = context[1], alt = alt, c3 = context[2])
     
 
     with Fasta(fasta_file) as fa:
@@ -74,10 +75,10 @@ def code_SBS_mutation(*,vcf_file, fasta_file, index = -1,
                                     annotation=(line[VCF.REF], line[VCF.ALT])
                                 )
             
-            mut, context = _get_context_mutation_idx(fa, mut_region)
+            mut, context, cosmic_str = _get_context_mutation_idx(fa, mut_region)
 
             print(
-                mut_region.chromosome, mut_region.start, mut_region.end,f'{mut}:{context}',
+                mut_region.chromosome, mut_region.start, mut_region.end,f'{mut_region.chromosome}:{mut_region.start}:{cosmic_str}:{mut}:{context}',
                 sep = '\t',
                 file = output,
             )
@@ -86,12 +87,17 @@ def code_SBS_mutation(*,vcf_file, fasta_file, index = -1,
 @dataclass
 class SBSSample:
 
+    chroms : np.ndarray
+    pos : np.ndarray
+    cosmic_strs : np.ndarray
     mutation : np.ndarray
     context : np.ndarray
     locus : np.ndarray
     count : np.ndarray
     exposures : np.ndarray
     name : str
+
+    data_attrs = ['chrom','pos','cosmic_str','mutation','context','locus','count','exposures']
 
     @classmethod
     def featurize_mutations(cls, vcf_file, regions_file, fasta_file,
@@ -147,7 +153,7 @@ class SBSSample:
             if not all([p.returncode == 0 for p in [map_process, code_process, filter_process]]):
                 raise RuntimeError('Sample processing failed. See error message above.')
 
-            mutations=[]; contexts=[]; loci=[]; counts=[]
+            chroms=[]; pos=[]; cosmic_strs=[]; mutations=[]; contexts=[]; loci=[]
 
             with open(tmp.name, 'r') as f:
                 
@@ -158,50 +164,57 @@ class SBSSample:
                         continue
 
                     mutation_codes = line[-1].split(',')
-                    mutation_codes = [tuple(map(int, code.split(':'))) for code in mutation_codes]
-                    codes_and_counts = Counter(mutation_codes)
+                    mutation_codes = [code.split(':') for code in mutation_codes]
 
-                    for code, count in codes_and_counts.items():
-                        mutations.append(code[0])
-                        contexts.append(code[1])
+                    for code in mutation_codes:
+                        chroms.append(code[0])
+                        pos.append(int(code[1]))
+                        cosmic_strs.append(code[2])
+                        mutations.append(int(code[3]))
+                        contexts.append(int(code[4]))
                         loci.append(locus_idx)
-                        counts.append(count)
+                        
 
         return cls(
             mutation = np.array(mutations), 
             context = np.array(contexts),
-            locus = np.array(loci), 
-            count = np.array(counts),
-            name = vcf_file,
+            locus = np.array(loci),
+            cosmic_strs = np.array(cosmic_strs),
+            chroms = np.array(chroms),
+            pos = np.array(pos),
+            count = np.ones_like(mutations),
+            name = os.path.abspath(vcf_file),
         )
     
     
     def create_h5_dataset(self, h5_object, dataset_name):
-        h5_object.create_dataset(f'{dataset_name}/mutation', data = self.mutation)
+
+        for attr in self.data_attrs:
+            h5_object.create_dataset(f'{dataset_name}/{attr}', data = self.__getattribute__(attr))
+
+        '''h5_object.create_dataset(f'{dataset_name}/mutation', data = self.mutation)
         h5_object.create_dataset(f'{dataset_name}/context', data = self.context)
         h5_object.create_dataset(f'{dataset_name}/locus', data = self.locus)
         h5_object.create_dataset(f'{dataset_name}/count', data = self.count)
-        h5_object.create_dataset(f'{dataset_name}/exposures', data = self.exposures)
+        h5_object.create_dataset(f'{dataset_name}/exposures', data = self.exposures)'''
+
         h5_object[dataset_name].attrs['name'] = self.name
 
     
-    def read_h5_dataset(h5_object, dataset_name):
+    @classmethod
+    def read_h5_dataset(cls, h5_object, dataset_name):
         return SBSSample(
-            mutation = h5_object[f'{dataset_name}/mutation'][...],
-            context = h5_object[f'{dataset_name}/context'][...],
-            locus = h5_object[f'{dataset_name}/locus'][...],
-            count = h5_object[f'{dataset_name}/count'][...],
-            exposures = h5_object[f'{dataset_name}/exposures'][...],
+            **{
+                attr : h5_object[f'{dataset_name}/{attr}'][...]
+                for attr in cls.data_attrs
+            },
             name = h5_object[dataset_name].attrs['name'],
         )
     
+
     def asdict(self):
         return {
-            'mutation' : self.mutation,
-            'context' : self.context,
-            'locus' : self.locus,
-            'count' : self.count,
-            'exposures' : self.exposures,
+            **{attr : self.__getattribute__(attr) for attr in self.data_attrs},
             'name' : self.name,
         }
         
