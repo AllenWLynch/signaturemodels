@@ -1,22 +1,22 @@
 
-import numpy as np
 from .base import log_dirichlet_expectation
-from scipy.cluster import hierarchy
-#from numba import njit
 from locusregression.corpus import COSMIC_SORT_ORDER, SIGNATURE_STRINGS, MUTATION_PALETTE
-
+from locusregression.corpus.sbs_sample import SBSSample
+import locusregression.model._sstats as _sstats
+import locusregression.model._importance_sampling as IS
 from ._model_state import ModelState, CorpusState
+
+# external imports
+import numpy as np
+from scipy.cluster import hierarchy
 import time
 import warnings
-
-import logging
-logger = logging.getLogger('LocusRegressor')
-
 import matplotlib.pyplot as plt
 import pickle
 from functools import partial
 from collections import defaultdict
-import locusregression.model._sstats as _sstats
+import logging
+logger = logging.getLogger('LocusRegressor')
 
 
 #@njit(parallel = True)
@@ -447,10 +447,6 @@ class LocusRegressor:
                     logger.info('Time limit reached, stopping training.')
                     break
 
-            else:
-                pass
-
-        self.trained = True
         return self
 
 
@@ -475,6 +471,18 @@ class LocusRegressor:
             logger.info('Training interrupted by user.')
             pass
 
+        self.trained = True
+        
+        if not self.empirical_bayes:
+            gammas = {name : [] for name in self.corpus_states.keys()}
+            for sample, gamma in zip(corpus, self._gamma):
+                gammas[sample.corpus_name].append(gamma)
+            
+            
+            for corpus_state in self.corpus_states.values():
+                corpus_state.set_alpha(np.array(gammas[corpus_state.corpus.name]))
+
+
         return self
 
 
@@ -482,67 +490,6 @@ class LocusRegressor:
         return self._fit(corpus, reinit=False)
 
 
-    def _get_test_corpus_states(self, corpus):
-
-        temp_corpus_states = {
-            corp.name : self.CORPUS_STATE(corp, 
-                        pi_prior=self.corpus_states[corp.name].pi_prior,
-                        n_components=self.n_components,
-                        dtype = self.dtype, 
-                        random_state = self.random_state,
-                        subset_sample=1)
-            for corp in corpus.corpuses
-        }
-
-        for state in temp_corpus_states.values():
-            state.update_mutation_rate(self.model_state)
-
-        return temp_corpus_states
-    
-
-    def predict(self,corpus):
-        '''
-        For each sample in corpus, predicts the expectation of the signature compositions.
-
-        Parameters
-        ----------
-        corpus : locusregression.Corpus, list of dicts
-            Pre-compiled corpus loaded into memory
-
-        Returns
-        -------
-        gamma : np.ndarray of shape (n_samples, n_components)
-            Compositions over signatures for each sample
-
-        '''
-
-        n_samples = len(corpus)
-
-        inference_kw = dict(
-            locus_subsample_rate = 1.,
-            batch_subsample_rate = 1.,
-            learning_rate = 1.,
-            model_state = self.model_state,
-        )
-
-        corpus_states = self._get_test_corpus_states(corpus)
-
-        gammas = []; sample_names = []
-        for gamma_g, sample in zip(self._init_doc_variables(len(corpus)), corpus):
-
-            _, sample_new_gamma = self._sample_inference(
-                        sample = sample,
-                        gamma0 = gamma_g, 
-                        **inference_kw,
-                        corpus_state = corpus_states[sample.corpus_name]
-                    )
-            
-            sample_names.append(sample.name)
-            gammas.append(sample_new_gamma)
-
-        return sample_names, gammas/np.sum(gammas, axis = 1, keepdims = True)
-    
-    
     def score(self, corpus):
         '''
         Computes the evidence lower bound score for the corpus.
@@ -569,15 +516,78 @@ class LocusRegressor:
             
             return self._bound(
                     corpus = corpus, 
-                    corpus_states=self._get_test_corpus_states(corpus),
+                    corpus_states = self.corpus_states,
                     model_state = self.model_state,
                     likelihood_scale=self.n_samples/n_samples,
                 )
 
 
-    def _calc_signature_sstats(self, corpus):
+    @staticmethod
+    def _ingest_vcf(self, vcf, corpus_state):
+        
+        return SBSSample.featurize_mutations(
+            vcf_file = vcf,
+            **corpus_state.corpus.instantiation_attrs
+        )
+    
+    
 
-        #self._weighted_trinuc_dists = self._get_weighted_trinuc_distribution(corpus)
+    def _predict(self, sample, corpus_name, n_gibbs_iters = 100):
+        '''
+        For each sample in corpus, predicts the expectation of the signature compositions.
+
+        Parameters
+        ----------
+        corpus : locusregression.Corpus, list of dicts
+            Pre-compiled corpus loaded into memory
+
+        Returns
+        -------
+        gamma : np.ndarray of shape (n_samples, n_components)
+            Compositions over signatures for each sample
+
+        '''
+
+        if not self.trained:
+            logger.warn('This model was not trained to completion, results may be innaccurate')
+
+        corpus_state = self.corpus_states[corpus_name]
+
+        _, gamma = self._sample_inference(
+            gamma0=self._init_doc_variables(1)[0],
+            sample = sample,
+            model_state = self.model_state,
+            corpus_state = corpus_state,
+        )
+
+        '''observation_logits = IS._conditional_logp_mutation_locus(
+            model_state= self.model_state,
+            corpus_state = corpus_state,
+            sample = sample,
+        )
+
+        z_posterior = IS._get_z_posterior(
+            log_p_ml_z=observation_logits,
+            alpha=corpus_state.alpha,
+            n_iters=n_gibbs_iters,
+            warm_up_steps=25,
+        )'''
+
+        return gamma/gamma.sum()
+
+
+    def predict(self, corpus):
+        
+        sample_names, gamma = [], []
+        for sample in corpus:
+            gamma.append(self._predict(sample, corpus_name = sample.corpus_name))
+            sample_names.append(sample.name)
+
+        return sample_names, gamma
+
+
+
+    def _calc_signature_sstats(self, corpus):
 
         _genome_trinuc_distribution = np.sum(
             corpus.trinuc_distributions,
@@ -587,106 +597,13 @@ class LocusRegressor:
         self._genome_trinuc_distribution = _genome_trinuc_distribution/_genome_trinuc_distribution.sum()
 
 
-    def get_phi_locus_distribution(self, corpus):
-        '''
-        Each mutation in the corpus is associated with a posterior distribution over components -
-        what is the probability that that mutation was generated by each component of the model.
 
-        For each locus/region, this function return the number of mutations in that locus weighed
-        by the probability that those mutations were generated by each component.
-
-        This basically explains, for component k, where are ther mutations that it generated?
-
-        Parameters
-        ----------
-        corpus : locusregression.Corpus, list of dicts, or one single record from a corpus
-            Pre-compiled corpus loaded into memory
-
-        Returns
-        -------
-        np.ndarray of shape (n_components, n_loci), Where the entry for the k^th component and the l^th locus is given by
-        the sum over all mutations which fell in that locus times the probability that mutation was generated by the kth component.
-        
-        '''
-
-        if isinstance(corpus, dict):
-            corpus = [corpus]
-        else:
-            assert isinstance(corpus, list) and (len(corpus) == 0 or corpus.shared_correlates), \
-                'This function is only available for corpuses with shared genomic correlates.'
-
-        n_samples = len(corpus)
-
-        _, _, _, beta_sstats, _, _ = self._inference(
-                gamma = self._init_doc_variables(n_samples),
-                corpus = corpus,
-                shared_correlates = self.shared_correlates,
-            )
-
-        phis = np.zeros((self.n_components, self.n_loci))
-        for l, ss in beta_sstats.items():
-            phis[:,l] = ss
-
-        return phis
-
-
-    def regress_phi(self, corpus):
-        '''
-        Each mutation is associated with a posterior distribution over components and some 
-        correlates which describe its genomic locus. 
-
-        This function returns a method to plot the association between components and correlates.
-        '''
-
-        def plot_phi_regression(
-            ax = None, figsize = None,*,
-            feature_name, component,
-            phis, X_matrix, feature_names,
-            **plot_kwargs
-        ):
-
-            if ax is None:
-                fig, ax = plt.subplots(1,1,figsize=figsize)
-
-            assert feature_name in feature_names, f'Feature name {feature_name} is not in this corpus.'
-
-            correlate_idx = dict(zip(feature_names, range(len(feature_names))))[feature_name]
-            
-            ax.scatter(
-                X_matrix[correlate_idx, :],
-                phis[component, :],
-                **plot_kwargs
-            )
-
-            ax.set(ylabel = 'Log Phi', xlabel = 'Correlate: ' + feature_name,
-                yscale = 'log')
-
-            for s in ['right','top']:
-                ax.spines[s].set_visible(False)
-
-            ax.axis('equal')
-
-            return ax
-
-        locus_phis = self.get_phi_locus_distribution(corpus)
-        
-        X_matrix = next(iter(corpus))['X_matrix']
-
-        return partial(plot_phi_regression, 
-                    phis = locus_phis, 
-                    X_matrix = X_matrix,
-                    feature_names = next(iter(corpus))['feature_names']
-                )
-
-
-    def get_locus_distribution(self, corpus, n_samples = 100):
+    def get_component_locus_distribution(self, corpus_name):
         '''
         For a sample, calculate the psi matrix - For each component, the distribution over loci.
 
         Parameters
         ----------
-        corpus : Corpus or MetaCorpus
-            A sample from a corpus
 
         Returns
         -------
@@ -694,53 +611,14 @@ class LocusRegressor:
             is the probability of sampling that locus given a mutation was generated by component k.
 
         '''
-
-        assert len(corpus.corpuses) == 1, 'This function is only available for a single feature matrix - no MetaCorpuses.'
-
-        X_matrix = corpus.corpuses[0].X_matrix
-        
-        posterior_samples = np.random.randn(self.n_components, self.n_locus_features, n_samples)*self.model_state.beta_nu[:,:,None]\
-                 + self.model_state.beta_mu[:,:,None]
-
-        psi_unnormalized = np.exp(
-            np.transpose(posterior_samples, [2,0,1]).dot(X_matrix) # n_samples, K, F x F,L -> n_samples,K,L
-        )
-
-        expected_psi = np.mean(psi_unnormalized/psi_unnormalized.sum(-1, keepdims = True), axis = 0) # K,L
-
-        return expected_psi
+        return np.exp( self.corpus_states[corpus_name].log_mutation_rate )
 
 
     def _pop_corpus(self, corpus):
         return next(iter(corpus))
 
 
-    def _get_weighted_trinuc_distribution(self, corpus):
-
-        if corpus.shared_correlates:
-
-            psi_matrix = self.get_locus_distribution(self._pop_corpus(corpus)) #K, L
-            trinuc_dist = self._pop_corpus(corpus)['trinuc_distributions'] # C, L
-            window_size = self._pop_corpus(corpus)['window_size'] # 1, L
-
-            return psi_matrix.dot((trinuc_dist * window_size).T) # K, C
-
-        else:
-
-            trinuc_dists = []
-
-            for sample in corpus:
-
-                psi_matrix = self.get_locus_distribution(sample) #K, L
-                trinuc_dist = sample['trinuc_distributions']
-                window_size = sample['window_size']
-
-                trinuc_dists.append(psi_matrix.dot((trinuc_dist * window_size).T)) # G,K,L
-
-            return np.mean(trinuc_dists, axis = 0)
-
-
-    def get_expected_mutation_rate(self, corpus, n_samples = 100):
+    def get_expected_mutation_rate(self, sample, corpus_name):
         '''
         For a sample, calculate the expected mutation rate. First, we infer the mixture of 
         processes that are active in a sample. Then, we calculate the expected marginal probability
@@ -757,14 +635,71 @@ class LocusRegressor:
             in a sample.
 
         '''
-        assert len(corpus.corpuses) == 1, 'This function is only available for a single feature matrix - no MetaCorpuses.'
-        assert len(corpus) == 1, 'This function only works for a single sample. Select a sample from a corpus using "corpus.subset_samples(1)".'
+        #assert len(corpus.corpuses) == 1, 'This function is only available for a single feature matrix - no MetaCorpuses.'
+        #assert len(corpus) == 1, 'This function only works for a single sample. Select a sample from a corpus using "corpus.subset_samples(1)".'
 
-        psi_matrix = self.get_locus_distribution(corpus, n_samples=n_samples) # K, L
-
-        gamma = self.predict(corpus)[corpus.name]
+        psi_matrix = self.get_component_locus_distribution(corpus_name)
+        gamma = self._predict(sample, corpus_name)
 
         return np.squeeze(np.dot(gamma, psi_matrix))
+    
+
+    def assign_sample_to_corpus(self, sample):
+
+        logp_corpus = []
+        for corpus_state in self.corpus_states.values():
+
+            observation_logits = IS._conditional_logp_mutation_locus(
+                model_state= self.model_state,
+                corpus_state = corpus_state,
+                sample = sample,
+            )
+
+            logp_corpus.append(
+                IS._annealed_importance_sampling(
+                    log_p_ml_z=observation_logits,
+                    alpha=corpus_state.alpha,
+                    n_iters=100,
+                    n_samples_per_iter= 100
+                )
+            )
+
+        return logp_corpus
+
+
+
+    def assign_mutations_to_components(self, sample, corpus_name, n_gibbs_iters = 100):
+
+        if not self.trained:
+            logger.warn('This model was not trained to completion, results may be innaccurate')
+
+        corpus_state = self.corpus_states[corpus_name]
+
+        observation_logits = IS._conditional_logp_mutation_locus(
+            model_state= self.model_state,
+            corpus_state = corpus_state,
+            sample = sample,
+        )
+
+        z_posterior = IS._get_z_posterior(
+            log_p_ml_z=observation_logits,
+            alpha=corpus_state.alpha,
+            n_iters=n_gibbs_iters,
+            warm_up_steps=25,
+        )
+
+        MAP = np.argmax(z_posterior, 0)
+
+        return {
+            'mutation' : sample.mutation,
+            'context' : sample.context,
+            'locus' : sample.locus,
+            'MAP' : MAP,
+            **{
+                'q_'+str(k) : z_posterior[k,:]
+                for k in range(self.n_components)
+            }
+        }
     
 
     def signature(self, component, 

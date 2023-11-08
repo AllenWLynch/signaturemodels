@@ -268,8 +268,12 @@ class CorpusReader:
             logger.info('Featurizing {}'.format(vcf))
             
             samples.append(
-                SBSSample.featurize_mutations(vcf, regions_file = regions_file, fasta_file = fasta_file,
-                                          sep = sep, index = index, chr_prefix = chr_prefix)
+                SBSSample.featurize_mutations(vcf, 
+                                            regions_file = regions_file, 
+                                            fasta_file = fasta_file,
+                                            sep = sep, 
+                                            index = index, 
+                                            chr_prefix = chr_prefix)
             )
         
         logger.info('Done reading VCF files.')

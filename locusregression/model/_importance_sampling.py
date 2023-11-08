@@ -1,7 +1,7 @@
 import numpy as np
 import tqdm
 from functools import partial
-
+from scipy.special import logsumexp
 
 def _conditional_logp_mutation_locus(*, model_state, sample, corpus_state):
         '''
@@ -71,7 +71,7 @@ def _get_gibbs_sample_function(log_p_ml_z,*,alpha, randomstate = None):
 
 def _annealed_importance_sampling(
     log_p_ml_z,*,alpha,
-    n_iters = 100, n_samples_per_iter = 50,
+    n_iters = 100, n_samples_per_iter = 100,
 ):
     
     temperatures = np.linspace(0,1,n_samples_per_iter)
@@ -96,12 +96,14 @@ def _annealed_importance_sampling(
 
         weights.append(iter_weights_running)
 
-    return weights
+    return logsumexp(weights) - np.log(n_iters)
 
 
 
-def _get_z_posterior(log_p_ml_z,*,alpha, n_samples = 1000, warm_up_steps = 50,
-                    randomstate = None):
+def _get_z_posterior(log_p_ml_z,*,alpha, 
+                     n_iters = 1000, 
+                     warm_up_steps = 25,
+                     randomstate = None):
     
     gibbs_sampler, _ = _get_gibbs_sample_function(log_p_ml_z, 
                                                alpha = alpha, 
@@ -110,7 +112,7 @@ def _get_z_posterior(log_p_ml_z,*,alpha, n_samples = 1000, warm_up_steps = 50,
     _, N = log_p_ml_z.shape
     z_posterior = np.zeros_like(log_p_ml_z)
 
-    for step in range(1,n_samples):
+    for step in range(1,n_iters):
 
         z_tild = gibbs_sampler(temperature= min(1, step/warm_up_steps))
 

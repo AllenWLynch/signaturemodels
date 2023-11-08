@@ -233,10 +233,20 @@ class CorpusState(ModelState):
             self.__delattr__('_logvar')
 
     
+    @property
+    def log_mutation_rate(self):
+        return self._logmu - self.log_denom(np.ones_like(self.corpus.exposures))
+
+    
     def update_alpha(self, sstats, learning_rate):
         
         _alpha = update_alpha(self.alpha, sstats.alpha_sstats[self.corpus.name])
         self._svi_update('alpha', _alpha, learning_rate)
+
+
+    def set_alpha(self, gammas):
+        _alpha = update_alpha(self.alpha, gammas)
+        self._svi_update('alpha', _alpha, 1)
 
 
     def update_gamma(self, sstats, learning_rate):
