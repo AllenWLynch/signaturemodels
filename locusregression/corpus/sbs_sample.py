@@ -93,14 +93,13 @@ class SBSSample:
     mutation : np.ndarray
     context : np.ndarray
     locus : np.ndarray
-    count : np.ndarray
     exposures : np.ndarray
     name : str
 
-    data_attrs = ['chrom','pos','cosmic_str','mutation','context','locus','count','exposures']
+    data_attrs = ['chrom','pos','cosmic_str','mutation','context','locus','exposures']
 
     @classmethod
-    def featurize_mutations(cls, vcf_file, regions_file, fasta_file,
+    def featurize_mutations(cls, vcf_file, regions_file, fasta_file, exposures,
                         sep = '\t', index = -1, chr_prefix = ''):
         
         with tempfile.NamedTemporaryFile() as tmp:
@@ -182,8 +181,8 @@ class SBSSample:
             cosmic_strs = np.array(cosmic_strs),
             chroms = np.array(chroms),
             pos = np.array(pos),
-            count = np.ones_like(mutations),
             name = os.path.abspath(vcf_file),
+            exposures = np.array(exposures),
         )
     
     
