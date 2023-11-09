@@ -253,7 +253,6 @@ class Corpus(CorpusMixin):
             new_sample = SBSSample(**{
                 'mutation' : sample.mutation[mask],
                 'context' : sample.context[mask],
-                'count' : sample.count[mask],
                 'locus' : np.array([subsample_lookup[locus] for locus in sample.locus[mask]]).astype(int), 
                 'exposures' : sample.exposures[:,loci],   
                 'name' : sample.name,

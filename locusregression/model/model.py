@@ -9,6 +9,7 @@ from ._model_state import ModelState, CorpusState
 # external imports
 import numpy as np
 from scipy.cluster import hierarchy
+from scipy.special import logsumexp
 import time
 import warnings
 import matplotlib.pyplot as plt
@@ -20,8 +21,8 @@ logger = logging.getLogger('LocusRegressor')
 
 
 #@njit(parallel = True)
-def estep_update(exp_Elog_gamma, alpha, flattend_phi, count_g, likelihood_scale = 1):
-    gamma_sstats = exp_Elog_gamma*np.dot(flattend_phi, count_g/np.dot(flattend_phi.T, exp_Elog_gamma))
+def estep_update(exp_Elog_gamma, alpha, flattend_phi, likelihood_scale = 1):
+    gamma_sstats = exp_Elog_gamma*np.dot(flattend_phi, 1/np.dot(flattend_phi.T, exp_Elog_gamma))
     gamma_sstats = gamma_sstats.reshape(-1)
     return alpha + gamma_sstats*likelihood_scale
 
@@ -207,7 +208,6 @@ class LocusRegressor:
                 corpus_state=corpus_state
             ).astype(self.dtype, copy=False)
 
-        count_g = np.array(sample.count)[:,None].astype(self.dtype, copy=False)
         gamma = gamma0.copy()
         
         for s in range(self.estep_iterations): # inner e-step loop
@@ -215,7 +215,7 @@ class LocusRegressor:
             old_gamma = gamma.copy()
             exp_Elog_gamma = np.exp(log_dirichlet_expectation(gamma)[:,None])
 
-            gamma = estep_update(exp_Elog_gamma, corpus_state.alpha, flattend_phi, count_g,
+            gamma = estep_update(exp_Elog_gamma, corpus_state.alpha, flattend_phi,
                                  likelihood_scale=1/locus_subsample_rate)
 
             if np.abs(gamma - old_gamma).mean() < self.difference_tol:
@@ -230,7 +230,7 @@ class LocusRegressor:
         exp_Elog_gamma = np.exp(log_dirichlet_expectation(gamma)[:,None])
         phi_matrix = np.outer(exp_Elog_gamma, 1/np.dot(flattend_phi.T, exp_Elog_gamma))*flattend_phi/(batch_subsample_rate*locus_subsample_rate)
         
-        weighted_phi = phi_matrix * count_g.T
+        weighted_phi = phi_matrix
 
         return self.SSTATS.SampleSstats(
             model_state = model_state,
@@ -311,6 +311,10 @@ class LocusRegressor:
                 genome_trinuc_distribution = self._genome_trinuc_distribution,
                 tree_learning_rate = self.tree_learning_rate,
         )
+
+        
+        fix_strs = list(self.fix_signatures) if not self.fix_signatures is None else []
+        self.component_names = fix_strs + ['Component ' + str(i) for i in range(self.n_components - len(fix_strs))]
 
         self.bounds, self.elapsed_times, self.total_time, self.epochs_trained = \
             [], [], 0, 0
@@ -551,7 +555,11 @@ class LocusRegressor:
         if not self.trained:
             logger.warn('This model was not trained to completion, results may be innaccurate')
 
-        corpus_state = self.corpus_states[corpus_name]
+        try:
+            corpus_state = self.corpus_states[corpus_name]
+        except KeyError:
+            raise ValueError(f'Corpus {corpus_name} not found in model.')
+        
 
         _, gamma = self._sample_inference(
             gamma0=self._init_doc_variables(1)[0],
@@ -618,7 +626,7 @@ class LocusRegressor:
         return next(iter(corpus))
 
 
-    def get_expected_mutation_rate(self, sample, corpus_name):
+    def get_expected_mutation_rate(self, corpus_name):
         '''
         For a sample, calculate the expected mutation rate. First, we infer the mixture of 
         processes that are active in a sample. Then, we calculate the expected marginal probability
@@ -635,11 +643,15 @@ class LocusRegressor:
             in a sample.
 
         '''
-        #assert len(corpus.corpuses) == 1, 'This function is only available for a single feature matrix - no MetaCorpuses.'
-        #assert len(corpus) == 1, 'This function only works for a single sample. Select a sample from a corpus using "corpus.subset_samples(1)".'
 
         psi_matrix = self.get_component_locus_distribution(corpus_name)
-        gamma = self._predict(sample, corpus_name)
+
+        try:
+            corpus_state = self.corpus_states[corpus_name]
+        except KeyError:
+            raise ValueError(f'Corpus {corpus_name} not found in model.')
+        
+        gamma = corpus_state.alpha/corpus_state.alpha.sum() # use expectation of the prior over components
 
         return np.squeeze(np.dot(gamma, psi_matrix))
     
@@ -655,14 +667,16 @@ class LocusRegressor:
                 sample = sample,
             )
 
-            logp_corpus.append(
-                IS._annealed_importance_sampling(
+            ais_weights = IS._annealed_importance_sampling(
                     log_p_ml_z=observation_logits,
                     alpha=corpus_state.alpha,
                     n_iters=100,
                     n_samples_per_iter= 100
                 )
-            )
+            
+            ais_weights = [w.sum() for w in ais_weights]
+
+            logp_corpus.append(logsumexp(ais_weights) - np.log(len(ais_weights)))
 
         return logp_corpus
 
@@ -691,13 +705,13 @@ class LocusRegressor:
         MAP = np.argmax(z_posterior, 0)
 
         return {
-            'mutation' : sample.mutation,
-            'context' : sample.context,
-            'locus' : sample.locus,
-            'MAP' : MAP,
+            'chrom' : sample.chrom,
+            'pos' : sample.pos,
+            'cosmic_str' : sample.cosmic_str,
+            'MAP_assignment' : self.component_names[MAP],
             **{
-                'q_'+str(k) : z_posterior[k,:]
-                for k in range(self.n_components)
+                'P_' + component_name : z_posterior[k, :]
+                for k, component_name in enumerate(self.component_names)
             }
         }
     

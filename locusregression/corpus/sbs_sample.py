@@ -87,16 +87,18 @@ def code_SBS_mutation(*,vcf_file, fasta_file, index = -1,
 @dataclass
 class SBSSample:
 
-    chroms : np.ndarray
-    pos : np.ndarray
-    cosmic_strs : np.ndarray
     mutation : np.ndarray
     context : np.ndarray
     locus : np.ndarray
     exposures : np.ndarray
     name : str
+    chrom : np.ndarray = None
+    pos : np.ndarray = None
+    cosmic_str : np.ndarray = None
 
     data_attrs = ['chrom','pos','cosmic_str','mutation','context','locus','exposures']
+    required = ['mutation','context','locus','exposures']
+
 
     @classmethod
     def featurize_mutations(cls, vcf_file, regions_file, fasta_file, exposures,
@@ -152,7 +154,7 @@ class SBSSample:
             if not all([p.returncode == 0 for p in [map_process, code_process, filter_process]]):
                 raise RuntimeError('Sample processing failed. See error message above.')
 
-            chroms=[]; pos=[]; cosmic_strs=[]; mutations=[]; contexts=[]; loci=[]
+            chrom=[]; pos=[]; cosmic_str=[]; mutations=[]; contexts=[]; loci=[]
 
             with open(tmp.name, 'r') as f:
                 
@@ -166,9 +168,9 @@ class SBSSample:
                     mutation_codes = [code.split(':') for code in mutation_codes]
 
                     for code in mutation_codes:
-                        chroms.append(code[0])
-                        pos.append(int(code[1]))
-                        cosmic_strs.append(code[2])
+                        chrom.append(code[0])
+                        pos.append(int(code[1]) + 2)
+                        cosmic_str.append(code[2])
                         mutations.append(int(code[3]))
                         contexts.append(int(code[4]))
                         loci.append(locus_idx)
@@ -178,8 +180,8 @@ class SBSSample:
             mutation = np.array(mutations), 
             context = np.array(contexts),
             locus = np.array(loci),
-            cosmic_strs = np.array(cosmic_strs),
-            chroms = np.array(chroms),
+            cosmic_str = np.array(cosmic_str).astype('S'),
+            chrom = np.array(chrom).astype('S'),
             pos = np.array(pos),
             name = os.path.abspath(vcf_file),
             exposures = np.array(exposures),
@@ -191,21 +193,18 @@ class SBSSample:
         for attr in self.data_attrs:
             h5_object.create_dataset(f'{dataset_name}/{attr}', data = self.__getattribute__(attr))
 
-        '''h5_object.create_dataset(f'{dataset_name}/mutation', data = self.mutation)
-        h5_object.create_dataset(f'{dataset_name}/context', data = self.context)
-        h5_object.create_dataset(f'{dataset_name}/locus', data = self.locus)
-        h5_object.create_dataset(f'{dataset_name}/count', data = self.count)
-        h5_object.create_dataset(f'{dataset_name}/exposures', data = self.exposures)'''
-
         h5_object[dataset_name].attrs['name'] = self.name
 
     
     @classmethod
-    def read_h5_dataset(cls, h5_object, dataset_name):
+    def read_h5_dataset(cls, h5_object, dataset_name, read_optional = True):
+
+        read_attrs = cls.data_attrs if read_optional else cls.required
+
         return SBSSample(
             **{
                 attr : h5_object[f'{dataset_name}/{attr}'][...]
-                for attr in cls.data_attrs
+                for attr in read_attrs
             },
             name = h5_object[dataset_name].attrs['name'],
         )

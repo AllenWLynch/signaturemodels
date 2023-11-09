@@ -1,7 +1,6 @@
 import numpy as np
 import tqdm
 from functools import partial
-from scipy.special import logsumexp
 
 def _conditional_logp_mutation_locus(*, model_state, sample, corpus_state):
         '''
@@ -26,7 +25,7 @@ def _conditional_logp_mutation_locus(*, model_state, sample, corpus_state):
 
 def _model_logp_given_z(log_p_ml_z, z):
     n_obs = log_p_ml_z.shape[1]
-    return np.sum(log_p_ml_z[z, np.arange(n_obs)])
+    return log_p_ml_z[z, np.arange(n_obs)]
 
 
 def _gibbs_sample(temperature = 1,*,
@@ -92,11 +91,12 @@ def _annealed_importance_sampling(
             
             z_tild = gibbs_sample(temperature = temperatures[j])
 
-            iter_weights_running += _model_logp_given_z(log_p_ml_z, z_tild) * (temperatures[j] - temperatures[j-1])
+            iter_weights_running = iter_weights_running + _model_logp_given_z(log_p_ml_z, z_tild) * (temperatures[j] - temperatures[j-1])
 
         weights.append(iter_weights_running)
 
-    return logsumexp(weights) - np.log(n_iters)
+    #return logsumexp(weights) - np.log(n_iters)
+    return weights
 
 
 
