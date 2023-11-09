@@ -94,7 +94,7 @@ class SBSSample:
     name : str
 
     @classmethod
-    def featurize_mutations(cls, vcf_file, regions_file, fasta_file,
+    def featurize_mutations(cls, vcf_file, regions_file, fasta_file, exposures,
                         sep = '\t', index = -1, chr_prefix = ''):
         
         with tempfile.NamedTemporaryFile() as tmp:
@@ -172,6 +172,7 @@ class SBSSample:
             context = np.array(contexts),
             locus = np.array(loci), 
             count = np.array(counts),
+            exposures = np.array(exposures),
             name = vcf_file,
         )
     

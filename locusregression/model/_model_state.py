@@ -12,7 +12,7 @@ class ModelState:
 
     def __init__(self,
                 fix_signatures = None,
-                pseudocounts = 10000,*,
+                pseudocounts = 5000,*,
                 n_components, 
                 random_state, 
                 n_features, 
@@ -66,7 +66,7 @@ class ModelState:
                         genome_trinuc_distribution, 
                         pseudocounts = 10000):
             
-        assert isinstance(fix_signatures, list) and len(fix_signatures) < n_components, \
+        assert isinstance(fix_signatures, list) and len(fix_signatures) <= n_components, \
                 'fix_signatures must be a list of signature names with a most n_components elements'
         
         self.fixed_signatures = [True]*len(fix_signatures) + [False]*(n_components - len(fix_signatures))

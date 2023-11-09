@@ -83,6 +83,7 @@ class CorpusReader:
             index = index,
             sep = sep,
             chr_prefix = chr_prefix,
+            exposures = exposures,
         )
 
         trinuc_distributions = None
@@ -97,17 +98,9 @@ class CorpusReader:
             assert trinuc_distributions.shape[0] == len(windows), \
                 'The number of trinucleotide distributions provided in {} does not match the number of specified windows.\n'\
 
-        shared = True
-        if exposures.shape[0] == 1:
-            samples = [{**sample, 'exposures' : exposures} 
-                    for sample in samples]
-            
-        else:
-            shared = False
-            samples = [
-                {**sample, 'exposures' : exposure[None,:]}
-                for sample, exposure in zip(samples, exposures)
-            ]
+        shared = exposures.shape[0] == 1
+        if shared:
+            logger.info('Sharing exposures between samples.')
 
         return Corpus(
             samples = InMemorySamples(samples),
@@ -259,17 +252,31 @@ class CorpusReader:
 
     @staticmethod
     def collect_vcfs(vcf_files, sep = '\t', index = -1, chr_prefix = '',*,
-                     fasta_file, regions_file):
+                     fasta_file, regions_file, exposures):
         
         logger.info('Reading VCF files ...')
         samples = []
-        for vcf in vcf_files:
+
+        if exposures.shape[0] == 1:
+            
+            def duplication_iterator(i):
+                for _ in range(i):
+                    yield exposures
+
+            _exposures = duplication_iterator(len(vcf_files))
+
+        else:
+            _exposures = list(exposures)
+
+        for vcf, sample_exposure in zip(vcf_files, _exposures):
             
             logger.info('Featurizing {}'.format(vcf))
             
             samples.append(
                 SBSSample.featurize_mutations(vcf, regions_file = regions_file, fasta_file = fasta_file,
-                                          sep = sep, index = index, chr_prefix = chr_prefix)
+                                          sep = sep, index = index, chr_prefix = chr_prefix, 
+                                          exposures = sample_exposure
+                                          )
             )
         
         logger.info('Done reading VCF files.')
