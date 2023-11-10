@@ -150,7 +150,7 @@ class LocusRegressor:
 
         weighted_phi = sample_sstats.weighed_phi
 
-        phi = weighted_phi/np.array(sample.count)[None,:]
+        phi = weighted_phi #/np.array(sample.count)[None,:]
 
         entropy_sstats = -np.sum(weighted_phi * np.where(phi > 0, np.log(phi), 0.))
         
