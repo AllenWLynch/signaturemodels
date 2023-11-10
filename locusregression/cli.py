@@ -94,7 +94,8 @@ def write_dataset(
         vcf_files,
         exposure_files,
         correlates_file,
-        output
+        output,
+        corpus_name,
         ):
 
     shared_args = dict(
@@ -119,19 +120,19 @@ def write_dataset(
         **shared_args, 
         exposure_files = exposure_files,
         correlates_file = correlates_file,
-        corpus_name = os.path.abspath(output),
+        corpus_name = corpus_name,
     )
 
     save_corpus(dataset, output)
 
 
-dataset_sub = subparsers.add_parser('make-corpus', 
+dataset_sub = subparsers.add_parser('corpus-make', 
     help= 'Read VCF files and genomic correlates to compile a formatted dataset'
           ' for locus modeling.'
     )
 
-#dataset_sub.add_argument('--corpus-name','-n', type = str, required = True, help = 'Name of corpus, must be unique if modeling with other corpuses.')
-dataset_sub.add_argument('--vcf-files', '-vcf', nargs = '+', type = file_exists, required = True,
+dataset_sub.add_argument('--corpus-name','-n', type = str, required = True, help = 'Name of corpus, must be unique if modeling with other corpuses.')
+dataset_sub.add_argument('--vcf-files', '-vcfs', nargs = '+', type = file_exists, required = True,
     help = 'list of VCF files containing SBS mutations.')
 dataset_sub.add_argument('--fasta-file','-fa', type = file_exists, required = True, help = 'Sequence file, used to find context of mutations.')
 #dataset_sub.add_argument('--genome-file','-g', type = file_exists, required = True, 
@@ -151,7 +152,7 @@ dataset_sub.add_argument('--exposure-files','-e', type = file_exists, nargs = '+
            'Exposures are positive scalars which the user calculates to reflect technical influences on the number of mutations one expects to '
            'find within each region. The exposures may be proportional to number of reads falling within each region, or some other '
            'metric to quantify sensitivity to call mutations.')
-dataset_sub.add_argument('--trinuc-file','-trinuc', type = file_exists,default=None,
+dataset_sub.add_argument('--trinuc-file','-trinucs', type = file_exists,default=None,
                          help = 'Pre-calculated trinucleotide context file.')
 dataset_sub.add_argument('--output','-o', type = valid_path, required = True, help = 'Where to save compiled corpus.')
 
@@ -164,13 +165,154 @@ dataset_sub.add_argument('--chr-prefix', default= '', help='Append the chromosom
 dataset_sub.set_defaults(func = write_dataset)
     
 
-trinuc_sub = subparsers.add_parser('trinucs', help = 'Write trinucleotide context file for a given genome.')
+def split_corpus(*,corpus, train_output, test_output, train_prop,
+                 seed = 0):
+
+    corpus = load_corpus(corpus)
+
+    train, test = train_test_split(corpus, train_size=train_prop, seed = seed)
+
+    save_corpus(train, train_output)
+    save_corpus(test, test_output)
+
+
+split_parser = subparsers.add_parser('corpus-split', help='Partition a corpus into training and test sets.')
+split_parser.add_argument('--corpus','-d', type = file_exists, required=True)
+split_parser.add_argument('--train-output','-to', type = valid_path, required=True)
+split_parser.add_argument('--test-output', '-vo', type = valid_path, required=True)
+split_parser.add_argument('--train-prop', '-p', type = posfloat, default=0.7)
+split_parser.add_argument('--seed', '-s', type = posint, default=0)
+split_parser.set_defaults(func = split_corpus)
+
+
+trinuc_sub = subparsers.add_parser('get-trinucs', help = 'Write trinucleotide context file for a given genome.')
 trinuc_sub.add_argument('--fasta-file','-fa', type = file_exists, required = True, help = 'Sequence file, used to find context of mutations.')
 trinuc_sub.add_argument('--regions-file','-r', type = file_exists, required = True)
 trinuc_sub.add_argument('--output','-o', type = valid_path, required = True, help = 'Where to save compiled corpus.')
 trinuc_sub.add_argument('--sep','-sep',default ='\t',type = str, help = 'Separator for windows file.')
 trinuc_sub.set_defaults(func = CorpusReader.create_trinuc_file)
 
+
+
+tune_sub = subparsers.add_parser('study-create', help = 'Tune number of signatures for LocusRegression model on a pre-compiled corpus using the'
+    'hyperband or successive halving algorithm.')
+
+tune_required = tune_sub.add_argument_group('Required arguments')
+tune_required.add_argument('--corpuses', '-d', type = file_exists, nargs = '+', required=True,
+    help = 'Path to compiled corpus file/files.')
+tune_required.add_argument('--study-name','-sn', type = str, required=True,
+                           help = 'Name of study, used to store tuning results in a database.')
+tune_required.add_argument('--max-components','-max',type = posint, required=True,
+    help= 'Maximum number of components to test for fit on dataset.')
+tune_required.add_argument('--min-components','-min',type = posint, required=True,
+    help= 'Maximum number of components to test for fit on dataset.')
+
+tune_optional = tune_sub.add_argument_group('Tuning arguments')
+
+tune_optional.add_argument('--storage',type = str, default=None,
+                            help = 'Address path to database to store tuning results, for example "sqlite:///tuning.db" '
+                                   'or "mysql://user:password@host:port/dbname", if one is using a remote database. '
+                                   'If left unset, will store tuning results in a local file.'
+                            )
+tune_optional.add_argument('--factor','-f',type = posint, default = 4,
+    help = 'Successive halving reduction factor for each iteration')
+tune_optional.add_argument('--skip-tune-subsample', action = 'store_true', default=False)
+tune_optional.add_argument('--locus-subsample-rates','-rates', type = posfloat, nargs = '+', default = [0.0625, 0.125, 0.25])
+
+model_options = tune_sub.add_argument_group('Model arguments')
+
+model_options.add_argument('--fix-signatures','-sigs', nargs='+', type = str, default = None,
+                              help = 'COSMIC signatures to fix as part of the generative model, referenced by name (SBS1, SBS2, etc.)\n '
+                                    'The number of signatures listed must be less than or equal to the number of components.\n '
+                                    'Any extra components will be initialized randomly and learned. If no signatures are provided, '
+                                    'all are learned de-novo.'
+                              )
+model_options.add_argument('--num-epochs', '-e', type = posint, default=500,
+    help = 'Maximum number of epochs to allow training during'
+            ' successive halving/Hyperband. This should be set high enough such that the model converges to a solution.')
+model_options.add_argument('--model-type','-model', choices=['regression','gbt'], default='regression')
+model_options.add_argument('--locus-subsample','-sub', type = posfloat, default = 0.125,
+    help = 'Whether to use locus subsampling to speed up training via stochastic variational inference.')
+model_options.add_argument('--batch-size','-batch', type = posint, default = 128,
+    help = 'Batch size for stochastic variational inference.')
+model_options.add_argument('--empirical-bayes','-eb', action = 'store_true', default=False,)
+model_options.add_argument('--pi-prior', '-pi', type = posfloat, default = 1.,
+    help = 'Dirichlet prior over sample mixture compositions. A value > 1 will give more dense compositions, which <1 finds more sparse compositions.')
+tune_sub.set_defaults(func = create_study)
+
+
+trial_parser = subparsers.add_parser('study-run-trial', help='Run a single trial of hyperparameter tuning.')
+trial_parser.add_argument('study-name',type = str)
+trial_parser.add_argument('--storage','-s', type = str, default=None)
+trial_parser.add_argument('--iters','-i', type = posint, default=1)
+trial_parser.set_defaults(func = run_trial)
+
+
+def summarize_study(*,study_name, output, storage = None):
+
+    study, *_ = load_study(study_name, storage)
+    
+    study.trials_dataframe().to_csv(output, index = False)
+
+
+summarize_parser = subparsers.add_parser('study-summarize', help = 'Summarize tuning results from a study.')
+summarize_parser.add_argument('study-name',type = str)
+summarize_parser.add_argument('--output','-o', type = valid_path, required=True)
+summarize_parser.add_argument('--storage','-s', type = str, default=None)
+summarize_parser.set_defaults(func = summarize_study)
+
+
+def retrain_best(trial_num = None,
+                 storage = None, 
+                 verbose = False,*,
+                 study_name, output):
+    
+    logging.basicConfig(level=logging.INFO)
+    logger.setLevel(logging.INFO)
+
+    study, dataset, attrs = load_study(study_name, storage)
+
+    if trial_num is None:
+        best_trial = study.best_trial
+    else:
+        best_trial = study.trials[trial_num]
+
+    model_params = attrs['model_params']
+    model_params.update(best_trial.params)
+
+    basemodel = _get_basemodel(attrs["model_type"])
+    
+    print(
+        'Training model with params:\n' + \
+        '\n'.join(
+            [f'\t{k} = {v}' for k,v in model_params.items()]
+        ),
+        file = sys.stderr,
+    )
+
+    model = basemodel(
+            eval_every = 1000000,
+            quiet= not verbose,
+            **model_params,
+            seed = best_trial.number,
+            num_epochs=attrs['num_epochs'],
+        )
+
+    model.fit(dataset)
+
+    model.save(output)
+
+
+retrain_sub = subparsers.add_parser('study-retrain', help = 'From tuning results, retrain a chosen or the best model.')
+retrain_sub.add_argument('study-name',type = str)
+retrain_sub.add_argument('--storage','-s', type = str, default=None)
+retrain_sub.add_argument('--verbose','-v',action = 'store_true', default = False,)
+retrain_sub .add_argument('--output','-o', type = valid_path, required=True,
+    help = 'Where to save trained model.')
+retrain_sub.add_argument('--trial-num','-t', type = posint, default=None,
+    help= 'If left unset, will retrain model with best params from tuning results.\nIf provided, will retrain model parameters from the "trial_num"th trial.')
+
+retrain_sub.set_defaults(func = retrain_best)
 
 def train_model(
         locus_subsample = 0.125,
@@ -229,7 +371,7 @@ def train_model(
 
 
 
-trainer_sub = subparsers.add_parser('train-model', help = 'Train LocusRegression model on a pre-compiled corpus.')
+trainer_sub = subparsers.add_parser('model-train', help = 'Train LocusRegression model on a pre-compiled corpus.')
 
 trainer_required = trainer_sub.add_argument_group('Required arguments')
 trainer_required .add_argument('--n-components','-k', type = posint, required=True,
@@ -270,25 +412,6 @@ trainer_optional.add_argument('--verbose','-v',action = 'store_true', default = 
 trainer_sub.set_defaults(func = train_model)
 
 
-def split_corpus(*,corpus, train_output, test_output, train_prop,
-                 seed = 0):
-
-    corpus = load_corpus(corpus)
-
-    train, test = train_test_split(corpus, train_size=train_prop, seed = seed)
-
-    save_corpus(train, train_output)
-    save_corpus(test, test_output)
-
-
-split_parser = subparsers.add_parser('split-corpus', help='Partition a corpus into training and test sets.')
-split_parser.add_argument('--corpus','-d', type = file_exists, required=True)
-split_parser.add_argument('--train-output','-to', type = valid_path, required=True)
-split_parser.add_argument('--test-output', '-vo', type = valid_path, required=True)
-split_parser.add_argument('--train-prop', '-p', type = posfloat, default=0.7)
-split_parser.add_argument('--seed', '-s', type = posint, default=0)
-split_parser.set_defaults(func = split_corpus)
-
 
 def score(*,model, corpuses):
 
@@ -299,136 +422,12 @@ def score(*,model, corpuses):
     print(model.score(dataset))
 
 
-score_parser = subparsers.add_parser('score', help='Score a model on a corpus.')
-score_parser.add_argument('--model','-m', type = file_exists, required=True)
+score_parser = subparsers.add_parser('model-score', help='Score a model on a corpus.')
+score_parser.add_argument('model', type = file_exists)
 score_parser.add_argument('--corpuses', '-d', type = file_exists, nargs = '+', required=True,
     help = 'Path to compiled corpus file/files.')
 score_parser.set_defaults(func = score)
 
-
-
-
-trial_parser = subparsers.add_parser('run-trial', help='Run a single trial of hyperparameter tuning.')
-trial_parser.add_argument('study-name',type = str)
-trial_parser.add_argument('--storage','-s', type = str, default=None)
-trial_parser.add_argument('--iters','-i', type = posint, default=1)
-trial_parser.set_defaults(func = run_trial)
-
-
-
-tune_sub = subparsers.add_parser('create-study', help = 'Tune number of signatures for LocusRegression model on a pre-compiled corpus using the'
-    'hyperband or successive halving algorithm.')
-
-tune_required = tune_sub.add_argument_group('Required arguments')
-tune_required.add_argument('--corpuses', '-d', type = file_exists, nargs = '+', required=True,
-    help = 'Path to compiled corpus file/files.')
-tune_required.add_argument('--study-name','-sn', type = str, required=True,
-                           help = 'Name of study, used to store tuning results in a database.')
-tune_required.add_argument('--max-components','-max',type = posint, required=True,
-    help= 'Maximum number of components to test for fit on dataset.')
-tune_required.add_argument('--min-components','-min',type = posint, required=True,
-    help= 'Maximum number of components to test for fit on dataset.')
-
-tune_optional = tune_sub.add_argument_group('Tuning arguments')
-
-tune_optional.add_argument('--storage',type = str, default=None,
-                            help = 'Address path to database to store tuning results, for example "sqlite:///tuning.db" '
-                                   'or "mysql://user:password@host:port/dbname", if one is using a remote database. '
-                                   'If left unset, will store tuning results in a local file.'
-                            )
-tune_optional.add_argument('--factor','-f',type = posint, default = 4,
-    help = 'Successive halving reduction factor for each iteration')
-tune_optional.add_argument('--skip-tune-subsample', action = 'store_true', default=False)
-tune_optional.add_argument('--locus-subsample-rates','-rates', type = posfloat, nargs = '+', default = [0.0625, 0.125, 0.25])
-
-model_options = tune_sub.add_argument_group('Model arguments')
-
-model_options.add_argument('--fix-signatures','-sigs', nargs='+', type = str, default = None,
-                              help = 'COSMIC signatures to fix as part of the generative model, referenced by name (SBS1, SBS2, etc.)\n '
-                                    'The number of signatures listed must be less than or equal to the number of components.\n '
-                                    'Any extra components will be initialized randomly and learned. If no signatures are provided, '
-                                    'all are learned de-novo.'
-                              )
-model_options.add_argument('--num-epochs', '-e', type = posint, default=500,
-    help = 'Maximum number of epochs to allow training during'
-            ' successive halving/Hyperband. This should be set high enough such that the model converges to a solution.')
-model_options.add_argument('--model-type','-model', choices=['regression','gbt'], default='regression')
-model_options.add_argument('--locus-subsample','-sub', type = posfloat, default = 0.125,
-    help = 'Whether to use locus subsampling to speed up training via stochastic variational inference.')
-model_options.add_argument('--batch-size','-batch', type = posint, default = 128,
-    help = 'Batch size for stochastic variational inference.')
-model_options.add_argument('--empirical-bayes','-eb', action = 'store_true', default=False,)
-model_options.add_argument('--pi-prior', '-pi', type = posfloat, default = 1.,
-    help = 'Dirichlet prior over sample mixture compositions. A value > 1 will give more dense compositions, which <1 finds more sparse compositions.')
-tune_sub.set_defaults(func = create_study)
-
-
-
-def summarize_study(*,study_name, output, storage = None):
-
-    study, *_ = load_study(study_name, storage)
-    
-    study.trials_dataframe().to_csv(output, index = False)
-
-
-summarize_parser = subparsers.add_parser('summarize-study', help = 'Summarize tuning results from a study.')
-summarize_parser.add_argument('study-name',type = str)
-summarize_parser.add_argument('--output','-o', type = valid_path, required=True)
-summarize_parser.add_argument('--storage','-s', type = str, default=None)
-summarize_parser.set_defaults(func = summarize_study)
-
-
-def retrain_best(trial_num = None,
-                 storage = None, 
-                 verbose = False,*,
-                 study_name, output):
-    
-    logging.basicConfig(level=logging.INFO)
-    logger.setLevel(logging.INFO)
-
-    study, dataset, attrs = load_study(study_name, storage)
-
-    if trial_num is None:
-        best_trial = study.best_trial
-    else:
-        best_trial = study.trials[trial_num]
-
-    model_params = attrs['model_params']
-    model_params.update(best_trial.params)
-
-    basemodel = _get_basemodel(attrs["model_type"])
-    
-    print(
-        'Training model with params:\n' + \
-        '\n'.join(
-            [f'\t{k} = {v}' for k,v in model_params.items()]
-        ),
-        file = sys.stderr,
-    )
-
-    model = basemodel(
-            eval_every = 1000000,
-            quiet= not verbose,
-            **model_params,
-            seed = best_trial.number,
-            num_epochs=attrs['num_epochs'],
-        )
-
-    model.fit(dataset)
-
-    model.save(output)
-
-
-retrain_sub = subparsers.add_parser('retrain', help = 'From tuning results, retrain a chosen or the best model.')
-retrain_sub.add_argument('study-name',type = str)
-retrain_sub.add_argument('--storage','-s', type = str, default=None)
-retrain_sub.add_argument('--verbose','-v',action = 'store_true', default = False,)
-retrain_sub .add_argument('--output','-o', type = valid_path, required=True,
-    help = 'Where to save trained model.')
-retrain_sub.add_argument('--trial-num','-t', type = posint, default=None,
-    help= 'If left unset, will retrain model with best params from tuning results.\nIf provided, will retrain model parameters from the "trial_num"th trial.')
-
-retrain_sub.set_defaults(func = retrain_best)
 
 
 def predict(*,model, corpuses, output):
@@ -447,7 +446,7 @@ predict_sub = subparsers.add_parser('model-predict', help = 'Predict exposures f
 predict_sub.add_argument('model', type = file_exists)
 predict_sub.add_argument('--corpuses', '-d', type = file_exists, nargs = '+', required=True,
                          help = 'Path to compiled corpus file/files.')
-predict_sub.add_argument('--output','-o', type =  argparse.FileType('w'), required=True)
+predict_sub.add_argument('--output','-o', type =  argparse.FileType('w'), default=sys.stdout)
 predict_sub.set_defaults(func = predict)
 
 
@@ -489,7 +488,7 @@ def save_signatures(*, model, output):
 signatures_parser = subparsers.add_parser('model-save-signatures', 
                                           help = 'Save signatures to file.')
 signatures_parser.add_argument('model', type = file_exists)
-signatures_parser.add_argument('--output','-o', type =  argparse.FileType('w'), required=True)
+signatures_parser.add_argument('--output','-o', type =  argparse.FileType('w'), default=sys.stdout)
 signatures_parser.set_defaults(func = save_signatures)
 
 
@@ -504,8 +503,74 @@ def save_associations(*, model, output):
 associations_parser = subparsers.add_parser('model-save-associations',
                                             help = 'Save associations to file.')
 associations_parser.add_argument('model', type = file_exists)
-associations_parser.add_argument('--output','-o', type = argparse.FileType('w'), required=True)
+associations_parser.add_argument('--output','-o', type = argparse.FileType('w'), default=sys.stdout)
 associations_parser.set_defaults(func = save_associations)
+
+
+def list_corpuses(*,model):
+    model = load_model(model)
+    print(*model.corpus_states.keys(), sep = '\n', file = sys.stdout)
+
+list_corpuses_parser = subparsers.add_parser('model-list-corpuses',
+                                             help = 'List the names of corpuses used to train a model.')
+list_corpuses_parser.add_argument('model', type = file_exists)
+list_corpuses_parser.set_defaults(func = list_corpuses)
+
+
+def assign_mutations(*,model,vcf_file, corpus_name, exposure_file, output):
+    
+    model = load_model(model)
+
+    try:
+        corpus = model.corpus_states[corpus_name]
+    except KeyError:
+        raise ValueError(f'Corpus {corpus_name} not found in model.')
+    
+
+    sample = CorpusReader.ingest_sample(
+        corpus, vcf_file, exposure_file = exposure_file
+    )
+    
+    mutation_assignments = model.assign_mutations_to_components(sample, corpus)
+
+    print(*mutation_assignments.keys(), sep = ',', file = output)
+    for row in list(zip(*mutation_assignments.values())):
+        print(*row, sep = ',', file = output)
+
+
+assign_mutations_parser = subparsers.add_parser('model-assign-mutations',
+                                                help = 'Assign each mutation in a VCF file to a component of the model.')
+assign_mutations_parser.add_argument('model', type = file_exists)
+assign_mutations_parser.add_argument('--vcf-file','-vcf', type = argparse.FileType('r'), required=True)
+assign_mutations_parser.add_argument('--corpus-name','-n', type = str, required=True)
+assign_mutations_parser.add_argument('--exposure-file','-e', type = argparse.FileType('r'), default=None)
+assign_mutations_parser.add_argument('--output','-o', type = argparse.FileType('w'), default=sys.stdout)
+assign_mutations_parser.set_defaults(func = assign_mutations)
+
+
+def assign_corpus(*, model, vcf_file, exposure_file, output):
+    
+    model = load_model(model)
+
+    _example_corpus = list(model.corpus_states.keys())[0]
+    
+    sample = CorpusReader.ingest_sample(
+        model.corpus_states[_example_corpus], vcf_file, exposure_file = exposure_file
+    )
+
+    corpus_logps = model.assign_sample_to_corpus(sample)
+
+    #corpus_names, log_posterior_probability = np.log(corpus_logps) - logsumexp(corpus_logps)
+
+    print('Corpus','LogP', sep = ',', file = output)
+
+assign_corpus_parser = subparsers.add_parser('model-assign-corpus',
+                                             help = 'Evaluate which corpus a VCF file is most likely generated from.')
+assign_corpus_parser.add_argument('model', type = file_exists)
+assign_corpus_parser.add_argument('--vcf-file','-vcf', type = argparse.FileType('r'), required=True)
+assign_corpus_parser.add_argument('--exposure-file','-e', type = argparse.FileType('r'), default=None)
+assign_corpus_parser.add_argument('--output','-o', type = argparse.FileType('w'), default=sys.stdout)
+assign_corpus_parser.set_defaults(func = assign_corpus)
 
 
 
@@ -515,7 +580,7 @@ def _fetch_roadmap_wrapper(**kw):
 
 roadmap_sub = subparsers.add_parser('fetch-marks', help = 'Download and summarize Roadmap Epigenomics data for a given cell type.')
 roadmap_sub.add_argument('--roadmap-id','-id', type = str, required=True,)
-roadmap_sub.add_argument('--windows-file','-w', type = file_exists, required=True,)
+roadmap_sub.add_argument('--regions-file','-r', type = file_exists, required=True,)
 roadmap_sub.add_argument('--output','-o', type = argparse.FileType('w'), default=sys.stdout)
 roadmap_sub.add_argument('--n-jobs','-j', type = posint, default=1)
 roadmap_sub.set_defaults(func = _fetch_roadmap_wrapper)
@@ -523,7 +588,7 @@ roadmap_sub.set_defaults(func = _fetch_roadmap_wrapper)
 
 bigwig_sub = subparsers.add_parser('ingest-bigwig', help = 'Summarize bigwig file for a given cell type.')
 bigwig_sub.add_argument('bigwig-file', type = file_exists)
-bigwig_sub.add_argument('--windows-file','-w', type = file_exists, required=True,)
+bigwig_sub.add_argument('--regions-file','-r', type = file_exists, required=True,)
 bigwig_sub.add_argument('--normalization','-norm', choices=['power','standardize','minmax'], default=None)
 bigwig_sub.add_argument('--feature-name','-name', type = str, required=True,)
 bigwig_sub.add_argument('--output','-o', type = argparse.FileType('w'), default=sys.stdout)
@@ -532,7 +597,7 @@ bigwig_sub.set_defaults(func = process_bigwig)
 
 bedgraph_sub = subparsers.add_parser('ingest-bedgraph', help = 'Summarize bigwig file for a given cell type.')
 bedgraph_sub.add_argument('bedgraph-file', type = file_exists)
-bedgraph_sub.add_argument('--windows-file','-w', type = file_exists, required=True,)
+bedgraph_sub.add_argument('--regions-file','-r', type = file_exists, required=True,)
 bedgraph_sub.add_argument('--normalization','-norm', choices=['power','standardize','minmax'], default=None)
 bedgraph_sub.add_argument('--feature-name','-name', type = str, required=True,)
 bedgraph_sub.add_argument('--output','-o', type = argparse.FileType('w'), default=sys.stdout)

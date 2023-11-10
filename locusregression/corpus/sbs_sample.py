@@ -8,7 +8,7 @@ import sys
 from pyfaidx import Fasta
 from dataclasses import dataclass
 import numpy as np
-from collections import Counter
+
 
 class VCF(object):
     CHROM = 0	

@@ -252,9 +252,11 @@ class SimulatedCorpus:
                         mutation=np.array(mutations), 
                         context=np.array(contexts), 
                         locus=np.array(loci), 
-                        count=np.ones(len(loci)).astype(int),
                         name = name,
                         exposures = exposures,
+                        chrom = np.array(['chr1']*len(loci)).astype('S'),
+                        pos = np.array(loci),
+                        cosmic_str = np.array(['']*len(loci)).astype('S'),
                     )
 
 

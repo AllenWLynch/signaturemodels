@@ -24,15 +24,15 @@ ROADMAP_URL = 'https://egg2.wustl.edu/roadmap/data/byFileType/signal/consolidate
 BIGWIG_NAME = '{sample}-{signal}.imputed.{type}.signal.bigwig'
 
 
-def _check_windows_file(windows_file):
+def _check_regions_file(regions_file):
 
-    with open(windows_file) as f:
+    with open(regions_file) as f:
         for line in f:
             if line.startswith('#'):
                 continue
             
             assert len( line.strip().split('\t') ) == 4, \
-                f'Expected 4 columns in {windows_file}'
+                f'Expected 4 columns in {regions_file}, add a column to the regions file using \'awk -v OFS="\\t" \'{{print $0,NR}}\' <filename>\''
         
 
 def normalize_covariate(*,track_file, output, feature_name,
@@ -59,17 +59,17 @@ def normalize_covariate(*,track_file, output, feature_name,
 
 
 
-def process_bigwig(*,bigwig_file, windows_file, output,
+def process_bigwig(*,bigwig_file, regions_file, output,
                    feature_name = None):
     
-    _check_windows_file(windows_file)
+    _check_regions_file(regions_file)
 
     print('#' + feature_name, file= output, flush = True)
 
     with tempfile.NamedTemporaryFile() as bed:
 
         subprocess.check_output(
-                        ['bigWigAverageOverBed', bigwig_file, windows_file, bed.name],
+                        ['bigWigAverageOverBed', bigwig_file, regions_file, bed.name],
                     )
 
         cut_process = subprocess.Popen(
@@ -84,15 +84,15 @@ def process_bigwig(*,bigwig_file, windows_file, output,
         
 
 
-def process_bedgraph(*,bedgraph_file, windows_file, output,
+def process_bedgraph(*,bedgraph_file, regions_file, output,
                      column = 4, feature_name = None):
     
-    _check_windows_file(windows_file)
+    _check_regions_file(regions_file)
 
     print('#' + feature_name, file= output, flush = True)
 
     map_process = subprocess.Popen(
-        ['bedtools', 'map','-a', windows_file, '-b', bedgraph_file, 
+        ['bedtools', 'map','-a', regions_file, '-b', bedgraph_file, 
         '-c', str(column), '-o', 'mean', 
         '-sorted', '-null', '0.'],
         stdout = subprocess.PIPE,
@@ -115,7 +115,7 @@ def process_bedgraph(*,bedgraph_file, windows_file, output,
     
 
 
-def fetch_roadmap_features(*,roadmap_id, windows_file, output, 
+def fetch_roadmap_features(*,roadmap_id, regions_file, output, 
                            bigwig_dir = 'bigwigs', n_jobs = 1):
 
     logger.info('Saving bigwigs to "{}" directory.'.format(bigwig_dir))
@@ -161,7 +161,7 @@ def fetch_roadmap_features(*,roadmap_id, windows_file, output,
         
                 process_bigwig(
                     bigwig_file = bigwig_file,
-                    windows_file = windows_file,
+                    regions_file = regions_file,
                     output = f,
                     feature_name = signal,
                 )

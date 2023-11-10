@@ -334,3 +334,31 @@ class CorpusReader:
         trinuc_matrix = np.array(trinuc_matrix) + 1 # add a pseudocount
 
         return trinuc_matrix/trinuc_matrix.sum(1, keepdims = True)
+    
+
+    @classmethod
+    def ingest_sample(cls, corpus, vcf_file, exposure_file = None):
+            
+        windows = cls.read_windows(corpus.metadata['regions_file'], None, sep = '\t')
+
+        if not exposure_file is None:
+            exposures = cls.calculate_exposures(
+                windows, 
+                cls.collect_exposures(exposure_file, windows)
+            )
+        else:
+            exposures = cls.calculate_exposures(
+                windows, 
+                np.ones((1, len(windows)))
+            )
+
+
+        return SBSSample.featurize_mutations(
+            vcf_file, 
+            corpus.metadata['regions_file'], 
+            corpus.metadata['fasta_file'], 
+            exposures,
+            sep = corpus.metadata['sep'],
+            index = corpus.metadata['index'], 
+            chr_prefix = corpus.metadata['chr_prefix'],
+        )

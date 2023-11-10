@@ -27,27 +27,27 @@ def _objective_jac_sample(
         beta_mu, 
         beta_nu,*,
         # suffstats calculated before optimization
-        X_matrix,
+        X_mut,
+        X_negsample,
         gamma,
-        nonzero_indices,
         deriv_second_term,
         weighted_phis,
     ):
 
-    locus_logmu = beta_mu @ X_matrix # F x F, L -> L
-    std_inner = beta_nu @ X_matrix
-    
-    locus_expectation = gamma * np.exp(locus_logmu + 1/2*np.square(std_inner)) # L
+    std_inner = beta_nu @ X_negsample
+    locus_expectation = gamma * np.exp(beta_mu @ X_negsample + 1/2*np.square(std_inner)) # L
 
-    objective = np.sum(weighted_phis * locus_logmu[nonzero_indices]) - locus_expectation.sum(axis = -1)
+    objective = np.sum(weighted_phis * (beta_mu @ X_mut)[np.newaxis,:]) - locus_expectation.sum(axis = -1)
             
-    mu_jac = deriv_second_term - locus_expectation @ X_matrix.T 
+    mu_jac = deriv_second_term - locus_expectation @ X_negsample.T 
     
-    std_jac =  -(std_inner*locus_expectation) @ X_matrix.T
+    std_jac =  -(std_inner*locus_expectation) @ X_negsample.T
     
     dim = beta_mu.shape[0]
     jac = np.empty(dim*2, dtype=np.float64)
     jac[:dim] = mu_jac; jac[dim:] = std_jac
+
+    #print(objective)
 
     return -objective, -jac #np.concatenate([mu_jac, std_jac], axis = np.int64(1)).reshape(-1)
 
@@ -62,24 +62,37 @@ class BetaOptimizer:
             exposures, 
             X_matrix,
             beta_sstats,
+            negative_samples = None,
         ):
         
+        _, n_loci = X_matrix.shape
+
         nonzero_indices = np.array(list(beta_sstats.keys()))
         weighted_phis = np.vstack(list(beta_sstats.values())).T # (K, l)
         
         K_weights = weighted_phis.sum(axis = -1, keepdims = True)
-        deriv_second_term = weighted_phis @ X_matrix[:, nonzero_indices].T # K,L x L,F -> KxF
 
-        normalizer = ( exposures * np.exp( beta_mu0 @ X_matrix + 1/2*(beta_nu0 @ X_matrix)**2 ) ).sum(-1, keepdims=True)
+        X_mut = X_matrix[:, nonzero_indices].copy()
+
+        deriv_second_term = weighted_phis @ X_mut.T # K,L x L,F -> KxF
+
+        if not negative_samples is None:
+            exposures = exposures[:, negative_samples]
+            X_negsample = X_matrix[:,negative_samples].copy()
+        else:
+            X_negsample = X_matrix.copy()
+
+        normalizer = ( exposures * np.exp( beta_mu0 @ X_negsample + 1/2*(beta_nu0 @ X_negsample)**2 ) ).sum(-1, keepdims=True)
 
         gamma = K_weights/normalizer * exposures
 
+        
         optim_kwargs = {
                 'gamma' : gamma,
                 'deriv_second_term' : deriv_second_term,
-                'nonzero_indices' : nonzero_indices,
                 'weighted_phis' : weighted_phis,
-                'X_matrix' : X_matrix,
+                'X_mut' : X_mut,
+                'X_negsample' : X_negsample,
                 }
 
         return partial(_objective_jac_sample, **optim_kwargs)
@@ -87,19 +100,33 @@ class BetaOptimizer:
 
     @staticmethod
     def optimize(
-        tau = 1.,*, 
+        tau = 1.,
+        negative_subsample = 1000,*, 
         beta_mu0, 
         beta_nu0,
         exposures,
         X_matrices,
         beta_sstats,
+        random_state,
     ):
+        
+        if not negative_subsample is None:
+            negative_samples = np.random.choice(
+                X_matrices[0].shape[1], 
+                size = negative_subsample, 
+                replace = False
+            )
+        else:
+            negative_samples = None
+
+
         return list(map(np.vstack, 
             zip(*[
                 BetaOptimizer._optimize(
                     tau = tau[k], beta_mu0 = beta_mu0[k], beta_nu0 = beta_nu0[k],
                     exposures=exposures, X_matrices=X_matrices, 
-                    beta_sstats=[{ l : v[k] for l,v in stats.items() } for stats in beta_sstats]
+                    beta_sstats=[{ l : v[k] for l,v in stats.items() } for stats in beta_sstats],
+                    negative_samples=negative_samples,
                 )
                 for k in range(beta_mu0.shape[0])
             ])
@@ -107,7 +134,9 @@ class BetaOptimizer:
     
 
     @staticmethod
-    def _optimize(tau = 1.,*, 
+    def _optimize(
+            tau = 1.,
+            negative_samples = None,*, 
             beta_mu0, 
             beta_nu0,
             exposures,
@@ -133,6 +162,7 @@ class BetaOptimizer:
                     exposures=_window,
                     X_matrix=_X,
                     beta_sstats=beta_sstats_sample,
+                    negative_samples=negative_samples,
                 )
                 for _window, _X, beta_sstats_sample in \
                     zip(exposures, X_matrices, beta_sstats) \

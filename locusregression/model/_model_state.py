@@ -12,7 +12,8 @@ class ModelState:
 
     def __init__(self,
                 fix_signatures = None,
-                pseudocounts = 5000,*,
+                pseudocounts = 5000,
+                negative_subsample = 1000,*,
                 n_components, 
                 random_state, 
                 n_features, 
@@ -27,6 +28,7 @@ class ModelState:
         self.n_features = n_features
         self.random_state = random_state
         self.empirical_bayes = empirical_bayes
+        self.negative_subsample = negative_subsample
 
         self.tau = np.ones(self.n_components)
 
@@ -130,6 +132,8 @@ class ModelState:
             beta_sstats = sstats.beta_sstats, 
             X_matrices = sstats.X_matrices, 
             exposures = sstats.exposures,
+            negative_subsample = self.negative_subsample,
+            random_state = self.random_state,
         )
 
         self._svi_update('beta_mu', beta_mu, learning_rate)
