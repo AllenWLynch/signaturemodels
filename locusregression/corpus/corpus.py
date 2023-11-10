@@ -244,7 +244,7 @@ class Corpus(CorpusMixin):
         bool_array = np.zeros(self.X_matrix.shape[1]).astype(bool)
         bool_array[loci] = True
 
-        total_mutations = 0
+        #total_mutations = 0
         new_samples = []
         for sample in self.samples:
                         
@@ -258,7 +258,7 @@ class Corpus(CorpusMixin):
                 'name' : sample.name,
             })
 
-            total_mutations += new_sample.count.sum()
+            #total_mutations += new_sample.count.sum()
 
             new_samples.append(new_sample)
         
