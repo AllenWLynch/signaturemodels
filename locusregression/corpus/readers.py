@@ -8,6 +8,7 @@ from collections import Counter
 import logging
 import tqdm
 from .sbs_sample import revcomp, SBSSample
+import os
 logger = logging.getLogger('DataReader')
 logger.setLevel(logging.INFO)
 
@@ -109,6 +110,15 @@ class CorpusReader:
             trinuc_distributions = trinuc_distributions.T,
             shared_exposures = shared,
             name = corpus_name,
+            metadata={
+                'regions_file' : os.path.abspath(regions_file),
+                'fasta_file' : os.path.abspath(fasta_file),
+                'correlates_file' : os.path.abspath(correlates_file),
+                'trinuc_file' : os.path.abspath(trinuc_file),
+                'sep' : str(sep),
+                'index' : int(index),
+                'chr_prefix' : str(chr_prefix),
+            }
         )
 
 
