@@ -152,9 +152,12 @@ def load_corpus(filename):
 
         is_shared = f['data'].attrs['shared_exposures']
 
-        metadata = {
-            key : val for key, val in f['metadata'].attrs.items()
-        }
+        if 'metadata' in f:
+            metadata = {
+                key : val for key, val in f['metadata'].attrs.items()
+            }
+        else:
+            metadata = {}
 
         return Corpus(
             trinuc_distributions = f['data/trinuc_distributions'][...],
@@ -176,9 +179,12 @@ def stream_corpus(filename):
 
         is_shared = f['data'].attrs['shared_exposures']
 
-        metadata = {
-            key : val for key, val in f['metadata'].attrs.items()
-        }
+        if 'metadata' in f:
+            metadata = {
+                key : val for key, val in f['metadata'].attrs.items()
+            }
+        else:
+            metadata = {}
 
         return Corpus(
             trinuc_distributions = f['data/trinuc_distributions'][...],
