@@ -518,6 +518,7 @@ roadmap_sub.add_argument('--roadmap-id','-id', type = str, required=True,)
 roadmap_sub.add_argument('--windows-file','-w', type = file_exists, required=True,)
 roadmap_sub.add_argument('--output','-o', type = argparse.FileType('w'), default=sys.stdout)
 roadmap_sub.add_argument('--n-jobs','-j', type = posint, default=1)
+roadmap_sub.add_argument('--bigwig-dir','-bw',type = valid_path, default = 'bigwigs')
 roadmap_sub.set_defaults(func = _fetch_roadmap_wrapper)
 
 
