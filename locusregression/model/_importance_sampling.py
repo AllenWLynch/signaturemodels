@@ -112,7 +112,7 @@ def _get_z_posterior(log_p_ml_z,*,alpha,
     _, N = log_p_ml_z.shape
     z_posterior = np.zeros_like(log_p_ml_z)
 
-    for step in range(1,n_iters):
+    for step in tqdm.tqdm(range(1,n_iters), ncols=100, desc = 'Sampling mutation assignments'):
 
         z_tild = gibbs_sampler(temperature= min(1, step/warm_up_steps))
 

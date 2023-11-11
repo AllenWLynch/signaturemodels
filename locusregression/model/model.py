@@ -40,6 +40,7 @@ class LocusRegressor:
         return dict(
             tau = trial.suggest_categorical('tau', [1, 1, 1, 16, 48, 128]),
             kappa = trial.suggest_categorical('kappa', [0.5, 0.5, 0.5, 0.6, 0.7]),
+            negative_subsample = trial.suggest_categorical('negative_subsample', [None, 100, 1000, 10000]),
         )
     
 
@@ -68,6 +69,7 @@ class LocusRegressor:
         empirical_bayes = False,
         batch_size = None,
         fix_signatures =  None,
+        negative_subsample = None,
     ):
         '''
         Params
@@ -103,6 +105,7 @@ class LocusRegressor:
         self.batch_size = batch_size
         self.fix_signatures = fix_signatures
         self.tree_learning_rate = tree_learning_rate
+        self.negative_subsample = negative_subsample
 
 
     def save(self, filename):
@@ -310,6 +313,7 @@ class LocusRegressor:
                 fix_signatures = self.fix_signatures,
                 genome_trinuc_distribution = self._genome_trinuc_distribution,
                 tree_learning_rate = self.tree_learning_rate,
+                negative_subsample = self.negative_subsample
         )
 
         
@@ -626,7 +630,7 @@ class LocusRegressor:
         return next(iter(corpus))
 
 
-    def get_expected_mutation_rate(self, corpus_name):
+    def get_expected_mutation_rate(self, sample, corpus_name):
         '''
         For a sample, calculate the expected mutation rate. First, we infer the mixture of 
         processes that are active in a sample. Then, we calculate the expected marginal probability
@@ -646,12 +650,14 @@ class LocusRegressor:
 
         psi_matrix = self.get_component_locus_distribution(corpus_name)
 
-        try:
+        '''try:
             corpus_state = self.corpus_states[corpus_name]
         except KeyError:
             raise ValueError(f'Corpus {corpus_name} not found in model.')
         
-        gamma = corpus_state.alpha/corpus_state.alpha.sum() # use expectation of the prior over components
+        gamma = corpus_state.alpha/corpus_state.alpha.sum() # use expectation of the prior over components'''
+
+        gamma = self._predict(sample, corpus_name)
 
         return np.squeeze(np.dot(gamma, psi_matrix))
     
@@ -678,11 +684,11 @@ class LocusRegressor:
 
             logp_corpus.append(logsumexp(ais_weights) - np.log(len(ais_weights)))
 
-        return logp_corpus
+        return list(self.corpus_states.keys()), np.array(logp_corpus)
 
 
 
-    def assign_mutations_to_components(self, sample, corpus_name, n_gibbs_iters = 100):
+    def assign_mutations_to_components(self, sample, corpus_name, n_gibbs_iters = 500):
 
         if not self.trained:
             logger.warn('This model was not trained to completion, results may be innaccurate')
@@ -702,19 +708,63 @@ class LocusRegressor:
             warm_up_steps=25,
         )
 
-        MAP = np.argmax(z_posterior, 0)
+        MAP = np.argmax(z_posterior, axis = 0)
 
         return {
             'chrom' : sample.chrom,
             'pos' : sample.pos,
             'cosmic_str' : sample.cosmic_str,
-            'MAP_assignment' : self.component_names[MAP],
+            'region' : sample.locus,
+            'MAP_assignment' : np.array(self.component_names)[MAP],
             **{
                 'P_' + component_name : z_posterior[k, :]
                 for k, component_name in enumerate(self.component_names)
             }
         }
     
+    def assign_mutations_to_corpus(self, sample, n_gibbs_iters = 500):
+        
+        logp_corpus = []; corpus_names = np.array(list(self.corpus_states.keys()))
+        for corpus_state in self.corpus_states.values():
+
+            observation_logits = IS._conditional_logp_mutation_locus(
+                model_state= self.model_state,
+                corpus_state = corpus_state,
+                sample = sample,
+            )
+
+            mutation_weights = IS._annealed_importance_sampling(
+                    log_p_ml_z=observation_logits,
+                    alpha=corpus_state.alpha,
+                    n_iters=100,
+                    n_samples_per_iter= 100
+                )
+            
+            mutation_weights = np.array(mutation_weights)
+            
+            logp_corpus.append(
+                logsumexp(mutation_weights, axis = 0, keepdims = True) - np.log(mutation_weights.shape[0])
+            )
+
+        logp_corpus = np.concatenate(logp_corpus, axis = 0)
+        
+        MAP = np.argmax(logp_corpus, axis = 0)
+
+        return {
+            'chrom' : sample.chrom,
+            'pos' : sample.pos,
+            'cosmic_str' : sample.cosmic_str,
+            'region' : sample.locus,
+            'MAP_assignment' : corpus_names[MAP],
+            **{
+                'logP_' + _corpus_name : logp_corpus[k, :]
+                for k, _corpus_name in enumerate(corpus_names)
+            }
+        }
+    
+        return list(self.corpus_states.keys()), np.array(logp_corpus)
+    
+
 
     def signature(self, component, 
             monte_carlo_draws = 1000,

@@ -8,7 +8,8 @@ logger = logging.getLogger('Corpus')
 
 class CorpusMixin(ABC):
 
-    def __init__(self,*,
+    def __init__(self,
+        metadata = {},*,
         name,
         samples,
         feature_names,
@@ -22,6 +23,7 @@ class CorpusMixin(ABC):
         self.X_matrix = X_matrix
         self.trinuc_distributions = trinuc_distributions
         self._shared_exposures = shared_exposures
+        self.metadata = metadata
 
         if self._shared_exposures:
             self._exposures = samples[0].exposures
@@ -93,8 +95,6 @@ class SampleLoader:
 
 
     def _read_item(self, h5, idx):
-        #logger.debug('Streaming from disk cache.')
-        #return {k : h5[f'samples/{i}/{k}'][...] for k in h5[f'samples/{i}'].keys()}
         return SBSSample.read_h5_dataset(h5, f'samples/{idx}')
 
 
@@ -130,6 +130,10 @@ def save_corpus(corpus, filename):
         data_group = f.create_group('data')
         data_group.attrs['shared_exposures'] = corpus.shared_exposures
         data_group.attrs['name'] = corpus.name
+        
+        metadata_group = f.create_group('metadata')
+        for key, val in corpus.metadata.items():
+            metadata_group.attrs[key] = val
 
         data_group.create_dataset('trinuc_distributions', data = corpus.trinuc_distributions)
         data_group.create_dataset('X_matrix', data = corpus.X_matrix)
@@ -138,8 +142,6 @@ def save_corpus(corpus, filename):
         samples_group = f.create_group('samples')
 
         for i, sample in enumerate(corpus.samples):
-            #for k, v in sample.items():
-            #    sample_dataset = samples_group.create_dataset(f'{i}/{k}', data = v)
             sample.create_h5_dataset(samples_group, str(i))
 
 
@@ -150,17 +152,24 @@ def load_corpus(filename):
 
         is_shared = f['data'].attrs['shared_exposures']
 
+        if 'metadata' in f:
+            metadata = {
+                key : val for key, val in f['metadata'].attrs.items()
+            }
+        else:
+            metadata = {}
+
         return Corpus(
             trinuc_distributions = f['data/trinuc_distributions'][...],
             X_matrix = f['data/X_matrix'][...],
             feature_names = f['data/X_matrix'].attrs['feature_names'],
             samples = InMemorySamples([
-                #{k : f[f'samples/{i}/{k}'][...] for k in f[f'samples/{i}'].keys()}
                 SBSSample.read_h5_dataset(h5, f'samples/{i}')
                 for i in range(len(f['samples'].keys()))
             ]),
             shared_exposures=is_shared,
-            name = f['data'].attrs['name']
+            name = f['data'].attrs['name'],
+            metadata=metadata
         )
 
 
@@ -170,13 +179,21 @@ def stream_corpus(filename):
 
         is_shared = f['data'].attrs['shared_exposures']
 
+        if 'metadata' in f:
+            metadata = {
+                key : val for key, val in f['metadata'].attrs.items()
+            }
+        else:
+            metadata = {}
+
         return Corpus(
             trinuc_distributions = f['data/trinuc_distributions'][...],
             X_matrix = f['data/X_matrix'][...],
             feature_names = f['data/X_matrix'].attrs['feature_names'],
             samples = SampleLoader(filename),
             shared_exposures=is_shared,
-            name = f['data'].attrs['name']
+            name = f['data'].attrs['name'],
+            metadata=metadata
         )
 
 
