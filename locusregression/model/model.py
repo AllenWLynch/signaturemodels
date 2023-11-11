@@ -722,6 +722,49 @@ class LocusRegressor:
             }
         }
     
+    def assign_mutations_to_corpus(self, sample, n_gibbs_iters = 500):
+        
+        logp_corpus = []; corpus_names = np.array(list(self.corpus_states.keys()))
+        for corpus_state in self.corpus_states.values():
+
+            observation_logits = IS._conditional_logp_mutation_locus(
+                model_state= self.model_state,
+                corpus_state = corpus_state,
+                sample = sample,
+            )
+
+            mutation_weights = IS._annealed_importance_sampling(
+                    log_p_ml_z=observation_logits,
+                    alpha=corpus_state.alpha,
+                    n_iters=100,
+                    n_samples_per_iter= 100
+                )
+            
+            mutation_weights = np.array(mutation_weights)
+            
+            logp_corpus.append(
+                logsumexp(mutation_weights, axis = 0, keepdims = True) - np.log(mutation_weights.shape[0])
+            )
+
+        logp_corpus = np.concatenate(logp_corpus, axis = 0)
+        
+        MAP = np.argmax(logp_corpus, axis = 0)
+
+        return {
+            'chrom' : sample.chrom,
+            'pos' : sample.pos,
+            'cosmic_str' : sample.cosmic_str,
+            'region' : sample.locus,
+            'MAP_assignment' : corpus_names[MAP],
+            **{
+                'logP_' + _corpus_name : logp_corpus[k, :]
+                for k, _corpus_name in enumerate(corpus_names)
+            }
+        }
+    
+        return list(self.corpus_states.keys()), np.array(logp_corpus)
+    
+
 
     def signature(self, component, 
             monte_carlo_draws = 1000,
