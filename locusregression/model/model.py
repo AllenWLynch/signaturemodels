@@ -40,7 +40,7 @@ class LocusRegressor:
         return dict(
             tau = trial.suggest_categorical('tau', [1, 1, 1, 16, 48, 128]),
             kappa = trial.suggest_categorical('kappa', [0.5, 0.5, 0.5, 0.6, 0.7]),
-            negative_subsample = trial.suggest_categorical('negative_subsample', [None, 100, 1000, 10000]),
+            negative_subsample = trial.suggest_categorical('negative_subsample', [1000, 2500, 10000, 50000,100000000000]),
         )
     
 
@@ -662,7 +662,8 @@ class LocusRegressor:
         return np.squeeze(np.dot(gamma, psi_matrix))
     
 
-    def assign_sample_to_corpus(self, sample):
+    def assign_sample_to_corpus(self, sample,
+            n_samples_per_iter = 100, n_iters = 100):
 
         logp_corpus = []
         for corpus_state in self.corpus_states.values():
@@ -676,15 +677,15 @@ class LocusRegressor:
             ais_weights = IS._annealed_importance_sampling(
                     log_p_ml_z=observation_logits,
                     alpha=corpus_state.alpha,
-                    n_iters=100,
-                    n_samples_per_iter= 100
+                    n_iters=n_iters,
+                    n_samples_per_iter=n_samples_per_iter
                 )
             
             ais_weights = [w.sum() for w in ais_weights]
 
             logp_corpus.append(logsumexp(ais_weights) - np.log(len(ais_weights)))
 
-        return list(self.corpus_states.keys()), np.array(logp_corpus)
+        return list(self.corpus_states.keys()), np.array(logp_corpus), ais_weights
 
 
 
@@ -722,7 +723,8 @@ class LocusRegressor:
             }
         }
     
-    def assign_mutations_to_corpus(self, sample, n_gibbs_iters = 500):
+    def assign_mutations_to_corpus(self, sample, 
+            n_samples_per_iter = 100, n_iters = 100):
         
         logp_corpus = []; corpus_names = np.array(list(self.corpus_states.keys()))
         for corpus_state in self.corpus_states.values():
@@ -736,8 +738,8 @@ class LocusRegressor:
             mutation_weights = IS._annealed_importance_sampling(
                     log_p_ml_z=observation_logits,
                     alpha=corpus_state.alpha,
-                    n_iters=100,
-                    n_samples_per_iter= 100
+                    n_iters=n_iters,
+                    n_samples_per_iter= n_samples_per_iter
                 )
             
             mutation_weights = np.array(mutation_weights)

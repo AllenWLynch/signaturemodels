@@ -164,7 +164,7 @@ def load_corpus(filename):
             X_matrix = f['data/X_matrix'][...],
             feature_names = f['data/X_matrix'].attrs['feature_names'],
             samples = InMemorySamples([
-                SBSSample.read_h5_dataset(h5, f'samples/{i}')
+                SBSSample.read_h5_dataset(f, f'samples/{i}')
                 for i in range(len(f['samples'].keys()))
             ]),
             shared_exposures=is_shared,

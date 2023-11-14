@@ -110,7 +110,7 @@ class BetaOptimizer:
         random_state,
     ):
         
-        if not negative_subsample is None:
+        if (not negative_subsample is None) and negative_subsample < X_matrices[0].shape[1]:
             negative_samples = np.random.choice(
                 X_matrices[0].shape[1], 
                 size = negative_subsample, 
