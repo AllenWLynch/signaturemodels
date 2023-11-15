@@ -318,6 +318,7 @@ def train_model(
         locus_subsample = 0.125,
         batch_size = 128,
         time_limit = None,
+        negative_subsample = None,
         tau = 1,
         kappa = 0.5,
         seed = 0, 
@@ -358,6 +359,7 @@ def train_model(
         tau = tau,
         kappa = kappa,
         empirical_bayes=empirical_bayes,
+        negative_subsample=negative_subsample,
     )
     
     logging.basicConfig(level=logging.INFO)
@@ -388,6 +390,7 @@ trainer_optional.add_argument('--locus-subsample','-sub', type = posfloat, defau
     help = 'Whether to use locus subsampling to speed up training via stochastic variational inference.')
 trainer_optional.add_argument('--batch-size','-batch', type = posint, default = 128,
     help = 'Use minibatch updates via stochastic variational inference.')
+trainer_optional.add_argument('--negative-subsample','-neg', type = int, default=None)
 trainer_optional.add_argument('--time-limit','-time', type = posint, default = None,
     help = 'Time limit in seconds for model training.')
 trainer_optional.add_argument('--fix-signatures','-sigs', nargs='+', type = str, default = None,
@@ -583,6 +586,7 @@ roadmap_sub.add_argument('--roadmap-id','-id', type = str, required=True,)
 roadmap_sub.add_argument('--regions-file','-r', type = file_exists, required=True,)
 roadmap_sub.add_argument('--output','-o', type = argparse.FileType('w'), default=sys.stdout)
 roadmap_sub.add_argument('--n-jobs','-j', type = posint, default=1)
+roadmap_sub.add_argument('--bigwig-dir','-bw',type = valid_path, default = 'bigwigs')
 roadmap_sub.set_defaults(func = _fetch_roadmap_wrapper)
 
 
