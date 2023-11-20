@@ -343,7 +343,7 @@ class LocusRegressor:
     def _subsample_corpus(self,*,corpus, batch_svi, locus_svi, n_subsample_loci):
 
         if batch_svi:
-            update_samples = self.random_state.choice(self.n_samples, size = self.batch_size, replace = False)
+            update_samples = np.sort( self.random_state.choice(self.n_samples, size = self.batch_size, replace = False) )
             inner_corpus = corpus.subset_samples(update_samples)
         else:
             update_samples = np.arange(self.n_samples)
@@ -585,7 +585,7 @@ class LocusRegressor:
             warm_up_steps=25,
         )'''
 
-        return gamma/gamma.sum()
+        return gamma #/gamma.sum()
 
 
     def predict(self, corpus):
@@ -689,7 +689,7 @@ class LocusRegressor:
 
 
 
-    def assign_mutations_to_components(self, sample, corpus_name, n_gibbs_iters = 500):
+    def assign_mutations_to_components(self, sample, corpus_name, n_gibbs_iters = 1000):
 
         if not self.trained:
             logger.warn('This model was not trained to completion, results may be innaccurate')
@@ -706,7 +706,6 @@ class LocusRegressor:
             log_p_ml_z=observation_logits,
             alpha=corpus_state.alpha,
             n_iters=n_gibbs_iters,
-            warm_up_steps=25,
         )
 
         MAP = np.argmax(z_posterior, axis = 0)
@@ -722,6 +721,7 @@ class LocusRegressor:
                 for k, component_name in enumerate(self.component_names)
             }
         }
+
     
     def assign_mutations_to_corpus(self, sample, 
             n_samples_per_iter = 100, n_iters = 100):
@@ -980,7 +980,7 @@ class LocusRegressor:
         ax.set(xlabel = 'Feature', ylabel = 'Coefficient')
         ax.xaxis.label.set_size(fontsize); ax.yaxis.label.set_size(fontsize)
 
-        ax.set_title('Component ' + str(component), fontsize = fontsize)
+        ax.set_title(self.component_names[component], fontsize = fontsize)
 
         for s in ['left','right','top', 'bottom']:
             ax.spines[s].set_visible(False)
@@ -1087,7 +1087,7 @@ class LocusRegressor:
 
             self.plot_signature(i, ax = ax[i,1], normalization='global', fontsize=fontsize)
             self.plot_coefficients(i, ax = ax[i,0], fontsize=fontsize)
-            ax[i,0].set(xlabel = '', ylabel = 'Component ' + str(i), title = '')
+            ax[i,0].set(xlabel = '', ylabel = self.component_names[i], title = '')
             ax[i,1].set(title = '')
             ax[i,0].spines['bottom'].set_visible(False)
 

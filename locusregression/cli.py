@@ -441,7 +441,7 @@ def predict(*,model, corpuses, output):
 
     sample_names, predictions = model.predict(dataset)
 
-    print('',*['Component ' + str(i) for i in range(model.n_components)], sep = ',', file = output)
+    print('',*model.component_names, sep = ',', file = output)
     for sample_name, prediction in zip(sample_names, predictions):
         print(sample_name, *prediction, sep = ',', file = output)
 
@@ -485,8 +485,8 @@ def save_signatures(*, model, output):
     model = load_model(model)
     
     print('', *COSMIC_SORT_ORDER, sep = ',', file = output)
-    for i in range(model.n_components):
-        print('Component ' + str(i), *model.signature(i, return_error=False), sep = ',', file = output)
+    for i, component_name in enumerate(model.component_names):
+        print(component_name, *model.signature(i, return_error=False), sep = ',', file = output)
 
 signatures_parser = subparsers.add_parser('model-save-signatures', 
                                           help = 'Save signatures to file.')
@@ -500,8 +500,9 @@ def save_associations(*, model, output):
     model = load_model(model)
 
     print('', *model.feature_names, sep = ',', file = output)
-    for i in range(model.n_components):
-        print('Component ' + str(i), *model.model_state.beta_mu[i], sep = ',', file = output)
+    for i, component_name in enumerate(model.component_names):
+        print(component_name, *model.model_state.beta_mu[i], sep = ',', file = output)
+
 
 associations_parser = subparsers.add_parser('model-save-associations',
                                             help = 'Save associations to file.')

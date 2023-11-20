@@ -1,6 +1,8 @@
 import numpy as np
 import tqdm
 from functools import partial
+from scipy.special import logsumexp
+from .base import log_dirichlet_expectation
 
 def _conditional_logp_mutation_locus(*, model_state, sample, corpus_state):
         '''
@@ -8,8 +10,8 @@ def _conditional_logp_mutation_locus(*, model_state, sample, corpus_state):
         These probabilities are unnormalized, and are used in the gibbs sampling step
         '''
 
-        _lambda = model_state.delta/np.sum(model_state.delta, axis = 1, keepdims = True)
-        rho = model_state.omega/np.sum(model_state.omega, axis = 1, keepdims = True)
+        _lambda = model_state.delta/np.sum(model_state.delta, axis = -1, keepdims = True)
+        rho = model_state.omega/np.sum(model_state.omega, axis = -1, keepdims = True)
 
         mutation_matrix = _lambda[:,:,None] * rho
 
@@ -28,18 +30,25 @@ def _model_logp_given_z(log_p_ml_z, z):
     return log_p_ml_z[z, np.arange(n_obs)]
 
 
-def _gibbs_sample(temperature = 1,*,
-                  N_z, z, alpha, log_p_ml_z, N, randomstate):
+def _categorical_draw(p, randomstate):
+    assert np.isclose(p.sum(0) - 1, 0).all() 
+    K,N = p.shape
 
-    for i in range(N):
+    draw = randomstate.uniform(0,1,N)
+    return np.argmax(p.cumsum(0) > draw, axis = 0)
 
-        N_z[z[i]] = N_z[z[i]] - 1
-        
-        log_q_z = temperature * log_p_ml_z[:, i] + np.log( N_z + alpha ) - np.log( N - 1 + alpha )
 
-        z[i] = np.argmax(log_q_z + randomstate.gumbel(size=log_q_z.shape))
+def _gibbs_sample(z, temperature = 1,*,
+                  alpha, log_p_ml_z, N, K, randomstate):
 
-        N_z[z[i]] = N_z[z[i]] + 1
+
+    N_z = np.array([np.sum(z == k) for k in range(K)])[:,np.newaxis]
+    
+    log_q_z = temperature * log_p_ml_z + np.log( N_z + alpha ) - np.log( N - 1 + alpha )
+
+    q_z = np.exp( log_q_z  - logsumexp(log_q_z, axis = 0, keepdims = True) )
+
+    z = _categorical_draw(q_z, randomstate)
 
     return z
 
@@ -50,19 +59,16 @@ def _get_gibbs_sample_function(log_p_ml_z,*,alpha, randomstate = None):
         randomstate = np.random.RandomState(0)
 
     K, N = log_p_ml_z.shape
-
-    pi = randomstate.dirichlet(alpha, size = N)
-    z = np.array([
-         randomstate.choice(K, p = pi[i]) for i in range(N)
-        ])
     
-    N_z = np.array([np.sum(z == k) for k in range(K)])
+    q_z = np.repeat(alpha[:,np.newaxis]/alpha.sum(), N, axis = 1)
+
+    z = _categorical_draw(q_z, randomstate)
     
     return partial(
             _gibbs_sample,
-            N_z = N_z, z = z, 
-            alpha = alpha, 
+            alpha = alpha[:,np.newaxis], 
             log_p_ml_z = log_p_ml_z, 
+            K= K,
             N = N, 
             randomstate = randomstate
         ), z
@@ -89,7 +95,7 @@ def _annealed_importance_sampling(
 
         for j in range(2,n_samples_per_iter):
             
-            z_tild = gibbs_sample(temperature = temperatures[j])
+            z_tild = gibbs_sample(z_tild, temperature = temperatures[j])
 
             iter_weights_running = iter_weights_running + _model_logp_given_z(log_p_ml_z, z_tild) * (temperatures[j] - temperatures[j-1])
 
@@ -101,23 +107,21 @@ def _annealed_importance_sampling(
 
 
 def _get_z_posterior(log_p_ml_z,*,alpha, 
-                     n_iters = 1000, 
-                     warm_up_steps = 25,
+                     n_iters = 1000,
                      randomstate = None):
     
-    gibbs_sampler, _ = _get_gibbs_sample_function(log_p_ml_z, 
+    gibbs_sampler, z_tild = _get_gibbs_sample_function(log_p_ml_z, 
                                                alpha = alpha, 
                                                randomstate = randomstate)
     
-    _, N = log_p_ml_z.shape
+    K, N = log_p_ml_z.shape
     z_posterior = np.zeros_like(log_p_ml_z)
 
     for step in tqdm.tqdm(range(1,n_iters), ncols=100, desc = 'Sampling mutation assignments'):
 
-        z_tild = gibbs_sampler(temperature= min(1, step/warm_up_steps))
-
-        if step > warm_up_steps:
-            z_posterior[z_tild, np.arange(N)] += 1
+        z_tild = gibbs_sampler(z_tild, temperature= 1.)
+        
+        z_posterior[z_tild, np.arange(N)] += 1
 
     return z_posterior / np.sum(z_posterior, axis = 0, keepdims = True)
     
