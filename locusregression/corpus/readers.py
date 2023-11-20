@@ -337,9 +337,15 @@ class CorpusReader:
     
 
     @classmethod
-    def ingest_sample(cls, corpus, vcf_file, exposure_file = None):
+    def ingest_sample(cls, vcf_file, exposure_file = None,*,
+                    regions_file,
+                    fasta_file,
+                    sep = '\t',
+                    index = -1,
+                    chr_prefix = '',
+                    ):
             
-        windows = cls.read_windows(corpus.metadata['regions_file'], None, sep = '\t')
+        windows = cls.read_windows(regions_file, None, sep = '\t')
 
         if not exposure_file is None:
             exposures = cls.calculate_exposures(
@@ -355,10 +361,10 @@ class CorpusReader:
 
         return SBSSample.featurize_mutations(
             vcf_file, 
-            corpus.metadata['regions_file'], 
-            corpus.metadata['fasta_file'], 
+            regions_file,
+            fasta_file,
             exposures,
-            sep = corpus.metadata['sep'],
-            index = corpus.metadata['index'], 
-            chr_prefix = corpus.metadata['chr_prefix'],
+            sep = sep,
+            index = index,
+            chr_prefix = chr_prefix,
         )
