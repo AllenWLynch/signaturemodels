@@ -77,8 +77,14 @@ class BetaOptimizer:
         deriv_second_term = weighted_phis @ X_mut.T # K,L x L,F -> KxF
 
         if not negative_samples is None:
-            exposures = exposures[:, negative_samples]
-            X_negsample = X_matrix[:,negative_samples].copy()
+            neg_sample_weight = n_loci/len(negative_samples)
+
+            exposures = np.hstack([
+                exposures[:, nonzero_indices], neg_sample_weight*exposures[:, negative_samples]
+            ])
+
+            #X_negsample = .copy()
+            X_negsample = np.hstack([X_mut, X_matrix[:,negative_samples]])
         else:
             X_negsample = X_matrix.copy()
 
@@ -101,7 +107,7 @@ class BetaOptimizer:
     @staticmethod
     def optimize(
         tau = 1.,
-        negative_subsample = 1000,*, 
+        negative_subsample = 10000,*, 
         beta_mu0, 
         beta_nu0,
         exposures,
@@ -111,7 +117,7 @@ class BetaOptimizer:
     ):
         
         if (not negative_subsample is None) and negative_subsample < X_matrices[0].shape[1]:
-            negative_samples = np.random.choice(
+            negative_samples = random_state.choice(
                 X_matrices[0].shape[1], 
                 size = negative_subsample, 
                 replace = False
