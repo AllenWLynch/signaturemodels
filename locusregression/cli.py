@@ -524,8 +524,7 @@ list_corpuses_parser.set_defaults(func = list_corpuses)
 
 def add_sample_ingest_args(parser):
     parser.add_argument('model', type = file_exists)
-    parser.add_argument('--vcf-file','-vcf', type = argparse.FileType('r'), required=True)
-    parser.add_argument('--corpus-name','-n', type = str, required=True)
+    parser.add_argument('--vcf-file','-vcf', type = file_exists, required=True)
     parser.add_argument('--exposure-file','-e', type = argparse.FileType('r'), default=None)
     parser.add_argument('--output','-o', type = argparse.FileType('w'), default=sys.stdout)
     parser.add_argument('--regions-file','-r', type = file_exists, required=True)
@@ -563,20 +562,17 @@ def assign_components(*,model,vcf_file, corpus_name, exposure_file, output,
 assign_mutations_parser = subparsers.add_parser('model-assign-components',
                                                 help = 'Assign each mutation in a VCF file to a component of the model.')
 add_sample_ingest_args(assign_mutations_parser)
+assign_mutations_parser.add_argument('--corpus-name','-n', type = str, required=True)
 assign_mutations_parser.set_defaults(func = assign_components)
 
 
-def assign_corpus(*,model,vcf_file, corpus_name, exposure_file, output,
+def assign_corpus(*,model,vcf_file, exposure_file, output,
                      regions_file, fasta_file, iters = 100, anneal_steps = 100,
                      sep = '\t', index = '-1', 
-                     chr_prefix = ''):
+                     chr_prefix = '',
+                     pi_prior = None):
     
     model = load_model(model)
-
-    try:
-        model.corpus_states[corpus_name]
-    except KeyError:
-        raise ValueError(f'Corpus {corpus_name} not found in model.')
     
     logger.info('Reading sample from VCF file.')
     sample = CorpusReader.ingest_sample(
@@ -587,7 +583,8 @@ def assign_corpus(*,model,vcf_file, corpus_name, exposure_file, output,
     
     corpus_logps = model.assign_sample_to_corpus(sample, 
                                                  n_iters = iters, 
-                                                 n_samples_per_iter = anneal_steps
+                                                 n_samples_per_iter = anneal_steps,
+                                                 pi_prior = pi_prior,
                                                 )
 
     print(*corpus_logps.keys(), sep = ',', file = output)
@@ -598,23 +595,19 @@ def assign_corpus(*,model,vcf_file, corpus_name, exposure_file, output,
 assign_corpus_parser = subparsers.add_parser('model-assign-corpus-sample',
                                              help = 'Evaluate which corpus a VCF file is most likely generated from.')
 add_sample_ingest_args(assign_corpus_parser)
+assign_corpus_parser.add_argument('--pi-prior','-pi', type = posfloat, default = None)
 assign_corpus_parser.add_argument('--iters','-iters', type = posint, default = 100)
 assign_corpus_parser.add_argument('--anneal-steps','-steps', type = posint, default = 100)
 assign_corpus_parser.set_defaults(func = assign_corpus)
 
 
 
-def assign_corpus_mutation(*,model,vcf_file, corpus_name, exposure_file, output,
+def assign_corpus_mutation(*,model,vcf_file, exposure_file, output,
                         regions_file, fasta_file, iters = 100, anneal_steps = 100,
                         sep = '\t', index = '-1',
                         chr_prefix = ''):
     
     model = load_model(model)
-
-    try:
-        model.corpus_states[corpus_name]
-    except KeyError:
-        raise ValueError(f'Corpus {corpus_name} not found in model.')
     
     logger.info('Reading sample from VCF file.')
     sample = CorpusReader.ingest_sample(
@@ -640,6 +633,8 @@ assign_corpus_mutation_parser.add_argument('--anneal-steps','-steps', type = pos
 assign_corpus_mutation_parser.set_defaults(func = assign_corpus_mutation)
 
 
+def mutation_rate():
+    pass
 
 
 def _fetch_roadmap_wrapper(**kw):

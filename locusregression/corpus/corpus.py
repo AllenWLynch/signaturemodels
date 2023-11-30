@@ -204,13 +204,15 @@ def train_test_split(corpus, seed = 0, train_size = 0.7):
 
     randomstate = np.random.RandomState(seed)
 
-    train_idx = randomstate.choice(
-        len(corpus), 
-        size = int(train_size * len(corpus)),
-        replace=False
+    train_idx = sorted(
+        randomstate.choice(
+            len(corpus), 
+            size = int(train_size * len(corpus)),
+            replace=False
+        )
     )
 
-    test_idx = list( set( range(len(corpus)) ).difference(set(train_idx)) )
+    test_idx = sorted( list( set( range(len(corpus)) ).difference(set(train_idx)) ) )
 
     return corpus.subset_samples(train_idx), corpus.subset_samples(test_idx)
 

@@ -14,6 +14,7 @@ class GBTModelState(ModelState):
                 n_features, 
                 empirical_bayes,
                 genome_trinuc_distribution,
+                negative_subsample = None,
                 dtype
                 ):
         

@@ -3,6 +3,8 @@ import tqdm
 from functools import partial
 from scipy.special import logsumexp
 from .base import log_dirichlet_expectation
+from scipy.stats import dirichlet_multinomial
+
 
 def _conditional_logp_mutation_locus(*, model_state, sample, corpus_state):
         '''
@@ -25,9 +27,13 @@ def _conditional_logp_mutation_locus(*, model_state, sample, corpus_state):
         return log_p_l + log_p_m_l # K,I
 
 
-def _model_logp_given_z(log_p_ml_z, z):
-    n_obs = log_p_ml_z.shape[1]
-    return log_p_ml_z[z, np.arange(n_obs)]
+
+def _model_logp_given_z(log_p_ml_z, z, alpha):
+    
+    K, N = log_p_ml_z.shape
+    N_z = np.array([np.sum(z == k) for k in range(K)])
+
+    return log_p_ml_z[z, np.arange(N)] + 1/N*( dirichlet_multinomial.logpmf(N_z, alpha, N) )
 
 
 def _categorical_draw(p, randomstate):
@@ -44,7 +50,7 @@ def _gibbs_sample(z, temperature = 1,*,
 
     N_z = np.array([np.sum(z == k) for k in range(K)])[:,np.newaxis]
     
-    log_q_z = temperature * log_p_ml_z + np.log( N_z + alpha ) - np.log( N - 1 + alpha )
+    log_q_z = temperature*log_p_ml_z + np.log( N_z + alpha ) - np.log( N - 1 + alpha )
 
     q_z = np.exp( log_q_z  - logsumexp(log_q_z, axis = 0, keepdims = True) )
 
@@ -83,7 +89,7 @@ def _annealed_importance_sampling(
 
     weights = []
 
-    for i in tqdm.tqdm(range(n_iters), ncols=100, desc = 'Importance sampling iterations'):
+    for i in tqdm.tqdm(range(n_iters + 1), ncols=100, desc = 'Importance sampling iterations'):
          
         gibbs_sample, z_tild = _get_gibbs_sample_function(
              log_p_ml_z, 
@@ -91,17 +97,16 @@ def _annealed_importance_sampling(
              randomstate = np.random.RandomState(i)
         )
 
-        iter_weights_running = _model_logp_given_z(log_p_ml_z, z_tild) * temperatures[1]
+        iter_weights_running = _model_logp_given_z(log_p_ml_z, z_tild, alpha) * temperatures[0]
 
-        for j in range(2,n_samples_per_iter):
+        for j in range(1,n_samples_per_iter):
             
             z_tild = gibbs_sample(z_tild, temperature = temperatures[j])
 
-            iter_weights_running = iter_weights_running + _model_logp_given_z(log_p_ml_z, z_tild) * (temperatures[j] - temperatures[j-1])
+            iter_weights_running = iter_weights_running + _model_logp_given_z(log_p_ml_z, z_tild, alpha) * (temperatures[j] - temperatures[j-1])
 
         weights.append(iter_weights_running)
 
-    #return logsumexp(weights) - np.log(n_iters)
     return weights
 
 
