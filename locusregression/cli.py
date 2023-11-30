@@ -521,6 +521,25 @@ list_corpuses_parser.add_argument('model', type = file_exists)
 list_corpuses_parser.set_defaults(func = list_corpuses)
 
 
+def save_per_component_mutation_rates(*,model, output, corpus_name):
+
+    model = load_model(model)
+
+    component_locus_distribution = model.get_component_locus_distribution(corpus_name).T
+
+    print(*model.component_names, sep = ',', file = output)
+    
+    for i in range(model.n_loci):
+        print(*component_locus_distribution[i,:], sep = ',', file = output)
+
+component_mutrates_parser = subparsers.add_parser('model-save-component-mutation-rates',
+                                                    help = 'Save the relative mutation rate across loci for each mutational process w.r.t. the correlates of some corpus.')
+component_mutrates_parser.add_argument('model', type = file_exists)
+component_mutrates_parser.add_argument('--corpus-name','-n', type = str, required=True)
+component_mutrates_parser.add_argument('--output','-o', type = argparse.FileType('w'), default=sys.stdout)
+component_mutrates_parser.set_defaults(func = save_per_component_mutation_rates)                                        
+
+
 
 def add_sample_ingest_args(parser):
     parser.add_argument('model', type = file_exists)
