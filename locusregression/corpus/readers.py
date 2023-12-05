@@ -23,10 +23,9 @@ class CorpusReader:
             regions_file,
             output,
             n_jobs = 1,
-            sep = '\t',
         ):
 
-        windows = cls.read_windows(regions_file, None, sep = sep)
+        windows = cls.read_windows(regions_file, None, sep = '\t')
 
         with Fasta(fasta_file) as fa:
             trinuc_distributions = cls.get_trinucleotide_distributions(
@@ -39,8 +38,7 @@ class CorpusReader:
 
     @classmethod
     def create_corpus(cls, 
-            sep = '\t', 
-            index = -1,
+            weight_col = None,
             chr_prefix = '', 
             n_jobs = 1,
             exposure_files = None,
@@ -60,7 +58,7 @@ class CorpusReader:
                 'If providing exposure files, provide one for the whole corpus, or one per sample.'
             
 
-        windows = cls.read_windows(regions_file, None, sep = sep)
+        windows = cls.read_windows(regions_file, None, sep = '\t')
 
         if len(exposure_files) > 0:
             exposures = cls.calculate_exposures(
@@ -78,11 +76,10 @@ class CorpusReader:
         )
 
         samples = cls.collect_vcfs(
+            weight_col = weight_col,
             vcf_files = vcf_files, 
             fasta_file = fasta_file, 
             regions_file = regions_file,
-            index = index,
-            sep = sep,
             chr_prefix = chr_prefix,
             exposures = exposures,
         )
@@ -115,8 +112,6 @@ class CorpusReader:
                 'fasta_file' : os.path.abspath(fasta_file),
                 'correlates_file' : os.path.abspath(correlates_file),
                 'trinuc_file' : os.path.abspath(trinuc_file),
-                'sep' : str(sep),
-                'index' : int(index),
                 'chr_prefix' : str(chr_prefix),
             }
         )
@@ -261,7 +256,7 @@ class CorpusReader:
 
 
     @staticmethod
-    def collect_vcfs(vcf_files, sep = '\t', index = -1, chr_prefix = '',*,
+    def collect_vcfs(vcf_files, weight_col = None, chr_prefix = '',*,
                      fasta_file, regions_file, exposures):
         
         logger.info('Reading VCF files ...')
@@ -283,9 +278,12 @@ class CorpusReader:
             logger.info('Featurizing {}'.format(vcf))
             
             samples.append(
-                SBSSample.featurize_mutations(vcf, regions_file = regions_file, fasta_file = fasta_file,
-                                          sep = sep, index = index, chr_prefix = chr_prefix, 
-                                          exposures = sample_exposure
+                SBSSample.featurize_mutations(vcf, 
+                                          regions_file = regions_file, 
+                                          fasta_file = fasta_file,
+                                          chr_prefix = chr_prefix, 
+                                          exposures = sample_exposure,
+                                          weight_col = weight_col
                                           )
             )
         
@@ -340,9 +338,8 @@ class CorpusReader:
     def ingest_sample(cls, vcf_file, exposure_file = None,*,
                     regions_file,
                     fasta_file,
-                    sep = '\t',
-                    index = -1,
                     chr_prefix = '',
+                    weight_col = None,
                     ):
             
         windows = cls.read_windows(regions_file, None, sep = '\t')
@@ -358,13 +355,11 @@ class CorpusReader:
                 np.ones((1, len(windows)))
             )
 
-
         return SBSSample.featurize_mutations(
             vcf_file, 
             regions_file,
             fasta_file,
             exposures,
-            sep = sep,
-            index = index,
             chr_prefix = chr_prefix,
+            weight_col = weight_col,
         )

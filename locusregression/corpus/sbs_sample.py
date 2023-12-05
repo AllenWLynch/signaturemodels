@@ -62,15 +62,15 @@ def code_SBS_mutation(*,query_file, fasta_file, index = -1,
     class QUERY(object):
         CHROM = 0	
         POS = 1
-        REF = 3
-        ALT = 4
-        WEIGHT = 5
+        REF = 2
+        ALT = 3
+        WEIGHT = 4
 
 
     with Fasta(fasta_file) as fa:
     
         for line in query_file:
-            
+
             if line.startswith('#'):
                 continue
             
@@ -102,14 +102,15 @@ def _process_mapped_sbs_codes(input):
         'chrom': [],
         'pos': [],
         'cosmic_str': [],
-        'mutations': [],
-        'contexts': [],
-        'loci': [],
+        'mutation': [],
+        'context': [],
+        'locus': [],
         'weight' : [],
     }
 
     for locus_idx, line in enumerate(input):
-        chrom, pos, _, mutation_codes = line.strip().split('\t')
+
+        chrom, pos, _, _, mutation_codes = line.strip().split('\t')
         if mutation_codes == '.':
             continue
 
@@ -117,12 +118,12 @@ def _process_mapped_sbs_codes(input):
 
         for code in mutation_codes:
             data['chrom'].append(chrom)
-            data['pos'].append(pos)
+            data['pos'].append(int(pos))
             data['cosmic_str'].append(code[0])
-            data['mutations'].append(int(code[1]))
-            data['contexts'].append(int(code[2]))
+            data['mutation'].append(int(code[1]))
+            data['context'].append(int(code[2]))
             data['weight'].append(float(code[3]))
-            data['loci'].append(locus_idx)
+            data['locus'].append(locus_idx)
 
     data = {key: np.array(value).astype('S') if key in ['chrom','cosmic_str'] else np.array(value)
             for key, value in data.items()
@@ -149,26 +150,28 @@ class SBSSample:
 
     @classmethod
     def featurize_mutations(cls, vcf_file, regions_file, fasta_file, exposures,
-                        sep = '\t', index = -1, chr_prefix = '', weight_field = None):
+                        chr_prefix = '', weight_col = None):
 
 
         with tempfile.NamedTemporaryFile() as tmp:
 
             filter_process = subprocess.Popen(
-                ['bcftools','view','-v','snps','-O','v', vcf_file],
+                ['bcftools','view','-v','snps', vcf_file],
                 stdout = subprocess.PIPE,
                 universal_newlines=True,
                 bufsize=10000,
                 stderr = subprocess.DEVNULL,
             )
-
-            query_process = subprocess.Popen(
-                ['bcftools','query','-f', '%CHROM\t%POS0\t%REF\t%ALT{0}' + '\n' if weight_field is None else f'\t%INFO/{weight_field}\n'],
-                stdin = filter_process.stdout,
-                stdout = subprocess.PIPE,
-                universal_newlines=True,
-                bufsize=10000,
-            )
+            
+            with open(os.devnull, "w") as nullout:
+                query_process = subprocess.Popen(
+                    ['bcftools','query','-f','%CHROM\t%POS0\t%REF\t%ALT{0}' + ('\t1\n' if weight_col is None else f'\t%INFO/{weight_col}\n')],
+                    stdin = filter_process.stdout,
+                    stdout = subprocess.PIPE,
+                    stderr = nullout,
+                    universal_newlines=True,
+                    bufsize=10000,
+                )
 
             '''
             Code mutation converts a line of a vcf file into a mutational code.
@@ -210,7 +213,7 @@ class SBSSample:
 
             with open(tmp.name, 'r') as f:
                 return cls(
-                    **_process_mapped_sbs_codes(f, exposures),
+                    **_process_mapped_sbs_codes(f),
                     name = os.path.abspath(vcf_file),
                     exposures = np.array(exposures),
                 )

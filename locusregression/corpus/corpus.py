@@ -333,6 +333,18 @@ class Corpus(CorpusMixin):
         )
 
 
+    def get_empirical_mutation_rate(self):
+
+        # returns the ln mutation rate for each locus in the first sample
+        mutation_rate = self.samples[0].get_empirical_mutation_rate()
+
+        # loop through the rest of the samples and add the mutation rate using logsumexp
+        for i in range(1, len(self)):
+            mutation_rate = mutation_rate + self.samples[i].get_empirical_mutation_rate()
+
+        return np.log(mutation_rate) - np.log(len(self))
+
+
 
 class MetaCorpus(CorpusMixin):
     
