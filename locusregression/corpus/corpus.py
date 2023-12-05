@@ -276,6 +276,7 @@ class Corpus(CorpusMixin):
             new_sample = SBSSample(**{
                 'mutation' : sample.mutation[mask],
                 'context' : sample.context[mask],
+                'weight' : sample.weight[mask],
                 'locus' : np.array([subsample_lookup[locus] for locus in sample.locus[mask]]).astype(int), 
                 'exposures' : sample.exposures[:,loci],   
                 'name' : sample.name,
@@ -287,11 +288,9 @@ class Corpus(CorpusMixin):
         
         return Corpus(
             samples = InMemorySamples(new_samples),
-            **{
-                'X_matrix' : self.X_matrix[:,loci],
-                'trinuc_distributions' : self.trinuc_distributions[:,loci],
-                'feature_names' : self.feature_names,
-            },
+            X_matrix=self.X_matrix[:,loci],
+            trinuc_distributions = self.trinuc_distributions[:,loci],
+            feature_names = self.feature_names,
             shared_exposures = self.shared_exposures,
             name = self.name,
         )
@@ -300,6 +299,39 @@ class Corpus(CorpusMixin):
     def get_corpus(self, name):
         assert name == self.name
         return self
+    
+
+    def collapse_mutations(self):
+        
+        all_mutations = defaultdict(lambda : 0)
+
+        for sample in self.samples:
+
+            for (mut, context, locus, weight) in \
+                zip(sample.mutation, sample.context, sample.locus, sample.weight):
+                
+                all_mutations[(mut, context, locus)] += weight
+
+        mutation, context, locus = list(zip(*all_mutations.keys()))
+                                        
+        new_sample = SBSSample(**dict(
+            mutation = np.array(mutation),
+            context = np.array(context),
+            locus = np.array(locus),
+            weight = np.array(list(all_mutations.values())),
+            exposures = self.exposures,
+            name = self.name,
+        ))
+
+        return Corpus(
+            samples = InMemorySamples([new_sample]),
+            X_matrix=self.X_matrix,
+            trinuc_distributions = self.trinuc_distributions,
+            feature_names = self.feature_names,
+            shared_exposures = self.shared_exposures,
+            name = self.name,
+        )
+
 
 
 class MetaCorpus(CorpusMixin):

@@ -12,6 +12,7 @@ import pickle
 import logging
 import warnings
 from matplotlib.pyplot import savefig
+from numpy import log10
 
 from optuna.exceptions import ExperimentalWarning
 warnings.filterwarnings("ignore", category=ExperimentalWarning)
@@ -525,7 +526,7 @@ def save_per_component_mutation_rates(*,model, output, corpus_name):
 
     model = load_model(model)
 
-    component_locus_distribution = model.get_component_locus_distribution(corpus_name).T
+    component_locus_distribution = log10( model.get_component_locus_distribution(corpus_name).T )
 
     print(*model.component_names, sep = ',', file = output)
     
@@ -533,11 +534,27 @@ def save_per_component_mutation_rates(*,model, output, corpus_name):
         print(*component_locus_distribution[i,:], sep = ',', file = output)
 
 component_mutrates_parser = subparsers.add_parser('model-save-component-mutation-rates',
-                                                    help = 'Save the relative mutation rate across loci for each mutational process w.r.t. the correlates of some corpus.')
+                                                    help = 'Save the relative log10 mutation rate across loci for each mutational process w.r.t. the correlates of some corpus.')
 component_mutrates_parser.add_argument('model', type = file_exists)
 component_mutrates_parser.add_argument('--corpus-name','-n', type = str, required=True)
 component_mutrates_parser.add_argument('--output','-o', type = argparse.FileType('w'), default=sys.stdout)
-component_mutrates_parser.set_defaults(func = save_per_component_mutation_rates)                                        
+component_mutrates_parser.set_defaults(func = save_per_component_mutation_rates)
+
+
+def save_overall_mutation_rate(*, model, output, corpus_name):
+
+    model = load_model(model)
+    
+    print(*model.get_expected_mutation_rate(corpus_name), 
+          file = output,
+          sep = '\n'
+         )
+mutrate_parser = subparsers.add_parser('model-save-overall-mutation-rate',
+                                        help = 'Save the log10 expected mutation rate for some corpus for each loci',)
+mutrate_parser.add_argument('model', type = file_exists)
+mutrate_parser.add_argument('--corpus-name','-n', type = str, required=True)
+mutrate_parser.add_argument('--output','-o', type = argparse.FileType('w'), default=sys.stdout)
+mutrate_parser.set_defaults(func = save_overall_mutation_rate)
 
 
 

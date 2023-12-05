@@ -21,8 +21,8 @@ logger = logging.getLogger('LocusRegressor')
 
 
 #@njit(parallel = True)
-def estep_update(exp_Elog_gamma, alpha, flattend_phi, likelihood_scale = 1):
-    gamma_sstats = exp_Elog_gamma*np.dot(flattend_phi, 1/np.dot(flattend_phi.T, exp_Elog_gamma))
+def estep_update(exp_Elog_gamma, alpha, flattend_phi, count_g, likelihood_scale = 1):
+    gamma_sstats = exp_Elog_gamma*np.dot(flattend_phi, count_g/np.dot(flattend_phi.T, exp_Elog_gamma))
     gamma_sstats = gamma_sstats.reshape(-1)
     return alpha + gamma_sstats*likelihood_scale
 
@@ -211,6 +211,7 @@ class LocusRegressor:
                 corpus_state=corpus_state
             ).astype(self.dtype, copy=False)
 
+        count_g = np.array(sample.weight)[:,None].astype(self.dtype, copy=False)
         gamma = gamma0.copy()
         
         for s in range(self.estep_iterations): # inner e-step loop
@@ -218,7 +219,7 @@ class LocusRegressor:
             old_gamma = gamma.copy()
             exp_Elog_gamma = np.exp(log_dirichlet_expectation(gamma)[:,None])
 
-            gamma = estep_update(exp_Elog_gamma, corpus_state.alpha, flattend_phi,
+            gamma = estep_update(exp_Elog_gamma, corpus_state.alpha, flattend_phi, count_g,
                                  likelihood_scale=1/locus_subsample_rate)
 
             if np.abs(gamma - old_gamma).mean() < self.difference_tol:
@@ -233,7 +234,7 @@ class LocusRegressor:
         exp_Elog_gamma = np.exp(log_dirichlet_expectation(gamma)[:,None])
         phi_matrix = np.outer(exp_Elog_gamma, 1/np.dot(flattend_phi.T, exp_Elog_gamma))*flattend_phi/(batch_subsample_rate*locus_subsample_rate)
         
-        weighted_phi = phi_matrix
+        weighted_phi = phi_matrix * count_g.T
 
         return self.SSTATS.SampleSstats(
             model_state = model_state,
@@ -629,7 +630,7 @@ class LocusRegressor:
         return next(iter(corpus))
 
 
-    def get_expected_mutation_rate(self, sample, corpus_name):
+    def get_expected_mutation_rate(self, corpus_name, sample = None):
         '''
         For a sample, calculate the expected mutation rate. First, we infer the mixture of 
         processes that are active in a sample. Then, we calculate the expected marginal probability
@@ -647,18 +648,18 @@ class LocusRegressor:
 
         '''
 
+        if not self.trained:
+            logger.warn('This model was not trained to completion, results may be innaccurate')
+
         psi_matrix = self.get_component_locus_distribution(corpus_name)
 
-        '''try:
+        if sample is None:
             corpus_state = self.corpus_states[corpus_name]
-        except KeyError:
-            raise ValueError(f'Corpus {corpus_name} not found in model.')
-        
-        gamma = corpus_state.alpha/corpus_state.alpha.sum() # use expectation of the prior over components'''
+            gamma = corpus_state.alpha/corpus_state.alpha.sum() # use expectation of the prior over components
+        else:
+            gamma = self._predict(sample, corpus_name)
 
-        gamma = self._predict(sample, corpus_name)
-
-        return np.squeeze(np.dot(gamma, psi_matrix))
+        return np.log10( np.squeeze(np.dot(gamma, psi_matrix)) )
     
 
     def assign_sample_to_corpus(self, sample,
@@ -679,13 +680,11 @@ class LocusRegressor:
                 sample = sample,
             )'''
 
-            observation_logits = np.log(
-                self.get_flattened_phi(
+            observation_logits = IS._conditional_logp_mutation_locus(
                     model_state= self.model_state,
                     corpus_state = corpus_state,
                     sample = sample,
                 )
-            )
 
             if pi_prior is None:
                 _alpha = corpus_state.alpha
@@ -715,24 +714,31 @@ class LocusRegressor:
 
 
 
-    def assign_mutations_to_components(self, sample, corpus_name, n_gibbs_iters = 1000):
+    def assign_mutations_to_components(self, sample, corpus_name, n_gibbs_iters = 1000,
+                                       algorithm = 'gibbs'):
 
         if not self.trained:
             logger.warn('This model was not trained to completion, results may be innaccurate')
 
         corpus_state = self.corpus_states[corpus_name]
 
-        observation_logits = IS._conditional_logp_mutation_locus(
-            model_state= self.model_state,
-            corpus_state = corpus_state,
-            sample = sample,
-        )
+        if algorithm == 'gibbs':
+            observation_logits = IS._conditional_logp_mutation_locus(
+                model_state= self.model_state,
+                corpus_state = corpus_state,
+                sample = sample,
+            )
 
-        z_posterior = IS._get_z_posterior(
-            log_p_ml_z=observation_logits,
-            alpha=corpus_state.alpha,
-            n_iters=n_gibbs_iters,
-        )
+            z_posterior = IS._get_z_posterior(
+                log_p_ml_z=observation_logits,
+                alpha=corpus_state.alpha,
+                n_iters=n_gibbs_iters,
+            )
+        elif algorithm == 'vi':
+            pass
+        else:
+            raise ValueError(f'Algorithm {algorithm} not recognized.')
+
 
         MAP = np.argmax(z_posterior, axis = 0)
 
@@ -967,50 +973,29 @@ class LocusRegressor:
 
         mu, nu = self.model_state.beta_mu[component,:], self.model_state.beta_nu[component,:]
 
-        ax.plot(
-            self.feature_names, mu,
-            color = color,
-            linewidth = 0.5,
-            zorder = 1,
-        )
-
-        ax.scatter(
-            y = mu,
-            x= self.feature_names,  
-            s=dotsize*3, 
-            color= 'white',
-            zorder = 2,
-        )
-
-        ax.scatter(
-            y = mu,
-            x= self.feature_names,  
-            s=dotsize, 
-            color= color,
-            linewidths=0.25,
-            edgecolors='white',
-            zorder = 3
+        std_width = error_std_width/2
+        ax.bar(
+            x=self.feature_names,
+            height=mu,
+            yerr=std_width*nu,
+            color=['darkred' if _mu < 0 else color for _mu in mu],
+            edgecolor='black',
+            linewidth=0.1,  # Adjust the linewidth here
+            width = 0.33,
+            capsize=3,
+            zorder=4,
+            alpha = 0.75,
         )
 
         ax.axhline(0, linestyle='--', color='lightgrey', linewidth=0.5,
-                   zorder = 0)
+                    zorder = 0)
 
-        std_width = error_std_width/2
-
-        ax.vlines(
-            ymax= std_width*nu + mu,
-            ymin = -std_width*nu + mu,
-            x = self.feature_names, 
-            color = color,
-            linewidth = 0.5,
-            zorder = 4,
-            )
         ax.xaxis.grid(True, color = 'lightgrey', linestyle = '--', linewidth = 0.5,
-                      zorder = 0)
+                        zorder = 0)
         
         #// remove the ticks from the y axis but not the labels
         ax.tick_params(axis='x', which='both', length=0, labelsize = fontsize,
-                       rotation = 90)
+                        rotation = 90)
         ax.tick_params(axis='y', which='both', labelsize = fontsize)
 
         ax.set(xlabel = 'Feature', ylabel = 'Coefficient')

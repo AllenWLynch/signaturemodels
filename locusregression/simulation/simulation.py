@@ -252,6 +252,7 @@ class SimulatedCorpus:
                         mutation=np.array(mutations), 
                         context=np.array(contexts), 
                         locus=np.array(loci), 
+                        weight=np.ones_like(loci).astype(float),
                         name = name,
                         exposures = exposures,
                         chrom = np.array(['chr1']*len(loci)).astype('S'),
