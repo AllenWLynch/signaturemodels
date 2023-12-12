@@ -86,8 +86,7 @@ subparsers = parser.add_subparsers(help = 'commands')
 
 
 def write_dataset(
-        sep = '\t', 
-        index = -1,
+        weight_col = None,
         chr_prefix = '',*,
         fasta_file,
         trinuc_file,
@@ -104,7 +103,6 @@ def write_dataset(
         trinuc_file = trinuc_file,
         regions_file = regions_file,
         vcf_files = vcf_files,
-        sep = sep, index = index,
         chr_prefix = chr_prefix,
     )
 
@@ -119,6 +117,7 @@ def write_dataset(
 
     dataset = CorpusReader.create_corpus(
         **shared_args, 
+        weight_col = weight_col,
         exposure_files = exposure_files,
         correlates_file = correlates_file,
         corpus_name = corpus_name,
@@ -157,10 +156,11 @@ dataset_sub.add_argument('--trinuc-file','-trinucs', type = file_exists,default=
                          help = 'Pre-calculated trinucleotide context file.')
 dataset_sub.add_argument('--output','-o', type = valid_path, required = True, help = 'Where to save compiled corpus.')
 
-dataset_sub.add_argument('--sep','-sep',default ='\t',type = str, help = 'Separator for VCF file.')
-dataset_sub.add_argument('--index','-i',default = -1,type = int, 
-                         help = 'Position offset between VCF and Fasta/Bed files. If VCF files were written with 1-based indexing,'
-                                'set this to "-1".')
+dataset_sub.add_argument('--weight-col','-w', type = str, default=None,
+    help = 'Name of INFO column which contains importance weights per mutation - if not provided all mutations are given a weight of 1. '
+           'An example of a useful weight is the tumor cell fraction or relative copy number of that mutation which may be related to local mutation rate due to changes in ploidy. '
+           'If the weight column were called INFO/VCN in the VCF, you must only provide --weight-col=VCN.'
+)
 
 dataset_sub.add_argument('--chr-prefix', default= '', help='Append the chromosome names in VCF files with this prefix. Useful if you are using UCSC reference materials.')
 dataset_sub.set_defaults(func = write_dataset)
@@ -178,7 +178,7 @@ def split_corpus(*,corpus, train_output, test_output, train_prop,
 
 
 split_parser = subparsers.add_parser('corpus-split', help='Partition a corpus into training and test sets.')
-split_parser.add_argument('--corpus','-d', type = file_exists, required=True)
+split_parser.add_argument('corpus', type = file_exists)
 split_parser.add_argument('--train-output','-to', type = valid_path, required=True)
 split_parser.add_argument('--test-output', '-vo', type = valid_path, required=True)
 split_parser.add_argument('--train-prop', '-p', type = posfloat, default=0.7)
@@ -186,11 +186,23 @@ split_parser.add_argument('--seed', '-s', type = posint, default=0)
 split_parser.set_defaults(func = split_corpus)
 
 
+def empirical_mutation_rate(*,corpus, output):
+    mutation_rate = load_corpus(corpus).get_empirical_mutation_rate()
+    print(*mutation_rate, file = output, sep = '\n')
+
+empirical_mutrate_parser = subparsers.add_parser('corpus-empirical-mutation-rate',
+    help = 'Aggregate mutations in a corpus to calculate the log (natural) empirical mutation rate. This depends on having sufficient mutations to find a smooth function.'
+)
+empirical_mutrate_parser.add_argument('corpus', type = file_exists)
+empirical_mutrate_parser.add_argument('--output', '-o', type = argparse.FileType('w'), 
+                                        default = sys.stdout)
+empirical_mutrate_parser.set_defaults(func = empirical_mutation_rate)
+
+
 trinuc_sub = subparsers.add_parser('get-trinucs', help = 'Write trinucleotide context file for a given genome.')
 trinuc_sub.add_argument('--fasta-file','-fa', type = file_exists, required = True, help = 'Sequence file, used to find context of mutations.')
 trinuc_sub.add_argument('--regions-file','-r', type = file_exists, required = True)
 trinuc_sub.add_argument('--output','-o', type = valid_path, required = True, help = 'Where to save compiled corpus.')
-trinuc_sub.add_argument('--sep','-sep',default ='\t',type = str, help = 'Separator for windows file.')
 trinuc_sub.set_defaults(func = CorpusReader.create_trinuc_file)
 
 
@@ -265,7 +277,8 @@ summarize_parser.set_defaults(func = summarize_study)
 
 def retrain_best(trial_num = None,
                  storage = None, 
-                 verbose = False,*,
+                 verbose = False,
+                 num_epochs = None,*,
                  study_name, output):
     
     logging.basicConfig(level=logging.INFO)
@@ -296,7 +309,7 @@ def retrain_best(trial_num = None,
             quiet= not verbose,
             **model_params,
             seed = best_trial.number,
-            num_epochs=attrs['num_epochs'],
+            num_epochs= num_epochs or attrs['num_epochs'],
         )
 
     model.fit(dataset)
@@ -312,6 +325,8 @@ retrain_sub .add_argument('--output','-o', type = valid_path, required=True,
     help = 'Where to save trained model.')
 retrain_sub.add_argument('--trial-num','-t', type = posint, default=None,
     help= 'If left unset, will retrain model with best params from tuning results.\nIf provided, will retrain model parameters from the "trial_num"th trial.')
+retrain_sub.add_argument('--num-epochs','-epochs', type = int, default = None, 
+    help='Override the number of epochs used for tuning.')
 
 retrain_sub.set_defaults(func = retrain_best)
 
@@ -526,7 +541,7 @@ def save_per_component_mutation_rates(*,model, output, corpus_name):
 
     model = load_model(model)
 
-    component_locus_distribution = log10( model.get_component_locus_distribution(corpus_name).T )
+    component_locus_distribution = model.get_component_locus_distribution(corpus_name).T
 
     print(*model.component_names, sep = ',', file = output)
     
@@ -534,7 +549,7 @@ def save_per_component_mutation_rates(*,model, output, corpus_name):
         print(*component_locus_distribution[i,:], sep = ',', file = output)
 
 component_mutrates_parser = subparsers.add_parser('model-save-component-mutation-rates',
-                                                    help = 'Save the relative log10 mutation rate across loci for each mutational process w.r.t. the correlates of some corpus.')
+                                                    help = 'Save the relative log (natural) mutation rate across loci for each mutational process w.r.t. the correlates of some corpus.')
 component_mutrates_parser.add_argument('model', type = file_exists)
 component_mutrates_parser.add_argument('--corpus-name','-n', type = str, required=True)
 component_mutrates_parser.add_argument('--output','-o', type = argparse.FileType('w'), default=sys.stdout)
@@ -550,7 +565,7 @@ def save_overall_mutation_rate(*, model, output, corpus_name):
           sep = '\n'
          )
 mutrate_parser = subparsers.add_parser('model-save-overall-mutation-rate',
-                                        help = 'Save the log10 expected mutation rate for some corpus for each loci',)
+                                        help = 'Save the log (natural) expected mutation rate for some corpus for each loci',)
 mutrate_parser.add_argument('model', type = file_exists)
 mutrate_parser.add_argument('--corpus-name','-n', type = str, required=True)
 mutrate_parser.add_argument('--output','-o', type = argparse.FileType('w'), default=sys.stdout)
@@ -706,7 +721,7 @@ bedgraph_sub.set_defaults(func = process_bigwig)
 
 code_sub = subparsers.add_parser('code-sbs')
 code_sub.set_defaults(func = code_SBS_mutation)
-code_sub.add_argument('--vcf-file','-vcf', type = argparse.FileType('r'), default=sys.stdin)
+code_sub.add_argument('--query-file','-query', type = argparse.FileType('r'), default=sys.stdin)
 code_sub.add_argument('--fasta-file','-fa', type = file_exists, required=True)
 code_sub.add_argument('--output','-o', type = argparse.FileType('w'), default=sys.stdout)
 code_sub.add_argument('--sep','-sep', type = str, default = '\t')
