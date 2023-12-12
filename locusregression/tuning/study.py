@@ -82,7 +82,7 @@ def create_study(
 
 
 
-def load_study(study_name, storage = None):
+def load_study(study_name, storage = None, with_corpus = True):
     
     if storage is None:
         storage = _get_nfs_storage(study_name)    
@@ -95,12 +95,15 @@ def load_study(study_name, storage = None):
     attrs = study.user_attrs
     corpuses = attrs['corpuses']
 
-    if len(corpuses) == 1:
-        dataset = stream_corpus(corpuses[0])
-    else:
-        dataset = MetaCorpus(*[
-            stream_corpus(corpus) for corpus in corpuses
-        ])
+    dataset = None
+    
+    if with_corpus:
+        if len(corpuses) == 1:
+            dataset = stream_corpus(corpuses[0])
+        else:
+            dataset = MetaCorpus(*[
+                stream_corpus(corpus) for corpus in corpuses
+            ])
 
     return study, dataset, attrs
 

@@ -203,7 +203,6 @@ trinuc_sub = subparsers.add_parser('get-trinucs', help = 'Write trinucleotide co
 trinuc_sub.add_argument('--fasta-file','-fa', type = file_exists, required = True, help = 'Sequence file, used to find context of mutations.')
 trinuc_sub.add_argument('--regions-file','-r', type = file_exists, required = True)
 trinuc_sub.add_argument('--output','-o', type = valid_path, required = True, help = 'Where to save compiled corpus.')
-trinuc_sub.add_argument('--sep','-sep',default ='\t',type = str, help = 'Separator for windows file.')
 trinuc_sub.set_defaults(func = CorpusReader.create_trinuc_file)
 
 
@@ -278,7 +277,8 @@ summarize_parser.set_defaults(func = summarize_study)
 
 def retrain_best(trial_num = None,
                  storage = None, 
-                 verbose = False,*,
+                 verbose = False,
+                 num_epochs = None,*,
                  study_name, output):
     
     logging.basicConfig(level=logging.INFO)
@@ -309,7 +309,7 @@ def retrain_best(trial_num = None,
             quiet= not verbose,
             **model_params,
             seed = best_trial.number,
-            num_epochs=attrs['num_epochs'],
+            num_epochs= num_epochs or attrs['num_epochs'],
         )
 
     model.fit(dataset)
@@ -325,6 +325,8 @@ retrain_sub .add_argument('--output','-o', type = valid_path, required=True,
     help = 'Where to save trained model.')
 retrain_sub.add_argument('--trial-num','-t', type = posint, default=None,
     help= 'If left unset, will retrain model with best params from tuning results.\nIf provided, will retrain model parameters from the "trial_num"th trial.')
+retrain_sub.add_argument('--num-epochs','-epochs', type = int, default = None, 
+    help='Override the number of epochs used for tuning.')
 
 retrain_sub.set_defaults(func = retrain_best)
 
