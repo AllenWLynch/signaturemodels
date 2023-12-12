@@ -461,7 +461,7 @@ def predict(*,model, corpuses, output):
     for sample_name, prediction in zip(sample_names, predictions):
         print(sample_name, *prediction, sep = ',', file = output)
 
-predict_sub = subparsers.add_parser('model-predict', help = 'Predict exposures for each sample.')
+predict_sub = subparsers.add_parser('model-predict', help = 'Predict exposures for each sample in a corpus.')
 predict_sub.add_argument('model', type = file_exists)
 predict_sub.add_argument('--corpuses', '-d', type = file_exists, nargs = '+', required=True,
                          help = 'Path to compiled corpus file/files.')
@@ -572,6 +572,32 @@ mutrate_parser.add_argument('--output','-o', type = argparse.FileType('w'), defa
 mutrate_parser.set_defaults(func = save_overall_mutation_rate)
 
 
+def summarize_all_model_attributes(*,model, prefix):
+
+    corpuses = list(load_model(model).corpus_states.keys())
+    with open(prefix + '.associations.csv', 'w') as associations_file:
+        save_associations(model = model, output = associations_file)
+
+    with open(prefix + '.signatures.csv', 'w') as signatures_file:
+        save_signatures(model = model, output = signatures_file)
+    
+    summary_plot(model = model, output = prefix + '.summary_plt.png')
+
+    for corpus in corpuses:
+        with open(prefix + f'.mutrates.{corpus}.csv', 'w') as mutrates_file:
+            save_per_component_mutation_rates(model = model, output = mutrates_file, corpus_name = corpus)
+        
+        with open(prefix + f'.overall_mutrate.{corpus}.csv', 'w') as mutrate_file:
+            save_overall_mutation_rate(model = model, output = mutrate_file, corpus_name = corpus)
+
+
+
+summarize_parser = subparsers.add_parser('model-summarize', help = 'Save all summary data for a trained model.')
+summarize_parser.add_argument('model', type = file_exists)
+summarize_parser.add_argument('--prefix','-p', type = str, required=True)
+summarize_parser.set_defaults(func = summarize_all_model_attributes)
+
+
 
 def add_sample_ingest_args(parser):
     parser.add_argument('model', type = file_exists)
@@ -580,13 +606,11 @@ def add_sample_ingest_args(parser):
     parser.add_argument('--output','-o', type = argparse.FileType('w'), default=sys.stdout)
     parser.add_argument('--regions-file','-r', type = file_exists, required=True)
     parser.add_argument('--fasta-file','-fa', type = file_exists, required=True)
-    parser.add_argument('--sep','-sep', type = str, default = '\t')
-    parser.add_argument('--index','-i', type = int, default = -1)
     parser.add_argument('--chr-prefix', type = str, default = '')
 
 
 def assign_components(*,model,vcf_file, corpus_name, exposure_file, output,
-                     regions_file, fasta_file, sep = '\t', index = '-1', 
+                     regions_file, fasta_file, 
                      chr_prefix = ''):
     
     model = load_model(model)
@@ -600,7 +624,7 @@ def assign_components(*,model,vcf_file, corpus_name, exposure_file, output,
     sample = CorpusReader.ingest_sample(
         vcf_file, exposure_file = exposure_file,
         regions_file = regions_file, fasta_file = fasta_file,
-        sep = sep, index = index, chr_prefix = chr_prefix,
+        chr_prefix = chr_prefix,
     )
     
     mutation_assignments = model.assign_mutations_to_components(sample, corpus_name)
@@ -618,8 +642,9 @@ assign_mutations_parser.set_defaults(func = assign_components)
 
 
 def assign_corpus(*,model,vcf_file, exposure_file, output,
-                     regions_file, fasta_file, iters = 100, anneal_steps = 100,
-                     sep = '\t', index = '-1', 
+                     regions_file, fasta_file, 
+                     iters = 100, anneal_steps = 100,
+                     max_mutations = 10000,
                      chr_prefix = '',
                      pi_prior = None):
     
@@ -629,13 +654,14 @@ def assign_corpus(*,model,vcf_file, exposure_file, output,
     sample = CorpusReader.ingest_sample(
         vcf_file, exposure_file = exposure_file,
         regions_file = regions_file, fasta_file = fasta_file,
-        sep = sep, index = index, chr_prefix = chr_prefix,
+        chr_prefix = chr_prefix,
     )
     
     corpus_logps = model.assign_sample_to_corpus(sample, 
                                                  n_iters = iters, 
                                                  n_samples_per_iter = anneal_steps,
                                                  pi_prior = pi_prior,
+                                                 max_mutations = max_mutations,
                                                 )
 
     print(*corpus_logps.keys(), sep = ',', file = output)
@@ -649,13 +675,13 @@ add_sample_ingest_args(assign_corpus_parser)
 assign_corpus_parser.add_argument('--pi-prior','-pi', type = posfloat, default = None)
 assign_corpus_parser.add_argument('--iters','-iters', type = posint, default = 100)
 assign_corpus_parser.add_argument('--anneal-steps','-steps', type = posint, default = 100)
+assign_corpus_parser.add_argument('--max-mutations','-max', type = posint, default = 10000)
 assign_corpus_parser.set_defaults(func = assign_corpus)
 
 
 
 def assign_corpus_mutation(*,model,vcf_file, exposure_file, output,
                         regions_file, fasta_file, iters = 100, anneal_steps = 100,
-                        sep = '\t', index = '-1',
                         chr_prefix = ''):
     
     model = load_model(model)
@@ -664,7 +690,7 @@ def assign_corpus_mutation(*,model,vcf_file, exposure_file, output,
     sample = CorpusReader.ingest_sample(
         vcf_file, exposure_file = exposure_file,
         regions_file = regions_file, fasta_file = fasta_file,
-        sep = sep, index = index, chr_prefix = chr_prefix,
+        chr_prefix = chr_prefix,
     )
 
     mutation_assignments = model.assign_mutations_to_corpus(sample, 
@@ -684,8 +710,6 @@ assign_corpus_mutation_parser.add_argument('--anneal-steps','-steps', type = pos
 assign_corpus_mutation_parser.set_defaults(func = assign_corpus_mutation)
 
 
-def mutation_rate():
-    pass
 
 
 def _fetch_roadmap_wrapper(**kw):
@@ -724,8 +748,6 @@ code_sub.set_defaults(func = code_SBS_mutation)
 code_sub.add_argument('--query-file','-query', type = argparse.FileType('r'), default=sys.stdin)
 code_sub.add_argument('--fasta-file','-fa', type = file_exists, required=True)
 code_sub.add_argument('--output','-o', type = argparse.FileType('w'), default=sys.stdout)
-code_sub.add_argument('--sep','-sep', type = str, default = '\t')
-code_sub.add_argument('--index','-i', type = int, default = -1)
 code_sub.add_argument('--chr-prefix', type = str, default = '')
 
 

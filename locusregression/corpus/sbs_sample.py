@@ -34,8 +34,8 @@ def convert_to_mutation(context, alt):
     return context, alt
 
 
-def code_SBS_mutation(*,query_file, fasta_file, index = -1, 
-                      chr_prefix = '', sep = '\t', output = sys.stdout):
+def code_SBS_mutation(*,query_file, fasta_file,
+                      chr_prefix = '', output = sys.stdout):
 
     def _get_context_mutation_idx(fasta_object,*,
                                   chromosome, pos, ref, alt):
@@ -74,7 +74,7 @@ def code_SBS_mutation(*,query_file, fasta_file, index = -1,
             if line.startswith('#'):
                 continue
             
-            line = line.strip().split(sep)
+            line = line.strip().split('\t')
 
             feature_attr = {
                 'chromosome' : chr_prefix + line[QUERY.CHROM],
