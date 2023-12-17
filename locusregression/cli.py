@@ -12,7 +12,6 @@ import pickle
 import logging
 import warnings
 from matplotlib.pyplot import savefig
-from numpy import log10
 
 from optuna.exceptions import ExperimentalWarning
 warnings.filterwarnings("ignore", category=ExperimentalWarning)
