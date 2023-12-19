@@ -45,6 +45,7 @@ class CorpusSstats:
         self._alpha_sstats = []
 
         self.corpus = corpus
+        self._logmu = corpus_state._logmu.copy()
 
         if self.corpus.shared_exposures:
             self._exposures = [self.corpus.exposures]
@@ -52,6 +53,9 @@ class CorpusSstats:
             self._beta_sstats = []
             self._exposures = []
 
+    @property
+    def logmus(self):
+        return self._logmu
         
     def __add__(self, sstats):
 
@@ -73,7 +77,6 @@ class CorpusSstats:
     def mutation_sstats(self):
         return self._mutation_sstats
     
-
     @property
     def context_sstats(self):
         return self._context_sstats
@@ -119,7 +122,7 @@ class MetaSstats:
         self.beta_sstats = [betas for stats in corpus_sstats.values() for betas in stats.beta_sstats]
         self.exposures = [exp for stats in corpus_sstats.values() for exp in stats.exposures]
         self.X_matrices = [X for stats in corpus_sstats.values() for X in stats.X_matrices]
-
+        self.logmus = [sstats.logmus for sstats in corpus_sstats.values()]
         
         self.alpha_sstats = {corpus_name : np.array([gamma for gamma in stats.alpha_sstats])
                             for corpus_name, stats in corpus_sstats.items()}
