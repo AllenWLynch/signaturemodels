@@ -30,7 +30,8 @@ def create_study(
     pi_prior = 1.,
     num_epochs = 500,
     fix_signatures = None,
-    locus_subsample_rates = [0.0625, 0.125, 0.25],
+    use_pruner = False,
+    locus_subsample_rates = [0.0625, 0.125, 0.25, 0.5, 1.],
     storage = None,
     seed = 0,*,
     corpuses,
@@ -50,17 +51,23 @@ def create_study(
         fix_signatures = fix_signatures,
     )
 
-    study = optuna.create_study(
-        study_name = study_name,
-        storage = storage,
-        direction = 'maximize',
-        load_if_exists = True,
+    if use_pruner:
         pruner = optuna.pruners.HyperbandPruner(
             min_resource = 50,
             reduction_factor = factor,
             max_resource = num_epochs,
             bootstrap_count = 1,
-        ),
+        )
+    else:
+        pruner = optuna.pruners.NopPruner()
+
+
+    study = optuna.create_study(
+        study_name = study_name,
+        storage = storage,
+        direction = 'maximize',
+        load_if_exists = True,
+        pruner = pruner,
         sampler = optuna.samplers.RandomSampler(
             seed = seed,
         ),

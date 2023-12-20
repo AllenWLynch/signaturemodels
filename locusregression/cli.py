@@ -206,7 +206,8 @@ trinuc_sub.set_defaults(func = CorpusReader.create_trinuc_file)
 
 
 
-tune_sub = subparsers.add_parser('study-create', help = 'Tune number of signatures for LocusRegression model on a pre-compiled corpus using the'
+tune_sub = subparsers.add_parser('study-create', 
+    help = 'Tune number of signatures for LocusRegression model on a pre-compiled corpus using the'
     'hyperband or successive halving algorithm.')
 
 tune_required = tune_sub.add_argument_group('Required arguments')
@@ -229,7 +230,9 @@ tune_optional.add_argument('--storage',type = str, default=None,
 tune_optional.add_argument('--factor','-f',type = posint, default = 4,
     help = 'Successive halving reduction factor for each iteration')
 tune_optional.add_argument('--skip-tune-subsample', action = 'store_true', default=False)
-tune_optional.add_argument('--locus-subsample-rates','-rates', type = posfloat, nargs = '+', default = [0.0625, 0.125, 0.25])
+tune_optional.add_argument('--locus-subsample-rates','-rates', type = posfloat, nargs = '+', default = [0.0625, 0.125, 0.25, 0.5, 1])
+tune_optional.add_argument('--use-pruner', '-prune', action='store_true', default=False,
+                           help = 'Use the hyperband pruner to eliminate poorly performing trials before they complete, saving computational resources.')
 
 model_options = tune_sub.add_argument_group('Model arguments')
 

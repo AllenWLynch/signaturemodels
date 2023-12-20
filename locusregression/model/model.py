@@ -40,9 +40,7 @@ class LocusRegressor:
         return dict(
             tau = trial.suggest_categorical('tau', [1, 1, 1, 16, 48, 128]),
             kappa = trial.suggest_categorical('kappa', [0.5, 0.5, 0.5, 0.6, 0.7]),
-            negative_subsample = trial.suggest_categorical('negative_subsample', [1000, 2500, 10000, 50000,100000000000]),
         )
-    
 
     @classmethod
     def load(cls, filename):
@@ -57,7 +55,6 @@ class LocusRegressor:
         num_epochs = 300, 
         difference_tol = 1e-3,
         estep_iterations = 1000,
-        tree_learning_rate = 0.1,
         bound_tol = 1e-2,
         quiet = False,
         n_jobs = 1,
@@ -104,7 +101,6 @@ class LocusRegressor:
         self.empirical_bayes = empirical_bayes
         self.batch_size = batch_size
         self.fix_signatures = fix_signatures
-        self.tree_learning_rate = tree_learning_rate
         self.negative_subsample = negative_subsample
 
 
@@ -298,10 +294,16 @@ class LocusRegressor:
         return gamma
 
 
+    def _get_rate_model_parameters(self):
+        return {}
+
     def _init_model(self, corpus):
 
         self.random_state = np.random.RandomState(self.seed)
         self.bound_random_state = np.random.RandomState(self.seed + 1)
+
+        self.n_locus_features, self.n_loci = corpus.shape
+        self.n_samples, self.feature_names = len(corpus), corpus.feature_names
 
         self._calc_signature_sstats(corpus)
 
@@ -318,8 +320,10 @@ class LocusRegressor:
                 dtype = self.dtype,
                 fix_signatures = self.fix_signatures,
                 genome_trinuc_distribution = self._genome_trinuc_distribution,
-                tree_learning_rate = self.tree_learning_rate,
-                negative_subsample = self.negative_subsample
+                X_matrices = [
+                    corp.X_matrix for corp in corpus.corpuses
+                ],
+                **self._get_rate_model_parameters()
         )
 
         
@@ -379,15 +383,6 @@ class LocusRegressor:
 
         learning_rate_fn = lambda t : (self.tau + t)**(-self.kappa) if locus_svi or batch_svi else 1.
 
-        self.n_locus_features, self.n_loci = corpus.shape
-        self.n_samples, self.feature_names = len(corpus), corpus.feature_names
-        
-        n_subsample_loci = int(self.n_loci * self.locus_subsample)
-        
-        assert self.n_locus_features < self.n_loci, \
-            'The feature matrix should be of shape (N_features, N_loci) where N_features << N_loci. The matrix you provided appears to be in the wrong orientation.'
-        self.trained = False
-
         if not reinit:
             try:
                 self.model_state
@@ -396,8 +391,14 @@ class LocusRegressor:
 
         if reinit:
             self._init_model(corpus)
-            
+        
+        n_subsample_loci = int(self.n_loci * self.locus_subsample)
+        
+        assert self.n_locus_features < self.n_loci, \
+            'The feature matrix should be of shape (N_features, N_loci) where N_features << N_loci. The matrix you provided appears to be in the wrong orientation.'
+        self.trained = False
 
+        
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
 

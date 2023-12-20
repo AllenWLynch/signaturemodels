@@ -279,7 +279,7 @@ class CorpusState(ModelState):
         
     
     def _get_baseline_prediction(self, n_components, n_loci, dtype):
-        return np.log( np.ones((n_components, n_loci), dtype = dtype)/n_loci )
+        return np.zeros((n_components, n_loci), dtype = dtype)/n_loci
 
 
     def subset_corpusstate(self, corpus, locus_subset):

@@ -28,7 +28,7 @@ def objective(trial,
 
     if tune_subsample:
         sample_params['locus_subsample'] = trial.suggest_categorical('locus_subsample', locus_subsample_rates)
-        sample_params['batch_size'] = trial.suggest_categorical('batch_size', [32,48])
+        sample_params['batch_size'] = trial.suggest_categorical('batch_size', [16,32,64,1000000])
 
     model_params.update(sample_params)
     
