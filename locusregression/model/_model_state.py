@@ -21,7 +21,7 @@ class ModelState:
 
     def __init__(self,
                 fix_signatures = None,
-                pseudocounts = 10000,
+                pseudocounts = 100000,
                 negative_subsample = 1000,*,
                 n_components, 
                 n_features, 

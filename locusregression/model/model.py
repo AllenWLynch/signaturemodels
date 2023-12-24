@@ -226,7 +226,7 @@ class LocusRegressor:
         
         flattend_phi = self.get_flattened_phi(
                 model_state=model_state,
-                sample = sample,
+                sample=sample,
                 corpus_state=corpus_state
             ).astype(self.dtype, copy=False)
 
@@ -408,6 +408,7 @@ class LocusRegressor:
                 reinit = True
 
         if reinit:
+            logger.info('Initializing model ...')
             self._init_model(corpus)
         
         n_subsample_loci = int(self.n_loci * self.locus_subsample)
@@ -419,6 +420,8 @@ class LocusRegressor:
         
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
+
+            logger.info('Training model ...')
 
             for epoch in range(self.epochs_trained+1, self.num_epochs+1):
 
