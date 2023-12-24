@@ -153,7 +153,7 @@ class LocusRegressor:
 
         weighted_phi = sample_sstats.weighed_phi
 
-        phi = weighted_phi #/np.array(sample.count)[None,:]
+        phi = weighted_phi/np.array(sample.weight)[None,:]
 
         entropy_sstats = -np.sum(weighted_phi * np.where(phi > 0, np.log(phi), 0.))
         
@@ -428,7 +428,7 @@ class LocusRegressor:
 
                 self.model_state.update_state(sstats, learning_rate_fn(epoch))
                 
-                if epoch >= 10 and self.empirical_bayes:
+                if self.empirical_bayes:
                     # wait 10 epochs to update the prior to prevent local minimas
                     for corpus_state in self.corpus_states.values():
                         corpus_state.update_alpha(sstats, learning_rate_fn(epoch))

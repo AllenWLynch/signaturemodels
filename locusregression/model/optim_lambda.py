@@ -66,6 +66,20 @@ class LambdaOptimizer:
         fixed_deltas = None,
     ):
         
+        def scale_fixed_component(k):
+
+            assigned_mutations = sum([v[k] for v in locus_sstats.values()])
+
+            if assigned_mutations <= 10000:
+                return delta0[k]
+
+            old_signature = delta0[k].copy()
+            old_signature = old_signature - 1 # remove the pseudocount
+
+            # re-normalize to 1, multiply by number of assigned signatures, 
+            return old_signature/old_signature.sum() * assigned_mutations + 1
+            
+
         def optim_component(k):
             return LambdaOptimizer._optimize(
                 delta0 = delta0[k],
@@ -75,7 +89,7 @@ class LambdaOptimizer:
             )
 
         return np.vstack([
-                optim_component(k) if fixed_deltas is None or not fixed_deltas[k] else delta0[k]
+                optim_component(k) if fixed_deltas is None or not fixed_deltas[k] else delta0[k] #scale_fixed_component(k)
                 for k in range(delta0.shape[0])
             ])
 

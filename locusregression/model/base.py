@@ -43,7 +43,7 @@ def dirichlet_bound(alpha, gamma):
         )
 
 
-def _dir_prior_update_step(prior, N, logphat, rho = 0.05):
+def _dir_prior_update_step(prior, N, logphat):
     
     gradf = N * (psi(np.sum(prior)) - psi(prior) + logphat)
 
@@ -54,34 +54,26 @@ def _dir_prior_update_step(prior, N, logphat, rho = 0.05):
 
     dprior = -(gradf - b) / q
 
-    return rho * dprior + prior
+    return dprior + prior
 
 
-def update_dir_prior(prior, N, logphat, rho = 0.05,
-        tol = 1e-8, max_iterations = 1000):
-        
-    failures = 0
-    initial_prior = prior.copy()
 
-    for it_ in range(max_iterations): #max iterations
+def update_dir_prior(prior, N, logphat):
 
-        old_prior = prior.copy()
-        prior = _dir_prior_update_step(prior, N, logphat, rho = rho)
+    def _check_prior(prior):
+        return np.all(prior > 0) and np.all(np.isfinite(prior))
 
-        if not np.all(prior > 0) and np.all(np.isfinite(prior)):
-            if failures > 5:
-                logger.debug('Prior update failed at iteration {}. Reverting to old prior'.format(str(it_)))
-                return initial_prior
-            else:
-                prior = old_prior
-                rho*=1/2
-                failures+=1
+    old_prior = prior.copy()
+    prior = _dir_prior_update_step(prior, N, logphat)
 
-        elif np.abs(old_prior-prior).mean() < tol:
-            break
-    else:
-        logger.debug('Prior update did not converge.')
-        return initial_prior
+    if not _check_prior(prior):
+        logger.warning(' Prior update failed. Retrying with different initialization.')
+        prior = np.exp(logphat)
+
+        prior = _dir_prior_update_step(prior, N, logphat)
+        if not _check_prior(prior):
+            logger.warning(' Prior update failed, reverting to old prior.')
+            prior = old_prior
     
     return prior
 
@@ -94,5 +86,4 @@ def update_alpha(alpha, gamma):
     
     N = gamma.shape[0]
     log_phat = log_dirichlet_expectation(gamma).mean(-2)
-    
-    return update_dir_prior(alpha, N, log_phat, rho = 0.1)
+    return update_dir_prior(alpha, N, log_phat)
