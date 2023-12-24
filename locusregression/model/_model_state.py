@@ -21,7 +21,7 @@ class ModelState:
 
     def __init__(self,
                 fix_signatures = None,
-                pseudocounts = 5000,
+                pseudocounts = 10000,
                 negative_subsample = 1000,*,
                 n_components, 
                 n_features, 
@@ -215,8 +215,6 @@ class ModelState:
         
         update_params = ['rate_model','lambda','rho']
         
-        #if self.empirical_bayes:
-        #    update_params.append('tau')
         for param in update_params:
             self.__getattribute__('update_' + param)(sstats, learning_rate) # call update function
 
