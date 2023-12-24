@@ -14,10 +14,9 @@ import time
 import warnings
 import matplotlib.pyplot as plt
 import pickle
-from functools import partial
 from collections import defaultdict
 import logging
-logger = logging.getLogger('LocusRegressor')
+logger = logging.getLogger(' LocusRegressor')
 
 
 #@njit(parallel = True)
@@ -25,6 +24,20 @@ def estep_update(exp_Elog_gamma, alpha, flattend_phi, count_g, likelihood_scale 
     gamma_sstats = exp_Elog_gamma*np.dot(flattend_phi, count_g/np.dot(flattend_phi.T, exp_Elog_gamma))
     gamma_sstats = gamma_sstats.reshape(-1)
     return alpha + gamma_sstats*likelihood_scale
+
+
+class TimerContext:
+
+    def __init__(self, name):
+        self.name = name
+
+    def __enter__(self):
+        self.start_time = time.time()
+        return self
+    
+    def __exit__(self, *args):
+        elapsed_time = time.time() - self.start_time
+        logger.debug(f'{self.name} - time: {elapsed_time:<3.2f}s. ')
 
 
 class LocusRegressor:
@@ -130,10 +143,11 @@ class LocusRegressor:
             sample,
             model_state,
             corpus_state,
+            gamma
         ):
     
         sample_sstats, _ = self._sample_inference(
-            gamma0 = self._init_doc_variables(1, is_bound=True)[0],
+            gamma0 = gamma,
             sample = sample,
             model_state = model_state,
             corpus_state = corpus_state,
@@ -164,7 +178,8 @@ class LocusRegressor:
             corpus, 
             model_state,
             corpus_states,
-            likelihood_scale = 1.
+            likelihood_scale = 1.,
+            gammas = None,
         ):
 
         elbo = 0
@@ -174,12 +189,16 @@ class LocusRegressor:
             for corp in corpus.corpuses
         }
 
-        for sample in corpus:
+        if gammas is None:
+            gammas = self._init_doc_variables(len(corpus), is_bound=True)
+
+        for sample, gamma in zip(corpus, gammas):
 
             sample_elbo, sample_gamma = self._sample_bound(
                 sample = sample,
                 model_state = model_state,
-                corpus_state = corpus_states[sample.corpus_name]
+                corpus_state = corpus_states[sample.corpus_name],
+                gamma=gamma,
             )
 
             elbo += sample_elbo
@@ -223,7 +242,6 @@ class LocusRegressor:
                                  likelihood_scale=1/locus_subsample_rate)
 
             if np.abs(gamma - old_gamma).mean() < self.difference_tol:
-                logger.debug(f'E-step converged after {s} iterations.')
                 break
         else:
             logger.debug('E-step did not converge. If this happens frequently, consider increasing "estep_iterations".')
@@ -413,25 +431,29 @@ class LocusRegressor:
                                                 locus_svi = locus_svi, 
                                                 n_subsample_loci = n_subsample_loci
                                                 )
+                
+                with TimerContext('E-step'):
 
-                sstats, new_gamma = self._inference(
-                            locus_subsample_rate=self.locus_subsample,
-                            batch_subsample_rate=self.batch_size/self.n_samples,
-                            learning_rate=learning_rate_fn(epoch),
-                            corpus = inner_corpus,
-                            model_state = self.model_state,
-                            corpus_states = inner_corpus_states,
-                            gamma = self._gamma[update_samples]
-                        )
+                    sstats, new_gamma = self._inference(
+                                locus_subsample_rate=self.locus_subsample,
+                                batch_subsample_rate=self.batch_size/self.n_samples,
+                                learning_rate=learning_rate_fn(epoch),
+                                corpus = inner_corpus,
+                                model_state = self.model_state,
+                                corpus_states = inner_corpus_states,
+                                gamma = self._gamma[update_samples]
+                            )
 
                 self._gamma[update_samples, :] = new_gamma.copy()
 
-                self.model_state.update_state(sstats, learning_rate_fn(epoch))
+                with TimerContext('M-step'):
+
+                    self.model_state.update_state(sstats, learning_rate_fn(epoch))
                 
-                if self.empirical_bayes:
-                    # wait 10 epochs to update the prior to prevent local minimas
-                    for corpus_state in self.corpus_states.values():
-                        corpus_state.update_alpha(sstats, learning_rate_fn(epoch))
+                    if epoch >= 10 and self.empirical_bayes:
+                        # wait 10 epochs to update the prior to prevent local minimas
+                        for corpus_state in self.corpus_states.values():
+                            corpus_state.update_alpha(sstats, learning_rate_fn(epoch))
 
                 self.update_mutation_rates()
 
@@ -442,23 +464,25 @@ class LocusRegressor:
 
                 if epoch % self.eval_every == 0:
                     
-                    self.bounds.append(
-                        self._bound(
-                            corpus = corpus,
-                            model_state = self.model_state,
-                            corpus_states = self.corpus_states,
-                            likelihood_scale=1,
+                    with TimerContext('Calculating bound'):
+                        self.bounds.append(
+                            self._bound(
+                                corpus = corpus,
+                                model_state = self.model_state,
+                                corpus_states = self.corpus_states,
+                                likelihood_scale=1,
+                                gammas = self._gamma,
+                            )
                         )
-                    )
 
                     if len(self.bounds) > 1:
                         improvement = self.bounds[-1] - (self.bounds[-2] if epoch > 1 else self.bounds[-1])
                         
-                        logger.info(f'  Epoch {epoch:<3} complete. | Elapsed time: {elapsed_time:<3.2f} seconds. '
+                        logger.info(f' [{epoch:>3}/{self.num_epochs+1}] | Time: {elapsed_time:<3.2f}s. '
                                     f'| Bound: { self.bounds[-1]:<10.2f}, improvement: {improvement:<10.2f} ')
                         
                 elif not self.quiet:
-                    logger.info('  Epoch {:<3} complete. | Elapsed time: {:<3.2f} seconds.'.format(epoch, elapsed_time))
+                    logger.info(f' [{epoch:<3}/{self.num_epochs+1}] | Time: {elapsed_time:<3.2f}s. ')
 
                 if not self.time_limit is None and self.total_time >= self.time_limit:
                     logger.info('Time limit reached, stopping training.')
