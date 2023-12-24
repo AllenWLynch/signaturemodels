@@ -320,7 +320,7 @@ class CorpusState(ModelState):
     
     @property
     def _log_mutation_rate(self):
-        return self._logmu - self.log_denom(np.ones_like(self).corpus.exposures)
+        return self._logmu - self.log_denom(np.ones_like(self.corpus.exposures))
 
     
     def update_alpha(self, sstats, learning_rate):

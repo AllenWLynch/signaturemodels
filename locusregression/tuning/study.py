@@ -51,16 +51,16 @@ def create_study(
         fix_signatures = fix_signatures,
     )
 
-    if use_pruner:
+    '''if use_pruner:
         pruner = optuna.pruners.HyperbandPruner(
             min_resource = 50,
             reduction_factor = factor,
             max_resource = num_epochs,
             bootstrap_count = 1,
         )
-    else:
-        pruner = optuna.pruners.NopPruner()
-
+    else:'''
+        
+    pruner = optuna.pruners.NopPruner()
 
     study = optuna.create_study(
         study_name = study_name,
@@ -96,7 +96,8 @@ def load_study(study_name, storage = None, with_corpus = True):
 
     study = optuna.load_study(
                     study_name=study_name, 
-                    storage=storage
+                    storage=storage,
+                    pruner = optuna.pruners.NopPruner()
                     )
 
     attrs = study.user_attrs
