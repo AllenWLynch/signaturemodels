@@ -35,8 +35,8 @@ class GBTRegressor(LocusRegressor):
         return dict(
             tau = trial.suggest_categorical('tau', [1, 1, 1, 16, 48, 128]),
             kappa = trial.suggest_categorical('kappa', [0.3,0.5, 0.5, 0.5, 0.6, 0.7]),
-            max_depth = trial.suggest_categorial('max_depth', [3,4,5]),
-            max_trees_per_iter = trial.suggest_categorial('max_trees_per_iter', [12, 25, 50, 100])
+            max_depth = trial.suggest_categorical('max_depth', [3,4,5]),
+            max_trees_per_iter = trial.suggest_categorical('max_trees_per_iter', [12, 25, 50, 100])
         )
     
 

@@ -257,5 +257,5 @@ class SBSSample:
 
         mutation_rate = mutation_rate / np.ravel( self.exposures )
 
-        return mutation_rate/np.sum(mutation_rate)
+        return mutation_rate #/np.sum(mutation_rate)
 

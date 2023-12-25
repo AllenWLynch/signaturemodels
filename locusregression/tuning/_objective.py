@@ -3,6 +3,8 @@ from ..model import LocusRegressor
 from ..model import GBTRegressor
 import optuna
 from tqdm import trange
+import sys
+
 
 def objective(trial,
             min_components = 2, 
@@ -27,10 +29,18 @@ def objective(trial,
     sample_params['n_components'] = trial.suggest_int('n_components', min_components, max_components)
 
     if tune_subsample:
-        sample_params['locus_subsample'] = trial.suggest_categorical('locus_subsample', locus_subsample_rates)
-        sample_params['batch_size'] = trial.suggest_categorical('batch_size', [16,32,64,1000000])
+        sample_params['locus_subsample'] = trial.suggest_categorical('locus_subsample', locus_subsample_rates[2:])
+        sample_params['batch_size'] = trial.suggest_categorical('batch_size', [16,32,64,128,10000][2:])
 
     model_params.update(sample_params)
+
+    print(
+        'Training model with params:\n' + \
+        '\n'.join(
+            [f'\t{k} = {v}' for k,v in model_params.items()]
+        ) + '\n',
+        file = sys.stderr,
+    )
     
     model = basemodel(
             eval_every = 1000000,
