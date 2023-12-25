@@ -7,11 +7,13 @@ import locusregression.model._importance_sampling as IS
 from ._model_state import ModelState, CorpusState
 
 # external imports
+from joblib import Parallel, delayed
 import numpy as np
 from scipy.cluster import hierarchy
 from scipy.special import logsumexp
 import time
 import warnings
+from functools import partial
 import matplotlib.pyplot as plt
 import pickle
 from collections import defaultdict
@@ -20,10 +22,52 @@ logger = logging.getLogger(' LocusRegressor')
 
 
 #@njit(parallel = True)
-def estep_update(exp_Elog_gamma, alpha, flattend_phi, count_g, likelihood_scale = 1):
+def _estep_update(exp_Elog_gamma, alpha, flattend_phi, count_g, likelihood_scale = 1):
     gamma_sstats = exp_Elog_gamma*np.dot(flattend_phi, count_g/np.dot(flattend_phi.T, exp_Elog_gamma))
     gamma_sstats = gamma_sstats.reshape(-1)
     return alpha + gamma_sstats*likelihood_scale
+
+
+def _estep_gamma(
+    gamma0,*,
+    weight,
+    alpha,
+    flattened_phi,
+    locus_subsample_rate,
+    batch_subsample_rate,
+    learning_rate,
+    dtype,
+    estep_iterations = 100,
+    difference_tol = 1e-3,
+):
+
+    count_g = np.array(weight)[:,None].astype(dtype, copy=False)
+    gamma = gamma0.copy()
+    
+    for s in range(estep_iterations): # inner e-step loop
+        
+        old_gamma = gamma.copy()
+        exp_Elog_gamma = np.exp(log_dirichlet_expectation(gamma)[:,None])
+
+        gamma = _estep_update(exp_Elog_gamma, alpha, flattened_phi, count_g,
+                                likelihood_scale=1/locus_subsample_rate)
+
+        if np.abs(gamma - old_gamma).mean() < difference_tol:
+            break
+    else:
+        logger.debug('E-step did not converge. If this happens frequently, consider increasing "estep_iterations".')
+
+
+    gamma = (1 - learning_rate)*gamma0 + learning_rate*gamma
+
+    exp_Elog_gamma = np.exp(log_dirichlet_expectation(gamma)[:,None])
+    phi_matrix = np.outer(exp_Elog_gamma, 1/np.dot(flattened_phi.T, exp_Elog_gamma))*flattened_phi/(batch_subsample_rate*locus_subsample_rate)
+    
+    weighted_phi = phi_matrix * count_g.T
+
+    return gamma, weighted_phi
+
+
 
 
 class TimerContext:
@@ -213,7 +257,7 @@ class LocusRegressor:
 
         return elbo
     
-    
+
     def _sample_inference(self,
         locus_subsample_rate = 1.,
         batch_subsample_rate = 1.,
@@ -230,29 +274,18 @@ class LocusRegressor:
                 corpus_state=corpus_state
             ).astype(self.dtype, copy=False)
 
-        count_g = np.array(sample.weight)[:,None].astype(self.dtype, copy=False)
-        gamma = gamma0.copy()
-        
-        for s in range(self.estep_iterations): # inner e-step loop
-            
-            old_gamma = gamma.copy()
-            exp_Elog_gamma = np.exp(log_dirichlet_expectation(gamma)[:,None])
-
-            gamma = estep_update(exp_Elog_gamma, corpus_state.alpha, flattend_phi, count_g,
-                                 likelihood_scale=1/locus_subsample_rate)
-
-            if np.abs(gamma - old_gamma).mean() < self.difference_tol:
-                break
-        else:
-            logger.debug('E-step did not converge. If this happens frequently, consider increasing "estep_iterations".')
-
-
-        gamma = (1 - learning_rate)*gamma0 + learning_rate*gamma
-
-        exp_Elog_gamma = np.exp(log_dirichlet_expectation(gamma)[:,None])
-        phi_matrix = np.outer(exp_Elog_gamma, 1/np.dot(flattend_phi.T, exp_Elog_gamma))*flattend_phi/(batch_subsample_rate*locus_subsample_rate)
-        
-        weighted_phi = phi_matrix * count_g.T
+        gamma, weighted_phi = _estep_gamma(
+            gamma0 = gamma0,
+            weight = sample.weight,
+            alpha = corpus_state.alpha,
+            flattened_phi = flattend_phi,
+            locus_subsample_rate = locus_subsample_rate,
+            batch_subsample_rate = batch_subsample_rate,
+            learning_rate = learning_rate,
+            dtype = self.dtype,
+            estep_iterations = self.estep_iterations,
+            difference_tol = self.difference_tol,
+        )
 
         return self.SSTATS.SampleSstats(
             model_state = model_state,
@@ -261,9 +294,9 @@ class LocusRegressor:
             gamma=gamma,
         ), gamma
         
-
     
-    def _inference(self,*,
+    def _inference(self,
+            parallel,*,
             locus_subsample_rate,
             batch_subsample_rate,
             learning_rate,
@@ -272,27 +305,53 @@ class LocusRegressor:
             corpus_states,
             gamma,
         ):
-        
+
+        def generate_estep_fns():
+            
+            for gamma0, sample in zip(gamma, corpus):
+
+                corpus_state = corpus_states[sample.corpus_name]
+
+                flattend_phi = self.get_flattened_phi(
+                    model_state=model_state,
+                    sample=sample,
+                    corpus_state=corpus_state
+                ).astype(self.dtype, copy=False)
+
+                yield partial(
+                    _estep_gamma,
+                    gamma0 = gamma0,
+                    weight = sample.weight,
+                    alpha = corpus_state.alpha,
+                    flattened_phi = flattend_phi,
+                    locus_subsample_rate = locus_subsample_rate,
+                    batch_subsample_rate = batch_subsample_rate,
+                    learning_rate = learning_rate,
+                    dtype = self.dtype,
+                    estep_iterations = self.estep_iterations,
+                    difference_tol = self.difference_tol,
+                )
+
+        gammas=[]
+
         sstat_collections = {
             corp.name : self.SSTATS.CorpusSstats(corp, model_state, corpus_states[corp.name]) 
             for corp in corpus.corpuses
         }
 
-        gammas = []
-        for gamma_g, sample in zip(gamma, corpus):
+        for i, (gamma, weighted_phi) in enumerate(parallel(
+                delayed(estep_fn)() for estep_fn in generate_estep_fns()
+            )):
+            
+            sstats = self.SSTATS.SampleSstats(
+                    model_state = model_state,
+                    sample=corpus[i],
+                    weighted_phi=weighted_phi,
+                    gamma=gamma,
+                )
 
-            sample_sstats, sample_new_gamma = self._sample_inference(
-                        sample = sample,
-                        gamma0 = gamma_g, 
-                        locus_subsample_rate = locus_subsample_rate,
-                        batch_subsample_rate = batch_subsample_rate,
-                        learning_rate = learning_rate,
-                        model_state = model_state,
-                        corpus_state = corpus_states[sample.corpus_name]
-                    )
-
-            sstat_collections[sample.corpus_name] += sample_sstats
-            gammas.append(sample_new_gamma)
+            sstat_collections[corpus[i].corpus_name] += sstats
+            gammas.append(gamma)
 
         return self.SSTATS.MetaSstats(sstat_collections, self.model_state), np.vstack(gammas)
         
@@ -418,7 +477,8 @@ class LocusRegressor:
         self.trained = False
 
         
-        with warnings.catch_warnings():
+        with warnings.catch_warnings(), \
+            Parallel(n_jobs=self.n_jobs, return_as = 'generator', batch_size = 10) as parallel:            
             warnings.simplefilter("ignore")
 
             logger.info('Training model ...')
@@ -438,6 +498,7 @@ class LocusRegressor:
                 with TimerContext('E-step'):
 
                     sstats, new_gamma = self._inference(
+                                parallel = parallel,
                                 locus_subsample_rate=self.locus_subsample,
                                 batch_subsample_rate=self.batch_size/self.n_samples,
                                 learning_rate=learning_rate_fn(epoch),
