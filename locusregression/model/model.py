@@ -1,5 +1,5 @@
 
-from .base import log_dirichlet_expectation
+from .base import log_dirichlet_expectation, feldmans_r2
 from locusregression.corpus import COSMIC_SORT_ORDER, SIGNATURE_STRINGS, MUTATION_PALETTE
 from locusregression.corpus.sbs_sample import SBSSample
 import locusregression.model._sstats as _sstats
@@ -37,7 +37,7 @@ class TimerContext:
     
     def __exit__(self, *args):
         elapsed_time = time.time() - self.start_time
-        logger.debug(f'{self.name} - time: {elapsed_time:<3.2f}s. ')
+        #logger.debug(f'{self.name} - time: {elapsed_time:<3.2f}s. ')
 
 
 class LocusRegressor:
@@ -453,7 +453,7 @@ class LocusRegressor:
 
                     self.model_state.update_state(sstats, learning_rate_fn(epoch))
                 
-                    if epoch >= 10 and self.empirical_bayes:
+                    if epoch >= 0 and self.empirical_bayes:
                         # wait 10 epochs to update the prior to prevent local minimas
                         for corpus_state in self.corpus_states.values():
                             corpus_state.update_alpha(sstats, learning_rate_fn(epoch))
@@ -698,6 +698,33 @@ class LocusRegressor:
 
         return np.log( np.squeeze(np.dot(gamma, psi_matrix)) )
     
+
+    
+    def mutation_rate_deviance(self, corpus):
+        '''
+        Calculate the deviance of the mutation rate for a given corpus.
+
+        Parameters:
+        corpus (Corpus): The corpus for which to calculate the deviance.
+
+        Returns:
+        float: The deviance of the mutation rate.
+        '''
+
+        if not self.trained:
+            logger.warn('This model was not trained to completion, results may be innaccurate')
+
+        try:
+            self.corpus_states[corpus.name]
+        except KeyError:
+            raise ValueError(f'Corpus {corpus.name} not found in model.')
+        
+        empirical_mr = corpus.get_empirical_mutation_rate()
+        predicted_mr = self.get_expected_mutation_rate(corpus.name)
+
+        return feldmans_r2(empirical_mr, predicted_mr)
+    
+
 
     def assign_sample_to_corpus(self, sample,
             n_samples_per_iter = 100, 

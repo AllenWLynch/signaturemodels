@@ -1,8 +1,18 @@
 
 import numpy as np
-from scipy.special import psi, gammaln, polygamma, gamma
+from scipy.special import psi, gammaln, polygamma, xlogy
+from scipy.optimize import line_search
 import logging
 logger = logging.getLogger(__name__)
+
+def multinomial_deviance(y, y_hat):
+    y = y/y.sum(); y_hat = y_hat/y_hat.sum()
+    return 2*( xlogy(y, y).sum() - xlogy(y, y_hat).sum() )
+
+
+def feldmans_r2(y, y_hat):
+    y_null = y.mean()*np.ones_like(y)
+    return 1 - multinomial_deviance(y, y_hat)/multinomial_deviance(y, y_null)
 
 
 def dirichlet_multinomial_logprob(z, alpha):
@@ -44,8 +54,14 @@ def dirichlet_bound(alpha, gamma):
 
 
 def _dir_prior_update_step(prior, N, logphat):
+
+    def _objective(alpha):
+        return -N * (gammaln(np.sum(alpha)) - np.sum(gammaln(alpha)) + np.sum((alpha - 1) * logphat))
     
-    gradf = N * (psi(np.sum(prior)) - psi(prior) + logphat)
+    def _gradient(alpha):
+        return -N * (psi(np.sum(alpha)) - psi(alpha) + logphat)
+    
+    gradf = -_gradient(prior)
 
     c = N * polygamma(1, np.sum(prior))
     q = -N * polygamma(1, prior)
@@ -54,7 +70,30 @@ def _dir_prior_update_step(prior, N, logphat):
 
     dprior = -(gradf - b) / q
 
-    return dprior + prior
+    step_size = line_search(
+        _objective,
+        _gradient,
+        prior,
+        dprior,
+        amax=1.,
+        maxiter = 100
+    )[0]
+
+    if step_size is None:
+        step_size = 1
+
+    if not step_size == 1:
+        logger.debug(f'Line search found a better step size: {step_size}')
+
+    '''print(_objective(prior), 
+          _objective(prior + dprior), 
+          _objective(step_size*dprior + prior),
+          _objective(np.array([5,1,10,3,2])),
+          step_size,
+          sep = ' | '
+    )'''
+
+    return np.maximum( step_size*dprior + prior, 0.01 )
 
 
 
