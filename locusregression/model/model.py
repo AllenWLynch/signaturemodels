@@ -51,8 +51,8 @@ class LocusRegressor:
     @classmethod
     def sample_params(cls, trial):
         return dict(
-            tau = trial.suggest_categorical('tau', [1, 1, 1, 16, 48, 128]),
-            kappa = trial.suggest_categorical('kappa', [0.5, 0.5, 0.5, 0.6, 0.7]),
+            tau = trial.suggest_categorical('tau', [1, 16, 48]),
+            begin_prior_updates = trial.suggest_integer('begin_prior_updates', 1, 100) 
         )
 
     @classmethod
@@ -64,7 +64,7 @@ class LocusRegressor:
         n_components = 10,
         seed = 2, 
         dtype = float,
-        pi_prior = 3.,
+        pi_prior = 1.,
         num_epochs = 300, 
         difference_tol = 1e-3,
         estep_iterations = 1000,
@@ -72,14 +72,14 @@ class LocusRegressor:
         quiet = False,
         n_jobs = 1,
         locus_subsample = 1,
-        kappa = 0.5,
-        tau = 1,
-        eval_every = 50,
-        time_limit = None,
-        empirical_bayes = False,
         batch_size = None,
+        empirical_bayes = True,
+        kappa = 0.5,
+        tau = 16,
+        eval_every = 50,
+        begin_prior_updates = 10,
+        time_limit = None,
         fix_signatures =  None,
-        negative_subsample = None,
     ):
         '''
         Params
@@ -114,7 +114,7 @@ class LocusRegressor:
         self.empirical_bayes = empirical_bayes
         self.batch_size = batch_size
         self.fix_signatures = fix_signatures
-        self.negative_subsample = negative_subsample
+        self.begin_prior_updates = begin_prior_updates
 
 
     def save(self, filename):
@@ -453,8 +453,8 @@ class LocusRegressor:
 
                     self.model_state.update_state(sstats, learning_rate_fn(epoch))
                 
-                    if epoch >= 0 and self.empirical_bayes:
-                        # wait 10 epochs to update the prior to prevent local minimas
+                    if epoch >= self.begin_prior_updates and self.empirical_bayes:
+                        # wait some # of epochs to update the prior to prevent local minimas
                         for corpus_state in self.corpus_states.values():
                             corpus_state.update_alpha(sstats, learning_rate_fn(epoch))
 

@@ -230,7 +230,7 @@ tune_optional.add_argument('--storage',type = str, default=None,
 tune_optional.add_argument('--factor','-f',type = posint, default = 4,
     help = 'Successive halving reduction factor for each iteration')
 tune_optional.add_argument('--skip-tune-subsample', action = 'store_true', default=False)
-tune_optional.add_argument('--locus-subsample-rates','-rates', type = posfloat, nargs = '+', default = [0.0625, 0.125, 0.25, 0.5, 1])
+#tune_optional.add_argument('--locus-subsample-rates','-rates', type = posfloat, nargs = '+', default = [0.0625, 0.125, 0.25, 0.5, 1])
 tune_optional.add_argument('--use-pruner', '-prune', action='store_true', default=False,
                            help = 'Use the hyperband pruner to eliminate poorly performing trials before they complete, saving computational resources.')
 
@@ -337,10 +337,10 @@ def train_model(
         batch_size = 128,
         time_limit = None,
         negative_subsample = None,
-        tau = 1,
+        tau = 16,
         kappa = 0.5,
         seed = 0, 
-        pi_prior = 5.,
+        pi_prior = 1.,
         num_epochs = 10000, 
         difference_tol = 1e-3,
         estep_iterations = 1000,
@@ -348,13 +348,12 @@ def train_model(
         bound_tol = 1e-2,
         verbose = False,
         n_jobs = 1,
-        empirical_bayes = False,
+        empirical_bayes = True,
         model_type = 'regression',
         fix_signatures = None,*,
         n_components,
         corpuses,
         output,
-        
     ):
 
     basemodel = _get_basemodel(model_type)
@@ -408,7 +407,7 @@ trainer_optional.add_argument('--locus-subsample','-sub', type = posfloat, defau
     help = 'Whether to use locus subsampling to speed up training via stochastic variational inference.')
 trainer_optional.add_argument('--batch-size','-batch', type = posint, default = 128,
     help = 'Use minibatch updates via stochastic variational inference.')
-trainer_optional.add_argument('--negative-subsample','-neg', type = int, default=None)
+trainer_optional.add_argument('--begin-prior-updates', type = int, default=10)
 trainer_optional.add_argument('--time-limit','-time', type = posint, default = None,
     help = 'Time limit in seconds for model training.')
 trainer_optional.add_argument('--fix-signatures','-sigs', nargs='+', type = str, default = None,
@@ -418,7 +417,7 @@ trainer_optional.add_argument('--fix-signatures','-sigs', nargs='+', type = str,
                                     'all are learned de-novo.'
                               )
 trainer_optional.add_argument('--empirical-bayes','-eb', action = 'store_true', default=False,)
-trainer_optional.add_argument('--tau', type = posint, default = 1)
+trainer_optional.add_argument('--tau', type = posint, default = 16)
 trainer_optional.add_argument('--kappa', type = posfloat, default=0.5)
 trainer_optional.add_argument('--eval-every', '-eval', type = posint, default = 10,
     help = 'Evaluate the bound after every this many epochs')

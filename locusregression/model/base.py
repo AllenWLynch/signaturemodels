@@ -3,7 +3,7 @@ import numpy as np
 from scipy.special import psi, gammaln, polygamma, xlogy
 from scipy.optimize import line_search
 import logging
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(' Prior update')
 
 def multinomial_deviance(y, y_hat):
     y = y/y.sum(); y_hat = y_hat/y_hat.sum()
@@ -52,12 +52,16 @@ def dirichlet_bound(alpha, gamma):
              axis = -1
         )
 
+class NoImprovementError(ValueError):
+    pass
+
+
+def _dir_prior_objective(alpha, N, logphat):
+    return -N * (gammaln(np.sum(alpha)) - np.sum(gammaln(alpha)) + np.sum((alpha - 1) * logphat))
+
 
 def _dir_prior_update_step(prior, N, logphat):
 
-    def _objective(alpha):
-        return -N * (gammaln(np.sum(alpha)) - np.sum(gammaln(alpha)) + np.sum((alpha - 1) * logphat))
-    
     def _gradient(alpha):
         return -N * (psi(np.sum(alpha)) - psi(alpha) + logphat)
     
@@ -70,48 +74,82 @@ def _dir_prior_update_step(prior, N, logphat):
 
     dprior = -(gradf - b) / q
 
-    step_size = line_search(
-        _objective,
+    step_size, *search = line_search(
+        lambda x : _dir_prior_objective(x, N, logphat),
         _gradient,
         prior,
         dprior,
-        amax=1.,
+        amax = 1.,
         maxiter = 100
-    )[0]
+    )
 
     if step_size is None:
-        step_size = 1
+        if np.linalg.norm(gradf) < 1e-4:
+            logger.debug('Prior has converged.')
+            step_size = 0
+        else:
+            logger.debug('Newton step cannot improve log-likelihood of prior.')
+            raise NoImprovementError()
 
     if not step_size == 1:
         logger.debug(f'Line search found a better step size: {step_size}')
+    
+    new_prior = step_size*dprior + prior
 
-    '''print(_objective(prior), 
-          _objective(prior + dprior), 
-          _objective(step_size*dprior + prior),
-          _objective(np.array([5,1,10,3,2])),
-          step_size,
-          sep = ' | '
-    )'''
-
-    return np.maximum( step_size*dprior + prior, 0.01 )
+    if np.any(new_prior < 0.01):
+        logger.debug('Performing projected gradient descent update.')
+        new_prior = np.maximum(new_prior, 0.01)
+    
+    return new_prior
 
 
+def _dir_prior_newton_iter(prior, N, logphat, 
+                           compare_prior = None, 
+                           max_iter = 100):
+    
+    if compare_prior is None:
+        compare_prior = prior
+
+    curr_val = _dir_prior_objective(compare_prior, N, logphat)
+
+    try:
+        for iter in range(max_iter):
+            old_prior = prior.copy()
+            prior = _dir_prior_update_step(old_prior, N, logphat)
+            if np.abs(old_prior - prior).sum() < 1e-3:
+                break
+        iter+=1
+    except NoImprovementError:
+        pass
+    else:
+        logger.debug(f'Prior updated in {iter} iterations.')
+
+    new_val = _dir_prior_objective(prior, N, logphat)
+    
+    if iter == 0 or new_val > curr_val:
+        raise NoImprovementError()
+    
+    logger.debug(f'Prior log-likelihood improvement: {curr_val - new_val}\nNew prior: {" ".join(map(str,prior))}')
+    return prior
+        
 
 def update_dir_prior(prior, N, logphat):
 
-    def _check_prior(prior):
-        return np.all(prior > 0) and np.all(np.isfinite(prior))
 
     old_prior = prior.copy()
-    prior = _dir_prior_update_step(prior, N, logphat)
 
-    if not _check_prior(prior):
-        logger.warning(' Prior update failed. Retrying with different initialization.')
-        prior = np.exp(logphat)
+    try:
+        prior = _dir_prior_newton_iter(prior, N, logphat)
+    except NoImprovementError:
+        
+        try:
+            logger.debug('Re-evaluating prior with different initial point.')
+            p_tild = np.exp(logphat)*0.01
 
-        prior = _dir_prior_update_step(prior, N, logphat)
-        if not _check_prior(prior):
-            logger.warning(' Prior update failed, reverting to old prior.')
+            prior = _dir_prior_newton_iter(p_tild, N, logphat, compare_prior = prior)
+
+        except NoImprovementError:
+            logger.warn('Failed to update prior, reverting to old value.')
             prior = old_prior
     
     return prior

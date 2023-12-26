@@ -11,7 +11,7 @@ def objective(trial,
             max_components = 10,
             model_params = {},
             tune_subsample = True,
-            locus_subsample_rates = [0.0625, 0.125, 0.25,],
+            locus_subsample_rates = [0.125, 0.25, None],
             model_type = 'regression',*,
             num_epochs,
             train, test,
@@ -26,11 +26,12 @@ def objective(trial,
         raise ValueError(f'Unknown model type {model_type}')
     
     sample_params = basemodel.sample_params(trial)
+    
     sample_params['n_components'] = trial.suggest_int('n_components', min_components, max_components)
 
     if tune_subsample:
-        sample_params['locus_subsample'] = trial.suggest_categorical('locus_subsample', locus_subsample_rates[2:])
-        sample_params['batch_size'] = trial.suggest_categorical('batch_size', [16,32,64,128,10000][2:])
+        sample_params['locus_subsample'] = trial.suggest_categorical('locus_subsample', locus_subsample_rates)
+        sample_params['batch_size'] = trial.suggest_categorical('batch_size', [64,128,None])
 
     model_params.update(sample_params)
 
