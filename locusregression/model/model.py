@@ -480,9 +480,11 @@ class LocusRegressor:
 
                     if len(self.bounds) > 1:
                         improvement = self.bounds[-1] - (self.bounds[-2] if epoch > 1 else self.bounds[-1])
-                        
-                        logger.info(f' [{epoch:>3}/{self.num_epochs+1}] | Time: {elapsed_time:<3.2f}s. '
-                                    f'| Bound: { self.bounds[-1]:<10.2f}, improvement: {improvement:<10.2f} ')
+                    else:
+                        improvement = 0
+
+                    logger.info(f' [{epoch:>3}/{self.num_epochs+1}] | Time: {elapsed_time:<3.2f}s. '
+                                f'| Bound: { self.bounds[-1]:<10.2f}, improvement: {improvement:<10.2f} ')
                         
                 elif not self.quiet:
                     logger.info(f' [{epoch:<3}/{self.num_epochs+1}] | Time: {elapsed_time:<3.2f}s. ')
