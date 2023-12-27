@@ -5,15 +5,54 @@ from .optim_lambda import LambdaOptimizer
 from .base import update_alpha, update_tau, dirichlet_bound
 from ..simulation import SimulatedCorpus, COSMIC_SIGS
 from sklearn.linear_model import PoissonRegressor
+from sklearn.base import clone
+from sklearn.preprocessing import OneHotEncoder
+from functools import partial
 
 
-def _get_linear_model():
+def _get_linear_model(*args):
     return PoissonRegressor(
         alpha = 0, 
         solver = 'newton-cholesky',
         warm_start = True,
-        fit_intercept=True,
+        fit_intercept = False,
     )
+
+
+def _get_intercept_transformer(corpus_states, 
+                               encoder_class = OneHotEncoder(
+                                    sparse_output=False,
+                                    drop = None,
+                               ),
+                               expected_shape = (-1,1)
+                            ):
+    
+    corpus_names = list(corpus_states.keys())
+
+    encoder = clone(encoder_class).fit(
+                    np.array(corpus_names).reshape(expected_shape)
+                )
+
+    def transform(corpus_names, X_matrices):
+        #corpus_names = sstats.corpus_names; X_matrices = sstats.X_matrices
+        _, n_loci = X_matrices[0].shape
+        # Concatenate the matrices
+        concatenated_matrix = np.hstack(X_matrices).T
+        labels = np.concatenate([[name]*n_loci for name in corpus_names])
+        # One-hot encode the labels
+        encoded_labels = encoder.transform(labels.reshape(expected_shape))
+        
+        if len(encoded_labels.shape) == 1:
+            encoded_labels = encoded_labels.reshape(-1,1)
+
+        # Concatenate the encoded labels with the concatenated matrix
+        X_features = np.concatenate([encoded_labels, concatenated_matrix], axis=1)
+
+        return X_features
+    
+    return transform
+
+
 
 class ModelState:
 
@@ -21,8 +60,8 @@ class ModelState:
 
     def __init__(self,
                 fix_signatures = None,
-                pseudocounts = 100000,
-                negative_subsample = 1000,*,
+                pseudocounts = 100000,*,
+                corpus_states,
                 n_components, 
                 n_features, 
                 n_loci,
@@ -31,6 +70,7 @@ class ModelState:
                 genome_trinuc_distribution,
                 dtype,
                 get_model_fn = _get_linear_model,
+                transform_fn = _get_intercept_transformer,
                 **kw,
             ):
         
@@ -40,7 +80,6 @@ class ModelState:
         self.n_loci = n_loci
         self.random_state = random_state
         self.empirical_bayes = empirical_bayes
-        self.negative_subsample = negative_subsample
 
         self.tau = np.ones(self.n_components)
 
@@ -61,12 +100,17 @@ class ModelState:
         else:
             self.fixed_signatures = [False]*n_components
 
-        self.update_signature_distribution()
+        self.feature_transformer = transform_fn(corpus_states)
 
-        self.rate_models = [
-            get_model_fn()
-            for _ in range(n_components)
-        ]
+        X_tild = self.feature_transformer(
+            corpus_states.keys(), 
+            [corpus_state.X_matrix for corpus_state in corpus_states.values()]
+        )
+
+        #base_model = get_model_fn(X_tild)
+        self.rate_models = [get_model_fn(X_tild) for _ in range(n_components)]
+
+        self.update_signature_distribution()
 
 
     def _fix_signatures(self, fix_signatures,*,
@@ -154,12 +198,18 @@ class ModelState:
 
     def _get_features(self, sstats):
         
-        X_cat = np.hstack(sstats.X_matrices).T # (n_corpuses*n_loci, n_features)
+        n_samples = sstats.X_matrices[0].shape[1]
+
+        X_cat = self.feature_transformer(
+            sstats.corpus_names, sstats.X_matrices
+        ) # (n_corpuses*n_loci, n_features)
+
         exposures = np.concatenate(sstats.exposures).ravel()
         
         for k, beta_arr in enumerate(
-            self._convert_beta_sstats_to_array(sstats.beta_sstats, len(exposures))
+            self._convert_beta_sstats_to_array(sstats.beta_sstats, n_samples)
         ):  
+
             current_lograte_prediction = np.concatenate([logmus[k] for logmus in sstats.logmus])
             #
             # For poisson model with exposures, have to divide the observations by the exposures
@@ -220,28 +270,6 @@ class ModelState:
 
         self.update_signature_distribution() # update pre-calculated pure functions of model state 
 
-
-    def get_posterior_entropy(self):
-
-        ent = 0
-
-        ent += sum(dirichlet_bound(np.ones(self.n_contexts), self.delta))
-        ent += np.sum(dirichlet_bound(np.ones((1,3)), self.omega))
-
-        return ent
-
-    '''def get_posterior_entropy(self):
-
-        ent = 0
-
-        ent += np.sum(1/(self.tau * np.sqrt(np.pi * 2)))
-        ent +=  np.sum(-1/(2*self.tau[:,None]**2) * (np.square(self.beta_mu) + np.square(self.beta_nu)))
-        ent += np.sum(np.log(self.beta_nu))
-
-        ent += sum(dirichlet_bound(np.ones(self.n_contexts), self.delta))
-        ent += np.sum(dirichlet_bound(np.ones((1,3)), self.omega))
-
-        return ent'''
         
 
 
@@ -307,8 +335,12 @@ class CorpusState(ModelState):
 
     def update_mutation_rate(self, model_state):
         
+        X_tild = model_state.feature_transformer(
+            [self.name],[self.X_matrix]
+        )
+
         self._logmu = np.array([
-            np.log(model_state.rate_models[k].predict(self.X_matrix.T).T)
+            np.log(model_state.rate_models[k].predict(X_tild).T)
             for k in range(self.n_components)
         ])
 
@@ -357,6 +389,8 @@ class CorpusState(ModelState):
     @property
     def X_matrix(self):
         return self.corpus.X_matrix
-
-    def get_posterior_entropy(self, gammas):
-        return np.sum(dirichlet_bound(self.alpha, np.array(gammas)))
+    
+    @property
+    def name(self):
+        return self.corpus.name
+        

@@ -119,6 +119,7 @@ class MetaSstats:
 
     def __init__(self, corpus_sstats, model_state):
         
+        self.corpus_names = list(corpus_sstats.keys())
         self.beta_sstats = [betas for stats in corpus_sstats.values() for betas in stats.beta_sstats]
         self.exposures = [exp for stats in corpus_sstats.values() for exp in stats.exposures]
         self.X_matrices = [X for stats in corpus_sstats.values() for X in stats.X_matrices]

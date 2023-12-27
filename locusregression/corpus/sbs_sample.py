@@ -218,7 +218,10 @@ class SBSSample:
                     exposures = np.array(exposures),
                 )
             
-    
+    def __len__(self):
+        return len(self.locus)
+            
+            
     def create_h5_dataset(self, h5_object, dataset_name):
 
         for attr in self.data_attrs:

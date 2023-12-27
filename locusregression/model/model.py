@@ -1,5 +1,5 @@
 
-from .base import log_dirichlet_expectation, feldmans_r2
+from .base import log_dirichlet_expectation, feldmans_r2, dirichlet_bound
 from locusregression.corpus import COSMIC_SORT_ORDER, SIGNATURE_STRINGS, MUTATION_PALETTE
 from locusregression.corpus.sbs_sample import SBSSample
 import locusregression.model._sstats as _sstats
@@ -170,8 +170,9 @@ class LocusRegressor:
         phi = weighted_phi/np.array(sample.weight)[None,:]
 
         entropy_sstats = -np.sum(weighted_phi * np.where(phi > 0, np.log(phi), 0.))
+        entropy_sstats += np.sum(dirichlet_bound(corpus_state.alpha, sample_sstats.gamma))
         
-        return np.sum(weighted_phi*flattened_logweight) + entropy_sstats, sample_sstats.gamma
+        return np.sum(weighted_phi*flattened_logweight) + entropy_sstats
 
 
     def _bound(self,*,
@@ -183,18 +184,13 @@ class LocusRegressor:
         ):
 
         elbo = 0
-        
-        corpus_gammas = {
-            corp.name : []
-            for corp in corpus.corpuses
-        }
 
         if gammas is None:
             gammas = self._init_doc_variables(len(corpus), is_bound=True)
 
         for sample, gamma in zip(corpus, gammas):
 
-            sample_elbo, sample_gamma = self._sample_bound(
+            sample_elbo = self._sample_bound(
                 sample = sample,
                 model_state = model_state,
                 corpus_state = corpus_states[sample.corpus_name],
@@ -202,14 +198,13 @@ class LocusRegressor:
             )
 
             elbo += sample_elbo
-            corpus_gammas[sample.corpus_name].append(sample_gamma)
         
-        elbo *= likelihood_scale
+        #elbo *= likelihood_scale
         
-        elbo += model_state.get_posterior_entropy()
+        #elbo += model_state.get_posterior_entropy()
 
-        for name, corpus_state in corpus_states.items():
-            elbo += corpus_state.get_posterior_entropy(corpus_gammas[name])
+        #for name, corpus_state in corpus_states.items():
+        #    elbo += corpus_state.get_posterior_entropy(corpus_gammas[name])
 
         return elbo
     
@@ -327,22 +322,6 @@ class LocusRegressor:
 
         if not self.fix_signatures is None:
             logger.warn('Fixing signatures: ' + ', '.join(map(str, self.fix_signatures)) + ', these will not be updated during training.')
-        
-
-        self.model_state = self.MODEL_STATE(
-                n_components=self.n_components,
-                random_state=self.random_state,
-                n_features=self.n_locus_features,
-                n_loci=self.n_loci,
-                empirical_bayes = self.empirical_bayes,
-                dtype = self.dtype,
-                fix_signatures = self.fix_signatures,
-                genome_trinuc_distribution = self._genome_trinuc_distribution,
-                X_matrices = [
-                    corp.X_matrix for corp in corpus.corpuses
-                ],
-                **self._get_rate_model_parameters()
-        )
 
         
         fix_strs = list(self.fix_signatures) if not self.fix_signatures is None else []
@@ -362,6 +341,19 @@ class LocusRegressor:
                         )
             for corp in corpus.corpuses
         }
+
+        self.model_state = self.MODEL_STATE(
+                n_components=self.n_components,
+                random_state=self.random_state,
+                n_features=self.n_locus_features,
+                n_loci=self.n_loci,
+                empirical_bayes = self.empirical_bayes,
+                dtype = self.dtype,
+                fix_signatures = self.fix_signatures,
+                genome_trinuc_distribution = self._genome_trinuc_distribution,
+                corpus_states=self.corpus_states,
+                **self._get_rate_model_parameters()
+        )
 
         #self.update_mutation_rates()
 
@@ -465,18 +457,18 @@ class LocusRegressor:
                 self.total_time += elapsed_time
                 self.epochs_trained+=1
 
-                if epoch % self.eval_every == 0:
+                if (not self.eval_every is None) and epoch % self.eval_every == 0:
                     
                     with TimerContext('Calculating bound'):
-                        self.bounds.append(
-                            self._bound(
+                        
+                        elbo = self._bound(
                                 corpus = corpus,
                                 model_state = self.model_state,
                                 corpus_states = self.corpus_states,
-                                likelihood_scale=1,
                                 gammas = self._gamma,
                             )
-                        )
+                        
+                    self.bounds.append(self._perplexity(elbo, corpus))
 
                     if len(self.bounds) > 1:
                         improvement = self.bounds[-1] - (self.bounds[-2] if epoch > 1 else self.bounds[-1])
@@ -484,7 +476,7 @@ class LocusRegressor:
                         improvement = 0
 
                     logger.info(f' [{epoch:>3}/{self.num_epochs+1}] | Time: {elapsed_time:<3.2f}s. '
-                                f'| Bound: { self.bounds[-1]:<10.2f}, improvement: {improvement:<10.2f} ')
+                                f'| Perplexity: { self.bounds[-1]:<10.2f}, improvement: {improvement:<10.2f} ')
                         
                 elif not self.quiet:
                     logger.info(f' [{epoch:<3}/{self.num_epochs+1}] | Time: {elapsed_time:<3.2f}s. ')
@@ -536,6 +528,11 @@ class LocusRegressor:
 
     def partial_fit(self, corpus):
         return self._fit(corpus, reinit=False)
+    
+
+    @staticmethod
+    def _perplexity(elbo, corpus):
+        return np.exp(-elbo/corpus.num_mutations)
 
 
     def score(self, corpus):
@@ -562,12 +559,14 @@ class LocusRegressor:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             
-            return self._bound(
+            elbo = self._bound(
                     corpus = corpus, 
                     corpus_states = self.corpus_states,
                     model_state = self.model_state,
-                    likelihood_scale=self.n_samples/n_samples,
                 )
+            
+        return self._perplexity(elbo, corpus)
+
 
 
     @staticmethod

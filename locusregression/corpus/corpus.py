@@ -246,6 +246,10 @@ class Corpus(CorpusMixin):
     @property
     def corpuses(self):
         return [self]
+    
+    @property
+    def num_mutations(self):
+        return sum([len(sample) for sample in self.samples])
 
     def subset_samples(self, subset_idx):
 
@@ -331,19 +335,6 @@ class Corpus(CorpusMixin):
             shared_exposures = self.shared_exposures,
             name = self.name,
         )
-    
-
-    def get_empirical_mutation_rate(self):
-
-        # returns the ln mutation rate for each locus in the first sample
-        mutation_rate = self.samples[0].get_empirical_mutation_rate() * np.log(10)
-
-        # loop through the rest of the samples and add the mutation rate using logsumexp
-        for i in range(1, len(self)):
-            next_rate = self.samples[i].get_empirical_mutation_rate() * np.log(10)
-            mutation_rate = np.logaddexp(mutation_rate, next_rate)
-
-        return mutation_rate - np.log(len(self))
 
 
     def get_empirical_mutation_rate(self):
@@ -355,7 +346,7 @@ class Corpus(CorpusMixin):
         for i in range(1, len(self)):
             mutation_rate = mutation_rate + self.samples[i].get_empirical_mutation_rate()
 
-        return np.log(mutation_rate) #- np.log(len(self))
+        return np.log(mutation_rate)
 
 
 
@@ -377,6 +368,10 @@ class MetaCorpus(CorpusMixin):
     @property
     def corpuses(self):
         return self._corpuses
+
+    @property
+    def num_mutations(self):
+        return sum([corpus.num_mutations for corpus in self.corpuses])
 
     @property
     def shape(self):
