@@ -19,6 +19,35 @@ from sklearn.ensemble._hist_gradient_boosting.grower import TreeGrower
 from sklearn.ensemble._hist_gradient_boosting.gradient_boosting import BaseHistGradientBoosting, _update_leaves_values
 from sklearn.ensemble import HistGradientBoostingRegressor
 
+def _multinomial_loss(*,
+                y_true,
+                raw_prediction,
+                design_matrix,
+                sample_weight = None,
+                n_threads = 1,
+        ):
+
+    if sample_weight is None:
+        sample_weight = 1.
+
+    log_normalizer = np.array(
+        np.log( 
+            design_matrix.multiply(np.exp(raw_prediction[:,None]))\
+            .sum(axis = 0)
+        )
+    ).ravel()
+    
+    log_normalizer_col = (design_matrix @ np.diag(log_normalizer)).sum(axis = 1)
+    
+    theta_norm = raw_prediction - log_normalizer_col
+
+    effective_y_true = y_true * sample_weight
+
+    # gaurd against 0s
+    # np.where(effective_y_true == 0, 0, theta_norm, out = theta_norm)
+
+    return (effective_y_true @ theta_norm) * 1/len(y_true)
+
 
 class ShrunkTreePredictor:
 
@@ -46,7 +75,12 @@ class BaseCustomBinnedGradientBooster(BaseHistGradientBoosting):
     """Base class for histogram-based gradient boosting estimators."""
 
     #@_fit_context(prefer_skip_nested_validation=True)
-    def fit(self, X, y,*,raw_predictions, sample_weight, svi_shrinkage = 1.):
+    def fit(self, X, y,*,
+            raw_predictions, 
+            sample_weight, 
+            design_matrix,
+            svi_shrinkage = 1.,
+            ):
         """Fit the gradient boosting model.
 
         Parameters
@@ -60,7 +94,17 @@ class BaseCustomBinnedGradientBooster(BaseHistGradientBoosting):
         sample_weight : array-like of shape (n_samples,) default=None
             Weights of training data.
 
-            .. versionadded:: 0.23
+        raw_predictions : array-like of shape (n_samples, n_trees_per_iteration)
+            The raw predictions of the model so far, speeds up calculations
+            since these are not recomputed.
+
+        desing_matrix : array-like of shape (n_samples, n_distributions)
+            A matrix of {0,1}, where a 1 in some column indicates that the
+            observation is from the corresponding multinomial distribution.
+
+        svi_shrinkage : float, default=1.
+            The shrinkage factor for the stochastic variational inference.
+            algorithm. If 1., then no shrinkage is applied.
 
         Returns
         -------
@@ -149,16 +193,20 @@ class BaseCustomBinnedGradientBooster(BaseHistGradientBoosting):
                 sample_weight_val,
                 raw_predictions,
                 raw_predictions_val,
+                design_matrix_train,
+                design_matrix_val,
             ) = train_test_split(
                 X,
                 y,
                 sample_weight,
                 raw_predictions,
+                design_matrix,
                 test_size=self.validation_fraction,
                 stratify=stratify,
                 random_state=self._random_seed,
             )
         else:
+            raise NotImplementedError()
             X_train, y_train, sample_weight_train = X, y, sample_weight
             X_val = y_val = sample_weight_val = None
 
@@ -224,13 +272,17 @@ class BaseCustomBinnedGradientBooster(BaseHistGradientBoosting):
                     self._check_early_stopping_loss(
                         raw_predictions=raw_predictions,
                         y_train=y_train,
+                        design_matrix_train=design_matrix_train,
                         sample_weight_train=sample_weight_train,
                         raw_predictions_val=raw_predictions_val,
+                        design_matrix_val=design_matrix_val,
                         y_val=y_val,
                         sample_weight_val=sample_weight_val,
                         n_threads=n_threads,
                     )
                 else:
+                    raise NotImplementedError()
+                
                     self._scorer = check_scoring(self, self.scoring)
                     # _scorer is a callable with signature (est, X, y) and
                     # calls est.predict() or est.predict_proba() depending on
@@ -293,6 +345,8 @@ class BaseCustomBinnedGradientBooster(BaseHistGradientBoosting):
             n_samples=n_samples, dtype=G_H_DTYPE, order="F"
         )
 
+        assert self.n_trees_per_iteration_ == 1, "n_trees_per_iteration must be 1"
+
         n_trees_fit = 0
         for iteration in range(begin_at_stage, self.max_iter):
             if self.verbose:
@@ -301,9 +355,32 @@ class BaseCustomBinnedGradientBooster(BaseHistGradientBoosting):
                     "[{}/{}] ".format(iteration + 1, self.max_iter), end="", flush=True
                 )
 
+            # TODO: fit the bias term here
+                
+            # this code finds the mean y and prediction for each distribution according to the design matrix. 
+            # without de-sparsifying the design matrix
+            
+            # (1,n_samples) x (n_samples, n_distributions) = (1, n_distributions)
+            log_mean_y = np.log(y_train[None,:] @ design_matrix_train)
+            log_mean_predictions = np.log(np.exp(raw_predictions.ravel()) @ design_matrix_train)
+
+            b_hat_t = log_mean_y - log_mean_predictions
+
+            # TODO: update the raw predictions using the bias term
+            # There is no need to save the bias term, since it cancels out in the multinomial ll
+            # The bias is only needed to ensure that poisson regression produces the same parameter estimates.
+
+            # get bias term for each observation
+            bias_t_train = design_matrix_train.multiply(b_hat_t).sum(1)
+            bias_t_val = design_matrix_val.multiply(b_hat_t).sum(1)
+
+            raw_predictions += bias_t_train
+            raw_predictions_val += bias_t_val
+            #
+
             # Update gradients and hessians, inplace
             # Note that self._loss expects shape (n_samples,) for
-            # n_trees_per_iteration = 1 else shape (n_samples, n_trees_per_iteration).
+            # n_trees_per_iteration = 1 else shape (n_samples, n_trees_per_iteration).                
             if self._loss.constant_hessian:
                 self._loss.gradient(
                     y_true=y_train,
@@ -383,6 +460,7 @@ class BaseCustomBinnedGradientBooster(BaseHistGradientBoosting):
                 toc_pred = time()
                 acc_prediction_time += toc_pred - tic_pred
 
+
             should_early_stop = False
             if self.do_early_stopping_:
                 if self.scoring == "loss":
@@ -398,22 +476,17 @@ class BaseCustomBinnedGradientBooster(BaseHistGradientBoosting):
                     should_early_stop = self._check_early_stopping_loss(
                         raw_predictions=raw_predictions,
                         y_train=y_train,
+                        design_matrix_train=design_matrix_train,
                         sample_weight_train=sample_weight_train,
                         raw_predictions_val=raw_predictions_val,
                         y_val=y_val,
+                        design_matrix_val=design_matrix_val,
                         sample_weight_val=sample_weight_val,
                         n_threads=n_threads,
                     )
 
                 else:
-                    should_early_stop = self._check_early_stopping_scorer(
-                        X_binned_small_train,
-                        y_small_train,
-                        sample_weight_small_train,
-                        X_binned_val,
-                        y_val,
-                        sample_weight_val,
-                    )
+                    raise NotImplementedError()
 
             if self.verbose:
                 self._print_iteration_stats(iteration_start_time)
@@ -421,6 +494,9 @@ class BaseCustomBinnedGradientBooster(BaseHistGradientBoosting):
             n_trees_fit+=1
 
             # maybe we could also early stop if all the trees are stumps?
+            ## DELETE THIS
+            #should_early_stop = False
+
             if should_early_stop:
                 break
         
@@ -561,6 +637,47 @@ class BaseCustomBinnedGradientBooster(BaseHistGradientBoosting):
             X, self._predictors[from_iteration:], raw_predictions, is_binned, n_threads
         )
         return raw_predictions
+    
+
+    def _check_early_stopping_loss(
+        self,
+        raw_predictions,
+        design_matrix_train,
+        y_train,
+        sample_weight_train,
+        raw_predictions_val,
+        y_val,
+        design_matrix_val,
+        sample_weight_val,
+        n_threads=1,
+    ):
+        """Check if fitting should be early-stopped based on loss.
+
+        Scores are computed on validation data or on training data.
+        """
+        self.train_score_.append(
+            _multinomial_loss(
+                y_true=y_train,
+                raw_prediction=raw_predictions.ravel(),
+                design_matrix=design_matrix_train,
+                sample_weight=sample_weight_train,
+                n_threads=n_threads,
+            )
+        )
+
+        if self._use_validation_data:
+            self.validation_score_.append(
+                _multinomial_loss(
+                    y_true=y_val,
+                    raw_prediction=raw_predictions_val.ravel(),
+                    design_matrix=design_matrix_val,
+                    sample_weight=sample_weight_val,
+                    n_threads=n_threads,
+                )
+            )
+            return self._should_stop(self.validation_score_)
+        else:
+            return self._should_stop(self.train_score_)
     
 
 class CustomHistGradientBooster(BaseCustomBinnedGradientBooster, HistGradientBoostingRegressor):

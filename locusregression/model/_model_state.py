@@ -21,7 +21,7 @@ def _get_linear_model(*args):
 
 def _get_intercept_transformer(corpus_states, 
                                encoder_class = OneHotEncoder(
-                                    sparse_output=False,
+                                    sparse_output=True,
                                     drop = None,
                                ),
                                expected_shape = (-1,1)
@@ -46,9 +46,7 @@ def _get_intercept_transformer(corpus_states,
             encoded_labels = encoded_labels.reshape(-1,1)
 
         # Concatenate the encoded labels with the concatenated matrix
-        X_features = np.concatenate([encoded_labels, concatenated_matrix], axis=1)
-
-        return X_features
+        return (encoded_labels, concatenated_matrix)
     
     return transform
 
@@ -102,13 +100,14 @@ class ModelState:
 
         self.feature_transformer = transform_fn(corpus_states)
 
-        X_tild = self.feature_transformer(
+        design_matrix, X_tild = self.feature_transformer(
             corpus_states.keys(), 
             [corpus_state.X_matrix for corpus_state in corpus_states.values()]
         )
 
         #base_model = get_model_fn(X_tild)
-        self.rate_models = [get_model_fn(X_tild) for _ in range(n_components)]
+        self.rate_models = [get_model_fn(design_matrix, X_tild) for _ in range(n_components)]
+        self.n_distributions = design_matrix.shape[1]
 
         self.update_signature_distribution()
 
@@ -200,7 +199,7 @@ class ModelState:
         
         n_samples = sstats.X_matrices[0].shape[1]
 
-        X_cat = self.feature_transformer(
+        design_matrix, X_cat = self.feature_transformer(
             sstats.corpus_names, sstats.X_matrices
         ) # (n_corpuses*n_loci, n_features)
 
@@ -220,22 +219,25 @@ class ModelState:
                 beta_arr/exposures,
                 exposures,
                 current_lograte_prediction.ravel(),
+                design_matrix,
             )
         
 
     def update_rate_model(self, sstats, learning_rate):
 
-        for k, (X,y, sample_weights, _) in enumerate(
+        for k, (X,y, sample_weights, _, design_matrix) in enumerate(
             self._get_features(sstats)
         ):
             
-            # store the current model state
+            # store the current model state (ignore the intercept fits)
             try:
                 old_coef = self.rate_models[k].coef_.copy()
-                old_intercept = self.rate_models[k].intercept_.copy()
             except AttributeError:
-                old_coef = np.zeros(X.shape[1])
-                old_intercept = 0
+                old_coef = np.zeros(X.shape[1] + design_matrix.shape[1])
+            
+            # add the design matrix to the features
+            # to encode intercept terms
+            X = np.hstack([X, design_matrix.toarray()])
 
             # update the model with the new suffstats
             self.rate_models[k].fit(
@@ -246,11 +248,9 @@ class ModelState:
 
             # merge the new model state with the old
             self.rate_models[k].coef_ = self._svi_update_fn(
-                old_coef, self.rate_models[k].coef_, learning_rate
-            )
-
-            self.rate_models[k].intercept_ = self._svi_update_fn(
-                old_intercept, self.rate_models[k].intercept_, learning_rate
+                old_coef, 
+                self.rate_models[k].coef_, 
+                learning_rate
             )
 
 
@@ -335,12 +335,14 @@ class CorpusState(ModelState):
 
     def update_mutation_rate(self, model_state):
         
-        X_tild = model_state.feature_transformer(
+        design_matrix, X_tild = model_state.feature_transformer(
             [self.name],[self.X_matrix]
         )
 
+        X = np.hstack([X_tild, design_matrix.toarray()])
+
         self._logmu = np.array([
-            np.log(model_state.rate_models[k].predict(X_tild).T)
+            np.log(model_state.rate_models[k].predict(X).T)
             for k in range(self.n_components)
         ])
 
