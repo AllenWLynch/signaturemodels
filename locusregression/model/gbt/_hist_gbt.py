@@ -272,10 +272,10 @@ class BaseCustomBinnedGradientBooster(BaseHistGradientBoosting):
                     self._check_early_stopping_loss(
                         raw_predictions=raw_predictions,
                         y_train=y_train,
-                        design_matrix_train=design_matrix_train,
+                        #design_matrix_train=design_matrix_train,
                         sample_weight_train=sample_weight_train,
                         raw_predictions_val=raw_predictions_val,
-                        design_matrix_val=design_matrix_val,
+                        #design_matrix_val=design_matrix_val,
                         y_val=y_val,
                         sample_weight_val=sample_weight_val,
                         n_threads=n_threads,
@@ -476,11 +476,11 @@ class BaseCustomBinnedGradientBooster(BaseHistGradientBoosting):
                     should_early_stop = self._check_early_stopping_loss(
                         raw_predictions=raw_predictions,
                         y_train=y_train,
-                        design_matrix_train=design_matrix_train,
+                        #design_matrix_train=design_matrix_train,
                         sample_weight_train=sample_weight_train,
                         raw_predictions_val=raw_predictions_val,
                         y_val=y_val,
-                        design_matrix_val=design_matrix_val,
+                        #design_matrix_val=design_matrix_val,
                         sample_weight_val=sample_weight_val,
                         n_threads=n_threads,
                     )
@@ -638,47 +638,6 @@ class BaseCustomBinnedGradientBooster(BaseHistGradientBoosting):
         )
         return raw_predictions
     
-
-    def _check_early_stopping_loss(
-        self,
-        raw_predictions,
-        design_matrix_train,
-        y_train,
-        sample_weight_train,
-        raw_predictions_val,
-        y_val,
-        design_matrix_val,
-        sample_weight_val,
-        n_threads=1,
-    ):
-        """Check if fitting should be early-stopped based on loss.
-
-        Scores are computed on validation data or on training data.
-        """
-        self.train_score_.append(
-            _multinomial_loss(
-                y_true=y_train,
-                raw_prediction=raw_predictions.ravel(),
-                design_matrix=design_matrix_train,
-                sample_weight=sample_weight_train,
-                n_threads=n_threads,
-            )
-        )
-
-        if self._use_validation_data:
-            self.validation_score_.append(
-                _multinomial_loss(
-                    y_true=y_val,
-                    raw_prediction=raw_predictions_val.ravel(),
-                    design_matrix=design_matrix_val,
-                    sample_weight=sample_weight_val,
-                    n_threads=n_threads,
-                )
-            )
-            return self._should_stop(self.validation_score_)
-        else:
-            return self._should_stop(self.train_score_)
     
-
 class CustomHistGradientBooster(BaseCustomBinnedGradientBooster, HistGradientBoostingRegressor):
     pass

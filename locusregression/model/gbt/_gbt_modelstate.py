@@ -21,7 +21,6 @@ from functools import partial
         )'''
 
 
-
 def _get_model_fn(design_matrix, X_tild, 
                   tree_learning_rate = 0.1, 
                   max_depth = 5,
@@ -38,6 +37,7 @@ def _get_model_fn(design_matrix, X_tild,
                 warm_start=True,
                 early_stopping=True,
                 validation_fraction=0.2,
+                n_iter_no_change=3,
                 l2_regularization=l2_regularization,
                 verbose=False,
             )
@@ -106,18 +106,14 @@ class GBTCorpusState(CorpusState):
             [self.name],[self.X_matrix]
         )
 
-        '''model_state.rate_models[k]._raw_predict_from(
+        self._logmu = array([
+            model_state.rate_models[k]._raw_predict_from(
                 X_tild, 
                 self._logmu[k].reshape((-1,1)), 
                 from_iteration = model_state.predict_from[k]
-            ).ravel()'''
-        
-        self._logmu = array([
-            np.log(model_state.rate_models[k].predict(X_tild))
+            ).ravel()
             for k in range(self.n_components)
         ])
-
-        model_state.predict_from = [None]*self.n_components
 
         if self.corpus.shared_exposures:
             self._log_denom = self._calc_log_denom(self.corpus.exposures)

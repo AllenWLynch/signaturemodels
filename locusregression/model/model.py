@@ -20,10 +20,17 @@ logger = logging.getLogger(' LocusRegressor')
 
 
 #@njit(parallel = True)
-def estep_update(exp_Elog_gamma, alpha, flattend_phi, count_g, likelihood_scale = 1):
+def _estep_update(exp_Elog_gamma, alpha, flattend_phi, count_g, likelihood_scale = 1):
     gamma_sstats = exp_Elog_gamma*np.dot(flattend_phi, count_g/np.dot(flattend_phi.T, exp_Elog_gamma))
     gamma_sstats = gamma_sstats.reshape(-1)
     return alpha + gamma_sstats*likelihood_scale
+
+
+def _calc_local_variables(*,gamma, flattend_phi):
+    exp_Elog_gamma = np.exp(log_dirichlet_expectation(gamma)[:,None])
+    phi_matrix = np.outer(exp_Elog_gamma, 1/np.dot(flattend_phi.T, exp_Elog_gamma))*flattend_phi #/(batch_subsample_rate*locus_subsample_rate)
+    
+    return phi_matrix
 
 
 class TimerContext:
@@ -146,7 +153,7 @@ class LocusRegressor:
             gamma
         ):
     
-        sample_sstats, _ = self._sample_inference(
+        sample_sstats = self._sample_inference(
             gamma0 = gamma,
             sample = sample,
             model_state = model_state,
@@ -164,6 +171,14 @@ class LocusRegressor:
             ))
         
         flattened_logweight += np.log(sample.exposures[:, sample.locus]) + corpus_state.logmu[:, sample.locus] - corpus_state.log_denom(sample.exposures)
+
+        '''flattend_phi = self.get_flattened_phi(
+            model_state=model_state,
+            sample=sample,
+            corpus_state=corpus_state,
+        )
+
+        assert False'''
 
         weighted_phi = sample_sstats.weighed_phi
 
@@ -233,7 +248,7 @@ class LocusRegressor:
             old_gamma = gamma.copy()
             exp_Elog_gamma = np.exp(log_dirichlet_expectation(gamma)[:,None])
 
-            gamma = estep_update(exp_Elog_gamma, corpus_state.alpha, flattend_phi, count_g,
+            gamma = _estep_update(exp_Elog_gamma, corpus_state.alpha, flattend_phi, count_g,
                                  likelihood_scale=1/locus_subsample_rate)
 
             if np.abs(gamma - old_gamma).mean() < self.difference_tol:
@@ -241,20 +256,17 @@ class LocusRegressor:
         else:
             logger.debug('E-step did not converge. If this happens frequently, consider increasing "estep_iterations".')
 
-
         gamma = (1 - learning_rate)*gamma0 + learning_rate*gamma
 
-        exp_Elog_gamma = np.exp(log_dirichlet_expectation(gamma)[:,None])
-        phi_matrix = np.outer(exp_Elog_gamma, 1/np.dot(flattend_phi.T, exp_Elog_gamma))*flattend_phi/(batch_subsample_rate*locus_subsample_rate)
-        
-        weighted_phi = phi_matrix * count_g.T
+        phi_matrix = _calc_local_variables(gamma = gamma, flattend_phi=flattend_phi)
+        weighted_phi = phi_matrix * count_g.T/(locus_subsample_rate * batch_subsample_rate)
 
         return self.SSTATS.SampleSstats(
-            model_state = model_state,
+            model_state=model_state,
             sample=sample,
             weighted_phi=weighted_phi,
             gamma=gamma,
-        ), gamma
+        )
         
 
     
@@ -276,7 +288,7 @@ class LocusRegressor:
         gammas = []
         for gamma_g, sample in zip(gamma, corpus):
 
-            sample_sstats, sample_new_gamma = self._sample_inference(
+            sample_sstats = self._sample_inference(
                         sample = sample,
                         gamma0 = gamma_g, 
                         locus_subsample_rate = locus_subsample_rate,
@@ -287,7 +299,7 @@ class LocusRegressor:
                     )
 
             sstat_collections[sample.corpus_name] += sample_sstats
-            gammas.append(sample_new_gamma)
+            gammas.append(sample_sstats.gamma)
 
         return self.SSTATS.MetaSstats(sstat_collections, self.model_state), np.vstack(gammas)
         
@@ -476,7 +488,7 @@ class LocusRegressor:
                         improvement = 0
 
                     logger.info(f' [{epoch:>3}/{self.num_epochs+1}] | Time: {elapsed_time:<3.2f}s. '
-                                f'| Perplexity: { self.bounds[-1]:<10.2f}, improvement: {improvement:<10.2f} ')
+                                f'| Perplexity: { self.bounds[-1]:<10.2f}, improvement: {-improvement:<10.2f} ')
                         
                 elif not self.quiet:
                     logger.info(f' [{epoch:<3}/{self.num_epochs+1}] | Time: {elapsed_time:<3.2f}s. ')
@@ -603,12 +615,12 @@ class LocusRegressor:
             raise ValueError(f'Corpus {corpus_name} not found in model.')
         
 
-        _, gamma = self._sample_inference(
+        gamma = self._sample_inference(
             gamma0=self._init_doc_variables(1)[0],
             sample = sample,
             model_state = self.model_state,
             corpus_state = corpus_state,
-        )
+        ).gamma
 
         '''observation_logits = IS._conditional_logp_mutation_locus(
             model_state= self.model_state,
