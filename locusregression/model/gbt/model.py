@@ -30,13 +30,13 @@ class GBTRegressor(LocusRegressor):
         }
 
     
-    @classmethod
+    '''@classmethod
     def sample_params(cls, trial):
         return dict(
             tau = trial.suggest_categorical('tau', [1, 16, 48]),
             begin_prior_updates = trial.suggest_integer('begin_prior_updates', 1, 100) 
         )
-    
+    '''
 
     def plot_summary(self, fontsize = 7):
         

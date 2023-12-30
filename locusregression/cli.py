@@ -336,7 +336,6 @@ def train_model(
         locus_subsample = 0.125,
         batch_size = 128,
         time_limit = None,
-        negative_subsample = None,
         tau = 16,
         kappa = 0.5,
         seed = 0, 
@@ -350,6 +349,7 @@ def train_model(
         n_jobs = 1,
         empirical_bayes = True,
         model_type = 'regression',
+        begin_prior_updates = 10,
         fix_signatures = None,*,
         n_components,
         corpuses,
@@ -376,7 +376,7 @@ def train_model(
         tau = tau,
         kappa = kappa,
         empirical_bayes=empirical_bayes,
-        negative_subsample=negative_subsample,
+        begin_prior_updates=begin_prior_updates,
     )
     
     logging.basicConfig(level=logging.INFO)
