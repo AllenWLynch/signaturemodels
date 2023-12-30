@@ -561,7 +561,7 @@ def save_overall_mutation_rate(*, model, output, corpus_name):
 
     model = load_model(model)
     
-    print(*model.get_expected_mutation_rate(corpus_name), 
+    print(*model.get_log_expected_mutation_rate(corpus_name), 
           file = output,
           sep = '\n'
          )
@@ -571,6 +571,17 @@ mutrate_parser.add_argument('model', type = file_exists)
 mutrate_parser.add_argument('--corpus-name','-n', type = str, required=True)
 mutrate_parser.add_argument('--output','-o', type = argparse.FileType('w'), default=sys.stdout)
 mutrate_parser.set_defaults(func = save_overall_mutation_rate)
+
+
+def get_mutation_rate_r2(*, model, corpus):
+
+    model = load_model(model)
+    corpus = stream_corpus(corpus)
+
+    print(
+        model.get_mutation_rate_r2(corpus),
+        file = sys.stdout
+    )
 
 
 def summarize_all_model_attributes(*,model, prefix):

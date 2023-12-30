@@ -6,8 +6,7 @@ import logging
 logger = logging.getLogger(' Prior update')
 
 def multinomial_deviance(y, y_hat):
-    y = y/y.sum(); y_hat = y_hat/y_hat.sum()
-    return 2*( xlogy(y, y).sum() - xlogy(y, y_hat).sum() )
+    return 2*( xlogy(y, y/y.sum()).sum() - xlogy(y, y_hat/y_hat.sum()).sum() )
 
 
 def feldmans_r2(y, y_hat):
@@ -54,7 +53,6 @@ def dirichlet_bound(alpha, gamma):
 
 class NoImprovementError(ValueError):
     pass
-
 
 def _dir_prior_objective(alpha, N, logphat):
     return -N * (gammaln(np.sum(alpha)) - np.sum(gammaln(alpha)) + np.sum((alpha - 1) * logphat))
@@ -134,7 +132,6 @@ def _dir_prior_newton_iter(prior, N, logphat,
         
 
 def update_dir_prior(prior, N, logphat):
-
 
     old_prior = prior.copy()
 

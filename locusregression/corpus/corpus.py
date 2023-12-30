@@ -346,7 +346,7 @@ class Corpus(CorpusMixin):
         for i in range(1, len(self)):
             mutation_rate = mutation_rate + self.samples[i].get_empirical_mutation_rate()
 
-        return np.log(mutation_rate)
+        return mutation_rate
 
 
 

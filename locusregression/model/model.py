@@ -130,7 +130,7 @@ class LocusRegressor:
         
 
     @staticmethod
-    def get_flattened_phi(*,model_state, sample, corpus_state):
+    def _get_flattened_phi(*,model_state, sample, corpus_state):
         '''
         Flattened phi is the probability of a mutation and locus for each signature given the current modelstate.
         Shape: N_sigs x N_mutations
@@ -144,6 +144,11 @@ class LocusRegressor:
                        * sample.exposures[:, sample.locus] * np.exp( corpus_state.logmu[:, sample.locus] - corpus_state.log_denom(sample.exposures) )
         
         return flattend_phi
+    
+    
+    @staticmethod
+    def _perplexity(elbo, corpus):
+        return np.exp(-elbo/corpus.num_mutations)
 
 
     def _sample_bound(self,*,
@@ -152,15 +157,8 @@ class LocusRegressor:
             corpus_state,
             gamma
         ):
-    
-        sample_sstats = self._sample_inference(
-            gamma0 = gamma,
-            sample = sample,
-            model_state = model_state,
-            corpus_state = corpus_state,
-        )
 
-        logweight_matrix = log_dirichlet_expectation(sample_sstats.gamma)[:,None, None] + np.log(model_state.signature_distribution)
+        logweight_matrix = log_dirichlet_expectation(gamma)[:,None, None] + np.log(model_state.signature_distribution)
 
         flattened_logweight = logweight_matrix[:, sample.context, sample.mutation] \
                 + corpus_state.trinuc_distributions[sample.context, sample.locus]
@@ -172,20 +170,19 @@ class LocusRegressor:
         
         flattened_logweight += np.log(sample.exposures[:, sample.locus]) + corpus_state.logmu[:, sample.locus] - corpus_state.log_denom(sample.exposures)
 
-        '''flattend_phi = self.get_flattened_phi(
-            model_state=model_state,
-            sample=sample,
-            corpus_state=corpus_state,
+        phi = _calc_local_variables(
+            gamma = gamma, 
+            flattend_phi=self._get_flattened_phi(
+                model_state=model_state,
+                sample=sample,
+                corpus_state=corpus_state,
+            )
         )
 
-        assert False'''
-
-        weighted_phi = sample_sstats.weighed_phi
-
-        phi = weighted_phi/np.array(sample.weight)[None,:]
+        weighted_phi = phi*np.array(sample.weight)[None,:]
 
         entropy_sstats = -np.sum(weighted_phi * np.where(phi > 0, np.log(phi), 0.))
-        entropy_sstats += np.sum(dirichlet_bound(corpus_state.alpha, sample_sstats.gamma))
+        entropy_sstats += np.sum(dirichlet_bound(corpus_state.alpha, gamma))
         
         return np.sum(weighted_phi*flattened_logweight) + entropy_sstats
 
@@ -194,32 +191,17 @@ class LocusRegressor:
             corpus, 
             model_state,
             corpus_states,
-            likelihood_scale = 1.,
-            gammas = None,
+            gamma = None,
         ):
 
         elbo = 0
-
-        if gammas is None:
-            gammas = self._init_doc_variables(len(corpus), is_bound=True)
-
-        for sample, gamma in zip(corpus, gammas):
-
-            sample_elbo = self._sample_bound(
-                sample = sample,
-                model_state = model_state,
-                corpus_state = corpus_states[sample.corpus_name],
-                gamma=gamma,
+        for sample, _gamma in zip(corpus, gamma):
+            elbo += self._sample_bound(
+                sample=sample,
+                model_state=model_state,
+                corpus_state=corpus_states[sample.corpus_name],
+                gamma=_gamma,
             )
-
-            elbo += sample_elbo
-        
-        #elbo *= likelihood_scale
-        
-        #elbo += model_state.get_posterior_entropy()
-
-        #for name, corpus_state in corpus_states.items():
-        #    elbo += corpus_state.get_posterior_entropy(corpus_gammas[name])
 
         return elbo
     
@@ -234,7 +216,7 @@ class LocusRegressor:
         corpus_state,
     ):
         
-        flattend_phi = self.get_flattened_phi(
+        flattend_phi = self._get_flattened_phi(
                 model_state=model_state,
                 sample=sample,
                 corpus_state=corpus_state
@@ -243,7 +225,7 @@ class LocusRegressor:
         count_g = np.array(sample.weight)[:,None].astype(self.dtype, copy=False)
         gamma = gamma0.copy()
         
-        for s in range(self.estep_iterations): # inner e-step loop
+        for _ in range(self.estep_iterations): # inner e-step loop
             
             old_gamma = gamma.copy()
             exp_Elog_gamma = np.exp(log_dirichlet_expectation(gamma)[:,None])
@@ -267,7 +249,7 @@ class LocusRegressor:
             weighted_phi=weighted_phi,
             gamma=gamma,
         )
-        
+
 
     
     def _inference(self,*,
@@ -304,7 +286,7 @@ class LocusRegressor:
         return self.SSTATS.MetaSstats(sstat_collections, self.model_state), np.vstack(gammas)
         
 
-    def update_mutation_rates(self):
+    def _update_mutation_rates(self):
         for corpusstate in self.corpus_states.values():
             corpusstate.update_mutation_rate(self.model_state)
 
@@ -367,7 +349,7 @@ class LocusRegressor:
                 **self._get_rate_model_parameters()
         )
 
-        #self.update_mutation_rates()
+        #self._update_mutation_rates()
 
         self._gamma = self._init_doc_variables(self.n_samples)
 
@@ -462,7 +444,7 @@ class LocusRegressor:
                         for corpus_state in self.corpus_states.values():
                             corpus_state.update_alpha(sstats, learning_rate_fn(epoch))
 
-                self.update_mutation_rates()
+                self._update_mutation_rates()
 
                 elapsed_time = time.time() - start_time
                 self.elapsed_times.append(elapsed_time)
@@ -477,7 +459,7 @@ class LocusRegressor:
                                 corpus = corpus,
                                 model_state = self.model_state,
                                 corpus_states = self.corpus_states,
-                                gammas = self._gamma,
+                                gamma = self._gamma,
                             )
                         
                     self.bounds.append(self._perplexity(elbo, corpus))
@@ -523,16 +505,15 @@ class LocusRegressor:
 
         self.trained = True
         
-        if not self.empirical_bayes:
+        '''if not self.empirical_bayes:
             # if we're not using empirical bayes, we need to update the alpha parameters
             # to reflect the final state of the model.
             gammas = {name : [] for name in self.corpus_states.keys()}
             for sample, gamma in zip(corpus, self._gamma):
                 gammas[sample.corpus_name].append(gamma)
-            
 
             for corpus_state in self.corpus_states.values():
-                corpus_state.set_alpha(np.array(gammas[corpus_state.corpus.name]))
+                corpus_state.set_alpha(np.array(gammas[corpus_state.corpus.name]))'''
 
 
         return self
@@ -540,11 +521,6 @@ class LocusRegressor:
 
     def partial_fit(self, corpus):
         return self._fit(corpus, reinit=False)
-    
-
-    @staticmethod
-    def _perplexity(elbo, corpus):
-        return np.exp(-elbo/corpus.num_mutations)
 
 
     def score(self, corpus):
@@ -565,16 +541,20 @@ class LocusRegressor:
 
         if not self.trained:
             logger.warn('This model was not trained to completion, results may be innaccurate')
-            
-        n_samples = len(corpus)
+        
 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             
+            gamma = np.array([
+                self._predict_sample(sample) for sample in corpus
+            ])
+
             elbo = self._bound(
                     corpus = corpus, 
                     corpus_states = self.corpus_states,
                     model_state = self.model_state,
+                    gamma=gamma,
                 )
             
         return self._perplexity(elbo, corpus)
@@ -590,7 +570,7 @@ class LocusRegressor:
         )
     
 
-    def _predict_sample(self, sample, corpus_name, n_gibbs_iters = 100):
+    def _predict_sample(self, sample):
         '''
         For each sample in corpus, predicts the expectation of the signature compositions.
 
@@ -609,6 +589,7 @@ class LocusRegressor:
         if not self.trained:
             logger.warn('This model was not trained to completion, results may be innaccurate')
 
+        corpus_name = sample.corpus_name
         try:
             corpus_state = self.corpus_states[corpus_name]
         except KeyError:
@@ -622,27 +603,14 @@ class LocusRegressor:
             corpus_state = corpus_state,
         ).gamma
 
-        '''observation_logits = IS._conditional_logp_mutation_locus(
-            model_state= self.model_state,
-            corpus_state = corpus_state,
-            sample = sample,
-        )
-
-        z_posterior = IS._get_z_posterior(
-            log_p_ml_z=observation_logits,
-            alpha=corpus_state.alpha,
-            n_iters=n_gibbs_iters,
-            warm_up_steps=25,
-        )'''
-
-        return gamma #/gamma.sum()
+        return gamma
 
 
     def predict(self, corpus):
         
         sample_names, gamma = [], []
         for sample in corpus:
-            gamma.append(self._predict_sample(sample, corpus_name = sample.corpus_name))
+            gamma.append(self._predict_sample(sample))
             sample_names.append(sample.name)
 
         return sample_names, gamma
@@ -680,7 +648,7 @@ class LocusRegressor:
         return next(iter(corpus))
 
 
-    def get_expected_mutation_rate(self, corpus_name, sample = None):
+    def get_log_expected_mutation_rate(self, corpus_name, sample = None):
         '''
         For a sample, calculate the expected mutation rate. First, we infer the mixture of 
         processes that are active in a sample. Then, we calculate the expected marginal probability
@@ -713,7 +681,7 @@ class LocusRegressor:
     
 
     
-    def mutation_rate_deviance(self, corpus):
+    def get_mutation_rate_r2(self, corpus):
         '''
         Calculate the deviance of the mutation rate for a given corpus.
 
@@ -733,9 +701,9 @@ class LocusRegressor:
             raise ValueError(f'Corpus {corpus.name} not found in model.')
         
         empirical_mr = corpus.get_empirical_mutation_rate()
-        predicted_mr = self.get_expected_mutation_rate(corpus.name)
+        predicted_mr = self.get_log_expected_mutation_rate(corpus.name)
 
-        return feldmans_r2(empirical_mr, predicted_mr)
+        return feldmans_r2(empirical_mr, np.exp(predicted_mr))
     
 
 
@@ -1014,23 +982,6 @@ class LocusRegressor:
         feature_order = self.feature_names[feature_num_order]
 
         return feature_order
-
-
-    def _cluster_component_associations(self, cluster_distance):
-
-        component_linkage = hierarchy.linkage(self.model_state.beta_mu)
-
-        clusters = hierarchy.fcluster(component_linkage, cluster_distance, 
-                                      criterion='distance') - 1
-        
-        cluster_ids, counts = np.unique(clusters, return_counts=True)
-
-        cluster_order = cluster_ids[np.argsort(counts)[::-1]]
-
-        cluster_order_map = dict(zip(cluster_order, range(len(cluster_ids))))
-        clusters = [cluster_order_map[c] for c in clusters]
-
-        return clusters
 
 
     def plot_coefficients(self, component, 
