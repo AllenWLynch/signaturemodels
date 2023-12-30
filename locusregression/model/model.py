@@ -59,7 +59,7 @@ class LocusRegressor:
     def sample_params(cls, trial):
         return dict(
             tau = trial.suggest_categorical('tau', [1, 16, 48]),
-            begin_prior_updates = trial.suggest_integer('begin_prior_updates', 1, 100) 
+            begin_prior_updates = trial.suggest_int('begin_prior_updates', 0, 25)
         )
 
     @classmethod
@@ -148,7 +148,7 @@ class LocusRegressor:
     
     @staticmethod
     def _perplexity(elbo, corpus):
-        return np.exp(-elbo/corpus.num_mutations)
+        return elbo #np.exp(-elbo/corpus.num_mutations)
 
 
     def _sample_bound(self,*,
