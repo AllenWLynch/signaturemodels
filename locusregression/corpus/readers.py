@@ -200,7 +200,7 @@ class CorpusReader:
                     try:
                         
                         correlates.append(
-                            [float(f) for f in line] + [1.]
+                            [float(f) for f in line]
                         )
 
                     except ValueError as err:
@@ -211,8 +211,8 @@ class CorpusReader:
 
         correlates = np.array(correlates)
 
-        return correlates, columns + ['constant']
-
+        return correlates, columns
+    
 
     @staticmethod
     def read_windows(regions_file, genome_object, sep = '\t'):
