@@ -2,12 +2,10 @@
 import numpy as np
 from .base import log_dirichlet_expectation
 from .optim_lambda import LambdaOptimizer
-from .base import update_alpha, update_tau, dirichlet_bound
+from .base import update_alpha, update_tau
 from ..simulation import SimulatedCorpus, COSMIC_SIGS
 from sklearn.linear_model import PoissonRegressor
-from sklearn.base import clone
 from sklearn.preprocessing import OneHotEncoder
-from functools import partial
 
 
 def _get_linear_model(*args):
@@ -17,39 +15,6 @@ def _get_linear_model(*args):
         warm_start = True,
         fit_intercept = False,
     )
-
-
-def _get_intercept_transformer(corpus_states, 
-                               encoder_class = OneHotEncoder(
-                                    sparse_output=True,
-                                    drop = None,
-                               ),
-                               expected_shape = (-1,1)
-                            ):
-    
-    corpus_names = list(corpus_states.keys())
-
-    encoder = clone(encoder_class).fit(
-                    np.array(corpus_names).reshape(expected_shape)
-                )
-
-    def transform(corpus_names, X_matrices):
-        #corpus_names = sstats.corpus_names; X_matrices = sstats.X_matrices
-        _, n_loci = X_matrices[0].shape
-        # Concatenate the matrices
-        concatenated_matrix = np.hstack(X_matrices).T
-        labels = np.concatenate([[name]*n_loci for name in corpus_names])
-        # One-hot encode the labels
-        encoded_labels = encoder.transform(labels.reshape(expected_shape))
-        
-        if len(encoded_labels.shape) == 1:
-            encoded_labels = encoded_labels.reshape(-1,1)
-
-        # Concatenate the encoded labels with the concatenated matrix
-        return (encoded_labels, concatenated_matrix)
-    
-    return transform
-
 
 
 class ModelState:
@@ -68,7 +33,6 @@ class ModelState:
                 genome_trinuc_distribution,
                 dtype,
                 get_model_fn = _get_linear_model,
-                transform_fn = _get_intercept_transformer,
                 **kw,
             ):
         
@@ -97,8 +61,8 @@ class ModelState:
                                 )
         else:
             self.fixed_signatures = [False]*n_components
-
-        self.feature_transformer = transform_fn(corpus_states)
+        
+        self.corpus_encoder = self._fit_corpus_encoder(corpus_states)
 
         design_matrix, X_tild = self.feature_transformer(
             corpus_states.keys(), 
@@ -110,6 +74,38 @@ class ModelState:
         self.n_distributions = design_matrix.shape[1]
 
         self.update_signature_distribution()
+
+
+
+    def feature_transformer(self, corpus_names, X_matrices):
+        
+        #corpus_names = sstats.corpus_names; X_matrices = sstats.X_matrices
+        _, n_loci = X_matrices[0].shape
+        # Concatenate the matrices
+        concatenated_matrix = np.hstack(X_matrices).T
+
+        labels = np.concatenate([[name]*n_loci for name in corpus_names])
+        # One-hot encode the labels
+        encoded_labels = self.corpus_encoder.transform(
+            labels.reshape((-1,1))
+        )
+
+        # Concatenate the encoded labels with the concatenated matrix
+        return (encoded_labels, concatenated_matrix)
+    
+
+    def _fit_corpus_encoder(self, corpus_states):
+    
+        corpus_names = list(corpus_states.keys())
+
+        encoder = OneHotEncoder(
+                        sparse_output=True,
+                        drop = None,
+                    ).fit(
+                        np.array(corpus_names).reshape((-1,1))
+                    )
+        
+        return encoder
 
 
     def _fix_signatures(self, fix_signatures,*,

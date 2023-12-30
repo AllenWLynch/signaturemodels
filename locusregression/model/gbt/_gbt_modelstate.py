@@ -1,8 +1,6 @@
-from .._model_state import ModelState, CorpusState, _get_intercept_transformer
+from .._model_state import ModelState, CorpusState
 from ._hist_gbt import CustomHistGradientBooster
 from numpy import array
-import numpy as np
-from scipy.special import logsumexp
 from functools import partial
 
 
