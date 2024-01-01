@@ -19,7 +19,25 @@ import logging
 logger = logging.getLogger(' LocusRegressor')
 
 
-#@njit(parallel = True)
+
+def _get_flattened_phi(*,model_state, sample, corpus_state):
+    '''
+    Flattened phi is the probability of a mutation and locus for each signature given the current modelstate.
+    Shape: N_sigs x N_mutations
+    '''
+
+    flattend_phi = (
+            log_dirichlet_expectation(model_state.omega) + \
+            np.log(model_state.delta)[:,:,None]
+        )[:, sample.context, sample.mutation]\
+        + np.log(sample.exposures[:, sample.locus]) \
+        + corpus_state.trinuc_distributions[sample.context, sample.locus] \
+        + corpus_state.logmu[:, sample.locus] \
+        - corpus_state.log_denom(sample.exposures)\
+        - np.log(model_state.delta.sum(axis = 1, keepdims = True))
+    
+    return np.exp(flattend_phi)
+
 def _estep_update(exp_Elog_gamma, alpha, flattend_phi, count_g, likelihood_scale = 1):
     gamma_sstats = exp_Elog_gamma*np.dot(flattend_phi, count_g/np.dot(flattend_phi.T, exp_Elog_gamma))
     gamma_sstats = gamma_sstats.reshape(-1)
@@ -127,23 +145,6 @@ class LocusRegressor:
     def save(self, filename):
         with open(filename, 'wb') as f:
             pickle.dump(self, f)
-        
-
-    @staticmethod
-    def _get_flattened_phi(*,model_state, sample, corpus_state):
-        '''
-        Flattened phi is the probability of a mutation and locus for each signature given the current modelstate.
-        Shape: N_sigs x N_mutations
-        '''
-
-        E_delta = model_state.delta/model_state.delta.sum(axis = 1, keepdims = True)
-        trinuc_distributions = corpus_state.trinuc_distributions
-
-        flattend_phi = trinuc_distributions[sample.context,sample.locus]*model_state.signature_distribution[:,sample.context,sample.mutation]\
-                       /(E_delta @ trinuc_distributions[:, sample.locus])\
-                       * sample.exposures[:, sample.locus] * np.exp( corpus_state.logmu[:, sample.locus] - corpus_state.log_denom(sample.exposures) )
-        
-        return flattend_phi
     
     
     @staticmethod
@@ -158,25 +159,17 @@ class LocusRegressor:
             gamma
         ):
 
-        logweight_matrix = log_dirichlet_expectation(gamma)[:,None, None] + np.log(model_state.signature_distribution)
-
-        flattened_logweight = logweight_matrix[:, sample.context, sample.mutation] \
-                + corpus_state.trinuc_distributions[sample.context, sample.locus]
-        
-        flattened_logweight -= np.log(np.dot(
-                model_state.delta/model_state.delta.sum(axis = 1, keepdims = True), 
-                corpus_state.trinuc_distributions[:, sample.locus]
-            ))
-        
-        flattened_logweight += np.log(sample.exposures[:, sample.locus]) + corpus_state.logmu[:, sample.locus] - corpus_state.log_denom(sample.exposures)
-
-        phi = _calc_local_variables(
-            gamma = gamma, 
-            flattend_phi=self._get_flattened_phi(
+        flattened_phi = _get_flattened_phi(
                 model_state=model_state,
                 sample=sample,
                 corpus_state=corpus_state,
             )
+        
+        flattened_logweight = log_dirichlet_expectation(gamma)[:,None] + np.log(flattened_phi)
+
+        phi = _calc_local_variables(
+            gamma = gamma, 
+            flattend_phi=flattened_phi
         )
 
         weighted_phi = phi*np.array(sample.weight)[None,:]
@@ -216,7 +209,7 @@ class LocusRegressor:
         corpus_state,
     ):
         
-        flattend_phi = self._get_flattened_phi(
+        flattend_phi = _get_flattened_phi(
                 model_state=model_state,
                 sample=sample,
                 corpus_state=corpus_state
@@ -249,7 +242,6 @@ class LocusRegressor:
             weighted_phi=weighted_phi,
             gamma=gamma,
         )
-
 
     
     def _inference(self,*,

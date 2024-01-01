@@ -69,12 +69,8 @@ class ModelState:
             [corpus_state.X_matrix for corpus_state in corpus_states.values()]
         )
 
-        #base_model = get_model_fn(X_tild)
         self.rate_models = [get_model_fn(design_matrix, X_tild) for _ in range(n_components)]
         self.n_distributions = design_matrix.shape[1]
-
-        self.update_signature_distribution()
-
 
 
     def feature_transformer(self, corpus_names, X_matrices):
@@ -143,14 +139,6 @@ class ModelState:
         )
 
         return self.__getattribute__(param)
-    
-
-    def update_signature_distribution(self):
-
-        Elog_delta = log_dirichlet_expectation(self.delta)
-        Elog_omega = log_dirichlet_expectation(self.omega)
-
-        self.signature_distribution = np.exp(Elog_delta)[:,:,None] * np.exp(Elog_omega)
 
 
     def update_rho(self, sstats, learning_rate):
@@ -163,15 +151,38 @@ class ModelState:
         self._svi_update('omega', new_rho, learning_rate)
 
     
+    @staticmethod
+    def _lambda_update(k, sstats):
+
+        context_exposure = sum([
+            sstats.trinuc_distributions @ (exposure_.ravel() * np.exp(theta_l[k]))
+            for theta_l, exposure_ in zip(sstats.logmus, sstats.exposures)
+        ])
+
+        y = sstats.context_sstats[k] #+ 1
+
+        X = np.hstack([
+            np.ones_like(y)[:,None],
+            np.diag(np.ones_like(y)),
+        ])
+
+        return np.exp(
+            PoissonRegressor(
+                alpha = 0,
+            ).fit(
+                X, 
+                y/context_exposure,
+                sample_weight = context_exposure
+            ).coef_[1:]
+        )
+
+    
     def update_lambda(self, sstats, learning_rate):
         
-        _delta = LambdaOptimizer.optimize(
-            delta0 = self.delta,
-            trinuc_distributions = sstats.trinuc_distributions,
-            context_sstats = sstats.context_sstats,
-            locus_sstats = sstats.locus_sstats,
-            fixed_deltas=self.fixed_signatures,
-        )
+        _delta = np.array([
+            self._lambda_update(k, sstats)
+            for k in range(self.n_components)
+        ])
 
         self._svi_update('delta', _delta, learning_rate)
 
@@ -192,12 +203,18 @@ class ModelState:
 
 
     def _get_features(self, sstats):
+
+        def _get_nucleotide_effect(k, sstats):
+            return np.repeat(
+                (self.n_contexts * self.delta[k]/self.delta[k].sum()) @ sstats.trinuc_distributions,
+                len(sstats.X_matrices)
+            )
         
         n_samples = sstats.X_matrices[0].shape[1]
 
         design_matrix, X_cat = self.feature_transformer(
             sstats.corpus_names, sstats.X_matrices
-        ) # (n_corpuses*n_loci, n_features)
+        )
 
         exposures = np.concatenate(sstats.exposures).ravel()
         
@@ -210,13 +227,16 @@ class ModelState:
             # For poisson model with exposures, have to divide the observations by the exposures
             # then also provide the exposures as sample weights
             #
+            signature_exposures = exposures.copy() * _get_nucleotide_effect(k, sstats)
+
             yield(
                 X_cat,
-                beta_arr/exposures,
-                exposures,
+                beta_arr/signature_exposures,
+                signature_exposures,
                 current_lograte_prediction.ravel(),
                 design_matrix,
             )
+        
         
 
     def update_rate_model(self, sstats, learning_rate):
@@ -264,7 +284,7 @@ class ModelState:
         for param in update_params:
             self.__getattribute__('update_' + param)(sstats, learning_rate) # call update function
 
-        self.update_signature_distribution() # update pre-calculated pure functions of model state 
+        #self.update_signature_distribution() # update pre-calculated pure functions of model state 
 
         
 
@@ -323,7 +343,11 @@ class CorpusState(ModelState):
 
 
     def _calc_log_denom(self, exposures):
+        
+        # (KxC) @ (CxL) |-> (KxL)
+        '''logits = np.log(model_state.delta @ self.trinuc_distributions) + self._logmu + np.log(exposures)
 
+        return logsumexp(logits, axis = 1, keepdims = True)'''
         return np.log(
                 np.sum( exposures*np.exp(self._logmu), axis = -1, keepdims = True)
             ) + np.log(1/self.subset_sample)
