@@ -1,12 +1,10 @@
 
 import numpy as np
-from .base import log_dirichlet_expectation
-from .optim_lambda import LambdaOptimizer
 from .base import update_alpha, update_tau
 from ..simulation import SimulatedCorpus, COSMIC_SIGS
 from sklearn.linear_model import PoissonRegressor
 from sklearn.preprocessing import OneHotEncoder
-
+from scipy.special import logsumexp
 
 def _get_linear_model(*args):
     return PoissonRegressor(
@@ -284,10 +282,7 @@ class ModelState:
         for param in update_params:
             self.__getattribute__('update_' + param)(sstats, learning_rate) # call update function
 
-        #self.update_signature_distribution() # update pre-calculated pure functions of model state 
-
         
-
 
 class CorpusState(ModelState):
     '''
@@ -316,12 +311,11 @@ class CorpusState(ModelState):
             self.n_components, self.n_loci, self.dtype
         )
 
-        if self.corpus.shared_exposures:
-            self._log_denom = self._calc_log_denom(self.corpus.exposures)
+        #if self.corpus.shared_exposures:
+        #    self._log_denom = self._calc_log_denom(self.corpus.exposures)
         
-    
     def _get_baseline_prediction(self, n_components, n_loci, dtype):
-        return np.zeros((n_components, n_loci), dtype = dtype)/n_loci
+        return np.zeros((n_components, n_loci), dtype = dtype)
 
 
     def subset_corpusstate(self, corpus, locus_subset):
@@ -340,17 +334,17 @@ class CorpusState(ModelState):
         newstate._log_denom = self._log_denom
 
         return newstate
+    
+
+    def update_log_denom(self, model_state, exposures):
+        self._log_denom = self._calc_log_denom(model_state, exposures)
 
 
-    def _calc_log_denom(self, exposures):
-        
+    def _calc_log_denom(self, model_state, exposures):
         # (KxC) @ (CxL) |-> (KxL)
-        '''logits = np.log(model_state.delta @ self.trinuc_distributions) + self._logmu + np.log(exposures)
+        logits = np.log(model_state.delta @ self.trinuc_distributions) + self._logmu + np.log(exposures)
 
-        return logsumexp(logits, axis = 1, keepdims = True)'''
-        return np.log(
-                np.sum( exposures*np.exp(self._logmu), axis = -1, keepdims = True)
-            ) + np.log(1/self.subset_sample)
+        return logsumexp(logits, axis = 1, keepdims = True)
 
 
     def update_mutation_rate(self, model_state):
@@ -367,7 +361,7 @@ class CorpusState(ModelState):
         ])
 
         if self.corpus.shared_exposures:
-            self._log_denom = self._calc_log_denom(self.corpus.exposures)
+            self._log_denom = self._calc_log_denom(model_state, self.corpus.exposures)
 
     
     @property
@@ -376,7 +370,6 @@ class CorpusState(ModelState):
 
     
     def update_alpha(self, sstats, learning_rate):
-        
         _alpha = update_alpha(self.alpha, sstats.alpha_sstats[self.corpus.name])
         self._svi_update('alpha', _alpha, learning_rate)
 
@@ -387,7 +380,6 @@ class CorpusState(ModelState):
 
 
     def update_gamma(self, sstats, learning_rate):
-            
         _gamma = sstats.gamma_sstats[self.corpus.name]
         self._svi_update('gamma', _gamma, learning_rate)
 
@@ -395,14 +387,19 @@ class CorpusState(ModelState):
     @property
     def logmu(self):
         return self._logmu
+    
+    @property
+    def exposures(self):
+        assert self.corpus.shared_exposures
+        return self.corpus.exposures
         
-
-    def log_denom(self, exposures):
-
+    
+    def get_log_denom(self, exposures):
         if self.corpus.shared_correlates:
             return self._log_denom # already have this calculated
         else:
             return self._calc_log_denom(exposures)
+        
 
     @property
     def trinuc_distributions(self):

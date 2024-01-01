@@ -33,10 +33,10 @@ def _get_flattened_phi(*,model_state, sample, corpus_state):
         + np.log(sample.exposures[:, sample.locus]) \
         + corpus_state.trinuc_distributions[sample.context, sample.locus] \
         + corpus_state.logmu[:, sample.locus] \
-        - corpus_state.log_denom(sample.exposures)\
-        - np.log(model_state.delta.sum(axis = 1, keepdims = True))
+        - corpus_state.get_log_denom(sample.exposures)\
     
     return np.exp(flattend_phi)
+
 
 def _estep_update(exp_Elog_gamma, alpha, flattend_phi, count_g, likelihood_scale = 1):
     gamma_sstats = exp_Elog_gamma*np.dot(flattend_phi, count_g/np.dot(flattend_phi.T, exp_Elog_gamma))
@@ -77,7 +77,7 @@ class LocusRegressor:
     def sample_params(cls, trial):
         return dict(
             tau = trial.suggest_categorical('tau', [1, 16, 48]),
-            begin_prior_updates = trial.suggest_int('begin_prior_updates', 0, 25)
+            #begin_prior_updates = trial.suggest_int('begin_prior_updates', 0, 25)
         )
 
     @classmethod
@@ -85,6 +85,7 @@ class LocusRegressor:
         with open(filename, 'rb') as f:
             return pickle.load(f)
     
+
     def __init__(self, 
         n_components = 10,
         seed = 2, 
@@ -152,7 +153,8 @@ class LocusRegressor:
         return elbo #np.exp(-elbo/corpus.num_mutations)
 
 
-    def _sample_bound(self,*,
+    @staticmethod
+    def _sample_bound(
             sample,
             model_state,
             corpus_state,
@@ -344,6 +346,9 @@ class LocusRegressor:
         #self._update_mutation_rates()
 
         self._gamma = self._init_doc_variables(self.n_samples)
+
+        for state in self.corpus_states.values():
+            state.update_log_denom(self.model_state, state.exposures)
 
 
     def _subsample_corpus(self,*,corpus, batch_svi, locus_svi, n_subsample_loci):
