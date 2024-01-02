@@ -70,6 +70,11 @@ class ModelState:
         self.rate_models = [get_model_fn(design_matrix, X_tild) for _ in range(n_components)]
         self.n_distributions = design_matrix.shape[1]
 
+        self.context_models = [
+            PoissonRegressor(alpha = 0, fit_intercept=True, solver='newton-cholesky', warm_start=True)
+            for _ in range(n_components)
+        ]
+
 
     def feature_transformer(self, corpus_names, X_matrices):
         
@@ -149,8 +154,7 @@ class ModelState:
         self._svi_update('omega', new_rho, learning_rate)
 
     
-    @staticmethod
-    def _lambda_update(k, sstats):
+    def _lambda_update(self, k, sstats):
 
         context_exposure = sum([
             sstats.trinuc_distributions @ (exposure_.ravel() * np.exp(theta_l[k]))
@@ -159,19 +163,15 @@ class ModelState:
 
         y = sstats.context_sstats[k] #+ 1
 
-        X = np.hstack([
-            np.ones_like(y)[:,None],
-            np.diag(np.ones_like(y)),
-        ])
+        X = np.diag(np.ones_like(y))
 
         return np.exp(
-            PoissonRegressor(
-                alpha = 0,
-            ).fit(
+            self.context_models[k]\
+            .fit(
                 X, 
                 y/context_exposure,
                 sample_weight = context_exposure
-            ).coef_[1:]
+            ).coef_
         )
 
     

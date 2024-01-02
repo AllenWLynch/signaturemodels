@@ -150,7 +150,7 @@ class LocusRegressor:
     
     @staticmethod
     def _perplexity(elbo, corpus):
-        return elbo #np.exp(-elbo/corpus.num_mutations)
+        return np.exp(-elbo/corpus.num_mutations)
 
 
     @staticmethod

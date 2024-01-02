@@ -114,4 +114,4 @@ class GBTCorpusState(CorpusState):
         ])
 
         if self.corpus.shared_exposures:
-            self._log_denom = self._calc_log_denom(self.corpus.exposures)
+            self._log_denom = self._calc_log_denom(model_state, self.corpus.exposures)
