@@ -251,14 +251,14 @@ class SBSSample:
         }
         
     
-    def get_empirical_mutation_rate(self):
+    def get_empirical_mutation_rate(self, use_weight = True):
         
         mutation_rate = np.ravel( np.zeros_like(self.exposures, dtype = float) )
         
         for locus, weight in zip(self.locus, self.weight):
-            mutation_rate[locus] += weight
+            mutation_rate[locus] += weight if use_weight else 1.
 
-        mutation_rate = mutation_rate / np.ravel( self.exposures )
+        mutation_rate = mutation_rate/np.ravel( self.exposures )
 
-        return mutation_rate #/np.sum(mutation_rate)
+        return mutation_rate
 

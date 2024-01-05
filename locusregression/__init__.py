@@ -3,5 +3,6 @@ from .model import *
 from .tuning import *
 from . import simulation
 from .cli import main
+from .explanation import *
 
-__version__ = '0.2.0a'
+__version__ = '1.0.0a'
