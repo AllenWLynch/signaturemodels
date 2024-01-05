@@ -1,5 +1,4 @@
 import subprocess
-from multiprocessing.pool import ThreadPool as Pool
 import tempfile
 import numpy as np
 from sklearn.preprocessing import StandardScaler, PowerTransformer, MinMaxScaler

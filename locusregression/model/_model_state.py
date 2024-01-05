@@ -340,10 +340,19 @@ class CorpusState(ModelState):
         self._log_denom = self._calc_log_denom(model_state, exposures)
 
 
+    def _get_mutation_rate_logits(self, model_state, exposures):
+        return np.log(model_state.delta @ self.trinuc_distributions) + self._logmu + np.log(exposures)
+
+    
+    def get_log_component_effect_rate(self, model_state, exposures):
+        logits = self._get_mutation_rate_logits(model_state, exposures)
+        return logits - self._log_denom
+    
+
     def _calc_log_denom(self, model_state, exposures):
         # (KxC) @ (CxL) |-> (KxL)
-        logits = np.log(model_state.delta @ self.trinuc_distributions) + self._logmu + np.log(exposures)
-
+        logits = self._get_mutation_rate_logits(model_state, exposures)
+        #np.log(model_state.delta @ self.trinuc_distributions) + self._logmu + np.log(exposures)
         return logsumexp(logits, axis = 1, keepdims = True)
 
 
@@ -362,11 +371,6 @@ class CorpusState(ModelState):
 
         if self.corpus.shared_exposures:
             self._log_denom = self._calc_log_denom(model_state, self.corpus.exposures)
-
-    
-    @property
-    def _log_mutation_rate(self):
-        return self._logmu - self.log_denom(np.ones_like(self.corpus.exposures))
 
     
     def update_alpha(self, sstats, learning_rate):

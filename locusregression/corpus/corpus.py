@@ -145,6 +145,38 @@ def save_corpus(corpus, filename):
             sample.create_h5_dataset(samples_group, str(i))
 
 
+def overwrite_corpus_features(filename, X_matrix, feature_names):
+
+    n_features, n_loci_X = X_matrix.shape
+    assert len(feature_names) == n_features, 'The number of feature names provided must match the first dimension of the provided X_matrix.'
+
+    with h5.File(filename, 'a') as f:
+
+        _, n_loci = f['data/trinuc_distributions'].shape
+
+        assert n_loci_X == n_loci, \
+            f'The new provided feature matrix does not have the required number of loci (Expected {n_loci}, got {n_loci_X}).'
+
+        data_group = f['data']
+
+        old_feature_names = data_group['X_matrix'].attrs['feature_names']
+        old_features = data_group['X_matrix'][...]
+
+        try:
+            del data_group['X_matrix']
+            data_group.create_dataset('X_matrix', data = X_matrix)
+            data_group['X_matrix'].attrs['feature_names'] = feature_names
+
+        except Exception as err:
+            
+            if 'X_matrix' in data_group.keys():
+                del data_group['X_matrix']
+
+            data_group.create_dataset('X_matrix', data = old_features)
+            data_group['X_matrix'].attrs['feature_names'] = old_feature_names
+            raise err
+        
+
 
 def load_corpus(filename):
 
@@ -249,7 +281,8 @@ class Corpus(CorpusMixin):
     
     @property
     def num_mutations(self):
-        return sum([len(sample) for sample in self.samples])
+        return sum([sum(sample.weights) for sample in self.samples])
+
 
     def subset_samples(self, subset_idx):
 
@@ -337,10 +370,10 @@ class Corpus(CorpusMixin):
         )
 
 
-    def get_empirical_mutation_rate(self):
+    def get_empirical_mutation_rate(self, use_weight=True):
 
         # returns the ln mutation rate for each locus in the first sample
-        mutation_rate = self.samples[0].get_empirical_mutation_rate()
+        mutation_rate = self.samples[0].get_empirical_mutation_rate(use_weight = use_weight)
 
         # loop through the rest of the samples and add the mutation rate using logsumexp
         for i in range(1, len(self)):

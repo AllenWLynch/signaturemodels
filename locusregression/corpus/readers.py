@@ -72,8 +72,11 @@ class CorpusReader:
             )
         
         features, feature_names = cls.read_correlates(
-            correlates_file, windows, required_columns=None
+            correlates_file, required_columns=None
         )
+
+        assert len(features) == len(windows), 'The number of correlates provided in {} does not match the number of specified windows.\n'\
+                'Each window must have correlates provided.'
 
         samples = cls.collect_vcfs(
             weight_col = weight_col,
@@ -148,7 +151,7 @@ class CorpusReader:
                 
         
     @staticmethod
-    def read_correlates(correlates_file, windows, 
+    def read_correlates(correlates_file, 
         required_columns = None, sep = '\t'):
         
         logger.info('Reading genomic features ...')
@@ -205,9 +208,6 @@ class CorpusReader:
 
                     except ValueError as err:
                         raise ValueError('Could not ingest line {}: {}'.format(lineno, txt)) from err
-
-        assert len(correlates) == len(windows), 'The number of correlates provided in {} does not match the number of specified windows.\n'\
-                'Each window must have correlates provided.'
 
         correlates = np.array(correlates)
 
@@ -329,7 +329,7 @@ class CorpusReader:
             for w in tqdm.tqdm(window_set, nrows=30, desc = 'Aggregating trinucleotide content')
         ]
 
-        trinuc_matrix = np.array(trinuc_matrix) + 1 # add a pseudocount
+        trinuc_matrix = np.array(trinuc_matrix) # add a pseudocount
 
         return trinuc_matrix/trinuc_matrix.sum(1, keepdims = True)
     

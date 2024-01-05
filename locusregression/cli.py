@@ -198,6 +198,19 @@ empirical_mutrate_parser.add_argument('--output', '-o', type = argparse.FileType
 empirical_mutrate_parser.set_defaults(func = empirical_mutation_rate)
 
 
+def _overwrite_features_helper(*, corpus, correlates_file):
+    features, feature_names = CorpusReader.read_correlates(correlates_file)
+    overwrite_corpus_features(corpus, features.T, feature_names)
+
+overwrite_features_parser = subparsers.add_parser('corpus-overwrite-features',
+    help = 'Overwrite the feature matrix of a corpus with a new one.'
+)
+overwrite_features_parser.add_argument('corpus', type = file_exists)
+overwrite_features_parser.add_argument('--correlates-file','-c', type = file_exists, required=True,
+                                       help = 'TSV file of genomic correlates. The first line must be column names which start with "#".')
+overwrite_features_parser.set_defaults(func = _overwrite_features_helper)
+
+
 trinuc_sub = subparsers.add_parser('get-trinucs', help = 'Write trinucleotide context file for a given genome.')
 trinuc_sub.add_argument('--fasta-file','-fa', type = file_exists, required = True, help = 'Sequence file, used to find context of mutations.')
 trinuc_sub.add_argument('--regions-file','-r', type = file_exists, required = True)
@@ -573,15 +586,23 @@ mutrate_parser.add_argument('--output','-o', type = argparse.FileType('w'), defa
 mutrate_parser.set_defaults(func = save_overall_mutation_rate)
 
 
-def get_mutation_rate_r2(*, model, corpus):
+def get_mutation_rate_r2(*, model, corpuses):
 
     model = load_model(model)
-    corpus = stream_corpus(corpus)
-
+    dataset = _load_dataset(corpuses)
+    
     print(
-        model.get_mutation_rate_r2(corpus),
+        model.get_mutation_rate_r2(dataset),
         file = sys.stdout
     )
+
+mutrate_r2_parser = subparsers.add_parser('model-mutation-rate-r2',
+                                            help = 'Calculate the R^2 of the model\'s predicted mutation rate w.r.t. the empirical mutation rate.')
+mutrate_r2_parser.add_argument('model', type = file_exists)
+mutrate_r2_parser.add_argument('--corpuses', '-d', type = file_exists, nargs = '+', required=True,
+    help = 'Path to compiled corpus file/files.')
+mutrate_r2_parser.set_defaults(func = get_mutation_rate_r2)
+
 
 
 def summarize_all_model_attributes(*,model, prefix):

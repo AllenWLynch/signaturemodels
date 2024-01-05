@@ -69,6 +69,10 @@ class ShrunkTreePredictor:
 
     def compute_partial_dependence(self, *args):
         return self.tree_predictor.compute_partial_dependence(*args)
+    
+    @property
+    def nodes(self):
+        return self.tree_predictor.nodes
 
 
 class BaseCustomBinnedGradientBooster(BaseHistGradientBoosting):
