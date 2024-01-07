@@ -220,6 +220,11 @@ class SBSSample:
             
     def __len__(self):
         return len(self.locus)
+    
+    
+    @property
+    def n_mutations(self):
+        return sum(self.weight)
             
             
     def create_h5_dataset(self, h5_object, dataset_name):

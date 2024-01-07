@@ -86,7 +86,8 @@ subparsers = parser.add_subparsers(help = 'commands')
 
 def write_dataset(
         weight_col = None,
-        chr_prefix = '',*,
+        chr_prefix = '',
+        n_jobs=1,*,
         fasta_file,
         trinuc_file,
         regions_file,
@@ -134,8 +135,6 @@ dataset_sub.add_argument('--corpus-name','-n', type = str, required = True, help
 dataset_sub.add_argument('--vcf-files', '-vcfs', nargs = '+', type = file_exists, required = True,
     help = 'list of VCF files containing SBS mutations.')
 dataset_sub.add_argument('--fasta-file','-fa', type = file_exists, required = True, help = 'Sequence file, used to find context of mutations.')
-#dataset_sub.add_argument('--genome-file','-g', type = file_exists, required = True, 
-#    help = 'Also known as a "chromsizes" file. Gives the name and length of each chromosome.')
 dataset_sub.add_argument('--regions-file','-r', type = file_exists, required = True,
     help = 'Bed file of format with columns (chromosome, start, end) which defines the windows used to represent genomic loci in the model. '
             'The provided regions may be discontinuous, but MUST be in sorted order (run "sort -k1,1 -k2,2 --check <file>").')
@@ -160,7 +159,8 @@ dataset_sub.add_argument('--weight-col','-w', type = str, default=None,
            'An example of a useful weight is the tumor cell fraction or relative copy number of that mutation which may be related to local mutation rate due to changes in ploidy. '
            'If the weight column were called INFO/VCN in the VCF, you must only provide --weight-col=VCN.'
 )
-
+dataset_sub.add_argument('--n-jobs','-j', type = posint, default = 1,
+    help = 'Number of parallel processes to use for reading VCF files.')
 dataset_sub.add_argument('--chr-prefix', default= '', help='Append the chromosome names in VCF files with this prefix. Useful if you are using UCSC reference materials.')
 dataset_sub.set_defaults(func = write_dataset)
     

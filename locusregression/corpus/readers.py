@@ -9,6 +9,8 @@ import logging
 import tqdm
 from .sbs_sample import revcomp, SBSSample
 import os
+from joblib import Parallel, delayed
+from functools import partial
 logger = logging.getLogger('DataReader')
 logger.setLevel(logging.INFO)
 
@@ -40,9 +42,9 @@ class CorpusReader:
     def create_corpus(cls, 
             weight_col = None,
             chr_prefix = '', 
-            n_jobs = 1,
             exposure_files = None,
-            trinuc_file = None,*,
+            trinuc_file = None,
+            n_jobs=1,*,
             correlates_file,
             fasta_file,
             vcf_files,
@@ -85,6 +87,7 @@ class CorpusReader:
             regions_file = regions_file,
             chr_prefix = chr_prefix,
             exposures = exposures,
+            n_jobs = n_jobs,
         )
 
         trinuc_distributions = None
@@ -256,7 +259,10 @@ class CorpusReader:
 
 
     @staticmethod
-    def collect_vcfs(vcf_files, weight_col = None, chr_prefix = '',*,
+    def collect_vcfs(vcf_files, 
+                     weight_col = None, 
+                     chr_prefix = '',
+                     n_jobs=1,*,
                      fasta_file, regions_file, exposures):
         
         logger.info('Reading VCF files ...')
@@ -273,19 +279,22 @@ class CorpusReader:
         else:
             _exposures = list(exposures)
 
-        for vcf, sample_exposure in zip(vcf_files, _exposures):
-            
-            logger.info('Featurizing {}'.format(vcf))
-            
-            samples.append(
-                SBSSample.featurize_mutations(vcf, 
-                                          regions_file = regions_file, 
-                                          fasta_file = fasta_file,
-                                          chr_prefix = chr_prefix, 
-                                          exposures = sample_exposure,
-                                          weight_col = weight_col
-                                          )
-            )
+
+        read_vcf_fn = partial(
+            SBSSample.featurize_mutations,
+            regions_file = regions_file, 
+            fasta_file = fasta_file,
+            chr_prefix = chr_prefix, 
+            weight_col = weight_col
+        )
+
+        samples = Parallel(
+                        n_jobs = n_jobs, 
+                        verbose = 10,
+                    )(
+                        delayed(read_vcf_fn)(vcf, exposures = sample_exposure)
+                        for vcf, sample_exposure in zip(vcf_files, _exposures)
+                    )
         
         logger.info('Done reading VCF files.')
         return samples
