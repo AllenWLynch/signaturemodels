@@ -20,7 +20,7 @@ logger = logging.getLogger(' LocusRegressor')
 
 
 
-def _get_flattened_phi(*,model_state, sample, corpus_state):
+def _get_observation_likelihood(*,model_state, sample, corpus_state):
     '''
     Flattened phi is the probability of a mutation and locus for each signature given the current modelstate.
     Shape: N_sigs x N_mutations
@@ -160,7 +160,7 @@ class LocusRegressor:
             gamma
         ):
 
-        flattened_phi = _get_flattened_phi(
+        flattened_phi = _get_observation_likelihood(
                 model_state=model_state,
                 sample=sample,
                 corpus_state=corpus_state,
@@ -210,11 +210,11 @@ class LocusRegressor:
         corpus_state,
     ):
         
-        flattend_phi = _get_flattened_phi(
+        flattend_phi = _get_observation_likelihood(
                 model_state=model_state,
                 sample=sample,
                 corpus_state=corpus_state
-            ).astype(self.dtype, copy=False)
+            )
 
         count_g = np.array(sample.weight)[:,None].astype(self.dtype, copy=False)
         gamma = gamma0.copy()
@@ -317,7 +317,7 @@ class LocusRegressor:
         self._calc_signature_sstats(corpus)
 
         if not self.fix_signatures is None:
-            logger.warn('Fixing signatures: ' + ', '.join(map(str, self.fix_signatures)) + ', these will not be updated during training.')
+            logger.warn('Initializing signatures: ' + ', '.join(map(str, self.fix_signatures)) + ', will still be updated during training.')
 
         
         fix_strs = list(self.fix_signatures) if not self.fix_signatures is None else []
@@ -350,8 +350,6 @@ class LocusRegressor:
                 corpus_states=self.corpus_states,
                 **self._get_rate_model_parameters()
         )
-
-        #self._update_mutation_rates()
 
         self._gamma = self._init_doc_variables(self.n_samples)
 
@@ -508,17 +506,6 @@ class LocusRegressor:
             pass
 
         self._trained = True
-        
-        '''if not self.empirical_bayes:
-            # if we're not using empirical bayes, we need to update the alpha parameters
-            # to reflect the final state of the model.
-            gammas = {name : [] for name in self.corpus_states.keys()}
-            for sample, gamma in zip(corpus, self._gamma):
-                gammas[sample.corpus_name].append(gamma)
-
-            for corpus_state in self.corpus_states.values():
-                corpus_state.set_alpha(np.array(gammas[corpus_state.corpus.name]))'''
-
 
         return self
 
@@ -590,9 +577,6 @@ class LocusRegressor:
 
         '''
 
-        #if not self.is_trained:
-        #    logger.warn('This model was not trained to completion, results may be innaccurate')
-
         corpus_name = sample.corpus_name
         try:
             corpus_state = self.corpus_states[corpus_name]
@@ -611,8 +595,21 @@ class LocusRegressor:
 
 
     def predict(self, corpus):
+        """
+        Predicts the gamma values for the given corpus.
+
+        Parameters
+        ----------
+        corpus (list): List of samples to predict gamma values for.
+
+        Returns
+        -------
+        tuple: A tuple containing the sample names and their corresponding gamma values.
+        
+        """
+        
         if not self.is_trained:
-            logger.warn('This model was not trained to completion, results may be innaccurate')
+            logger.warn('This model was not trained to completion, results may be inaccurate')
         
         sample_names, gamma = [], []
         for sample in corpus:
@@ -633,7 +630,7 @@ class LocusRegressor:
         self._genome_trinuc_distribution = _genome_trinuc_distribution/_genome_trinuc_distribution.sum()
 
 
-    def _get_log_nucleotide_effect(self, corpus_name):
+    def get_log_nucleotide_effect(self, corpus_name):
 
         try:
             self.corpus_states[corpus_name]
@@ -644,8 +641,7 @@ class LocusRegressor:
         return np.log( self.model_state.delta @ self.corpus_states[corpus_name].trinuc_distributions )
 
 
-
-    def get_component_locus_distribution(self, corpus_name):
+    def get_log_component_mutation_rate(self, corpus_name):
         '''
         For a sample, calculate the psi matrix - For each component, the distribution over loci.
 
@@ -675,7 +671,7 @@ class LocusRegressor:
         return next(iter(corpus))
 
 
-    def get_log_expected_mutation_rate(self, corpus_name, sample = None):
+    def get_log_marginal_mutation_rate(self, corpus_name, sample = None):
         '''
         For a sample, calculate the expected mutation rate. First, we infer the mixture of 
         processes that are active in a sample. Then, we calculate the expected marginal probability
@@ -696,7 +692,7 @@ class LocusRegressor:
         if not self.is_trained:
             logger.warn('This model was not trained to completion, results may be innaccurate')
 
-        psi_matrix = np.exp( self.get_component_locus_distribution(corpus_name) )
+        psi_matrix = np.exp( self.get_log_component_mutation_rate(corpus_name) )
 
         if sample is None:
             corpus_state = self.corpus_states[corpus_name]
@@ -728,7 +724,7 @@ class LocusRegressor:
             raise ValueError(f'Corpus {corpus.name} not found in model.')
         
         empirical_mr = corpus.get_empirical_mutation_rate()
-        predicted_mr = self.get_log_expected_mutation_rate(corpus.name)
+        predicted_mr = self.get_log_marginal_mutation_rate(corpus.name)
 
         return feldmans_r2(empirical_mr, np.exp(predicted_mr))
     
@@ -981,187 +977,4 @@ class LocusRegressor:
         ax.set_title(self.component_names[component], fontsize = fontsize)
 
         return ax
-
-
-    def _order_features(self):
-        
-        feature_linkage = hierarchy.linkage(self.model_state.beta_mu.T)
-
-        feature_num_order = hierarchy.leaves_list(
-                            hierarchy.optimal_leaf_ordering(
-                                feature_linkage, 
-                                self.model_state.beta_mu.T
-                            )
-                        )
-        
-        feature_order = self.feature_names[feature_num_order]
-
-        return feature_order
-
-
-    def plot_coefficients(self, component, 
-        ax = None, figsize = None, 
-        error_std_width = 5,
-        dotsize = 10,
-        color = 'black',
-        reorder_features = True,
-        fontsize = 8,
-    ):
-        '''
-        Plot regression coefficients with 99% confidence interval.
-        '''
-
-        assert isinstance(component, int) and 0 <= component < self.n_components
-
-        if ax is None:
-            if figsize is None:
-                figsize = (self.n_locus_features/3, 1.25)
-
-            _, ax = plt.subplots(1,1,figsize= figsize)
-
-        mu, nu = self.model_state.beta_mu[component,:], self.model_state.beta_nu[component,:]
-
-        std_width = error_std_width/2
-        ax.bar(
-            x=self.feature_names,
-            height=mu,
-            yerr=std_width*nu,
-            color=['darkred' if _mu < 0 else color for _mu in mu],
-            edgecolor='black',
-            linewidth=0.1,  # Adjust the linewidth here
-            width = 0.33,
-            capsize=3,
-            zorder=4,
-            alpha = 0.75,
-        )
-
-        ax.axhline(0, linestyle='--', color='lightgrey', linewidth=0.5,
-                    zorder = 0)
-
-        ax.xaxis.grid(True, color = 'lightgrey', linestyle = '--', linewidth = 0.5,
-                        zorder = 0)
-        
-        #// remove the ticks from the y axis but not the labels
-        ax.tick_params(axis='x', which='both', length=0, labelsize = fontsize,
-                        rotation = 90)
-        ax.tick_params(axis='y', which='both', labelsize = fontsize)
-
-        ax.set(xlabel = 'Feature', ylabel = 'Coefficient')
-        ax.xaxis.label.set_size(fontsize); ax.yaxis.label.set_size(fontsize)
-
-        ax.set_title(self.component_names[component], fontsize = fontsize)
-
-        for s in ['left','right','top', 'bottom']:
-            ax.spines[s].set_visible(False)
-
-        if reorder_features:
-            ax.set_xticks(self._order_features())
-
-        return ax
-
-
-
-    def plot_compare_coefficients(self, ax = None, figsize = None,
-                              reorder_features = True,
-                              cluster_components = True,
-                              cluster_distance = 0.75,
-                              mask_largest_cluster = True,
-                              palette = 'tab10',
-                              clusters = None,
-                              dotsize = 15,
-                              fontsize = 7,
-                            ):
-        
-        if ax is None:
-            if figsize is None:
-                figsize = (2*self.n_locus_features/3, 2*1)
-
-            _, ax = plt.subplots(1,1,figsize= figsize)
-
-        if cluster_components:
-            
-            if isinstance(palette, str):
-                color_list = list(plt.get_cmap(palette).colors)
-            else:
-                color_list = palette
-
-            if clusters is None:
-                clusters = self._cluster_component_associations(cluster_distance)
-                
-                if max(set(clusters)) > 1 and mask_largest_cluster:
-                    color_list = ['grey'] + color_list
-
-                assert len(clusters) <= len(color_list), \
-                    f'Number of clusters ({len(clusters)}) exceeds number of colors ({len(color_list)}).\n' \
-                    'Try using a larger palette, or increasing the cluster_distance paramter.'
-                
-
-            component_colors = [color_list[cluster] for cluster in clusters]
-            num_clusters = len(set(clusters))
-
-            cluster_membership = defaultdict(list)
-            for component, cluster in enumerate(clusters):
-                cluster_membership[cluster].append(component)
-            
-            ax.legend(
-                [plt.Circle((0,0),0.5, color = color) for color in color_list[:num_clusters]],
-                ['Component: ' + ', '.join([str(c) for c in cluster_membership[cluster]]) for cluster in set(clusters)],
-                fontsize = fontsize,
-                loc = 'upper left',
-                bbox_to_anchor=(1.01, 1.0),
-                frameon = False,
-                title = 'Cluster',
-                title_fontsize = fontsize,
-                markerscale = 0.6
-            )
-            
-
-        else:
-            component_colors = ['black']*self.n_components
-
-
-        for component, color in zip(range(self.n_components), component_colors):
-
-            self.plot_coefficients(component, 
-                                   ax = ax, 
-                                   color = color,
-                                   dotsize=dotsize,
-                                   reorder_features = False,
-                                   fontsize=fontsize,
-                                   )
-
-        if reorder_features:
-            ax.set_xticks(self._order_features())
-        
-        ax.set(title = '')
-        
-        return ax
-
-
-    def plot_summary(self, fontsize = 7):
-        
-        coefplot_width = self.n_locus_features/3
-        figwidth = coefplot_width + 5.5
-
-        _, ax = plt.subplots(
-                            self.n_components, 2, 
-                            figsize = (figwidth, 1.25*self.n_components),
-                            sharex = 'col',
-                            gridspec_kw={
-                                'width_ratios': [coefplot_width, figwidth - coefplot_width]
-                                }
-                            )
-        
-        for i in range(self.n_components):
-
-            self.plot_signature(i, ax = ax[i,1], normalization='global', fontsize=fontsize)
-            self.plot_coefficients(i, ax = ax[i,0], fontsize=fontsize)
-            ax[i,0].set(xlabel = '', ylabel = self.component_names[i], title = '')
-            ax[i,1].set(title = '')
-            ax[i,0].spines['bottom'].set_visible(False)
-
-        ax[-1, 0].set(xlabel = 'Feature')
-
-        return ax
-
 
