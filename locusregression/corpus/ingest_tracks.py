@@ -71,8 +71,14 @@ def process_bigwig(*,bigwig_file, regions_file, output,
                         ['bigWigAverageOverBed', bigwig_file, regions_file, bed.name],
                     )
 
+        sort_process = subprocess.Popen(
+            ['sort', '-k1,1n', bed.name],
+            stdout = subprocess.PIPE,
+        )
+
         cut_process = subprocess.Popen(
-            ['cut','-f5', bed.name],
+            ['cut','-f5'],
+            stdin = sort_process.stdout,
             stdout = output,
         )
         cut_process.communicate()

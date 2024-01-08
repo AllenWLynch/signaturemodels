@@ -77,7 +77,6 @@ class LocusRegressor:
     def sample_params(cls, trial):
         return dict(
             tau = trial.suggest_categorical('tau', [1, 16, 48]),
-            #begin_prior_updates = trial.suggest_int('begin_prior_updates', 0, 25)
         )
 
     @classmethod
@@ -591,8 +590,8 @@ class LocusRegressor:
 
         '''
 
-        if not self.is_trained:
-            logger.warn('This model was not trained to completion, results may be innaccurate')
+        #if not self.is_trained:
+        #    logger.warn('This model was not trained to completion, results may be innaccurate')
 
         corpus_name = sample.corpus_name
         try:
@@ -612,6 +611,8 @@ class LocusRegressor:
 
 
     def predict(self, corpus):
+        if not self.is_trained:
+            logger.warn('This model was not trained to completion, results may be innaccurate')
         
         sample_names, gamma = [], []
         for sample in corpus:

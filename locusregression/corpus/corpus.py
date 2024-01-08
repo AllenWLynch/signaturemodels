@@ -281,7 +281,7 @@ class Corpus(CorpusMixin):
     
     @property
     def num_mutations(self):
-        return sum([sum(sample.weights) for sample in self.samples])
+        return sum([sum(sample.weight) for sample in self.samples])
 
 
     def subset_samples(self, subset_idx):

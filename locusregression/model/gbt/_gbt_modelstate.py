@@ -23,6 +23,7 @@ def _get_model_fn(design_matrix, X_tild,
                   tree_learning_rate = 0.1, 
                   max_depth = 5,
                   l2_regularization = 0.0,
+                  n_iter_no_change = 1,
                   random_state = None,
                 ):
     
@@ -34,8 +35,8 @@ def _get_model_fn(design_matrix, X_tild,
                 random_state=random_state, 
                 warm_start=True,
                 early_stopping=True,
-                validation_fraction=0.1,
-                n_iter_no_change=5,
+                validation_fraction=0.2,
+                n_iter_no_change=n_iter_no_change,
                 l2_regularization=l2_regularization,
                 verbose=False,
             )
@@ -52,6 +53,7 @@ class GBTModelState(ModelState):
                  max_trees_per_iter = 100,
                  max_depth = 5,
                  l2_regularization = 0.0,
+                 n_iter_no_change = 1,
                  **kw,
                 ):
         
@@ -60,6 +62,7 @@ class GBTModelState(ModelState):
                 tree_learning_rate=tree_learning_rate,
                 max_depth=max_depth,
                 l2_regularization=l2_regularization,
+                n_iter_no_change=n_iter_no_change,
                 random_state=kw['random_state'],
             ),
             **kw
