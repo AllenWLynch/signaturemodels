@@ -84,6 +84,24 @@ parser = argparse.ArgumentParser(
 subparsers = parser.add_subparsers(help = 'commands')
 
 
+
+make_windows_parser = subparsers.add_parser('get-regions', help = 'Make windows from a genome file.')
+make_windows_parser.add_argument('--genome-file','-g', type = file_exists, required = True, help = 'Also known as a "Chrom sizes" file.')    
+make_windows_parser.add_argument('--blacklist-file','-v', type = file_exists, default = None, help = 'Bed file of regions to exclude from windows.')
+make_windows_parser.add_argument('--window-size','-w', type = posint, required = True, help = 'Size of windows to make.')
+make_windows_parser.add_argument('--output','-o', type = valid_path, default=sys.stdout, 
+                                 help = 'Where to save windows.')
+make_windows_parser.set_defaults(func = make_windows)
+
+
+trinuc_sub = subparsers.add_parser('get-trinucs', help = 'Write trinucleotide context file for a given genome.')
+trinuc_sub.add_argument('--fasta-file','-fa', type = file_exists, required = True, help = 'Sequence file, used to find context of mutations.')
+trinuc_sub.add_argument('--regions-file','-r', type = file_exists, required = True)
+trinuc_sub.add_argument('--output','-o', type = valid_path, required = True, help = 'Where to save compiled corpus.')
+trinuc_sub.set_defaults(func = CorpusReader.create_trinuc_file)
+
+
+
 def write_dataset(
         weight_col = None,
         chr_prefix = '',
@@ -121,6 +139,7 @@ def write_dataset(
         exposure_files = exposure_files,
         correlates_file = correlates_file,
         corpus_name = corpus_name,
+        n_jobs = n_jobs,
     )
 
     save_corpus(dataset, output)
@@ -209,14 +228,6 @@ overwrite_features_parser.add_argument('corpus', type = file_exists)
 overwrite_features_parser.add_argument('--correlates-file','-c', type = file_exists, required=True,
                                        help = 'TSV file of genomic correlates. The first line must be column names which start with "#".')
 overwrite_features_parser.set_defaults(func = _overwrite_features_helper)
-
-
-trinuc_sub = subparsers.add_parser('get-trinucs', help = 'Write trinucleotide context file for a given genome.')
-trinuc_sub.add_argument('--fasta-file','-fa', type = file_exists, required = True, help = 'Sequence file, used to find context of mutations.')
-trinuc_sub.add_argument('--regions-file','-r', type = file_exists, required = True)
-trinuc_sub.add_argument('--output','-o', type = valid_path, required = True, help = 'Where to save compiled corpus.')
-trinuc_sub.set_defaults(func = CorpusReader.create_trinuc_file)
-
 
 
 tune_sub = subparsers.add_parser('study-create', 

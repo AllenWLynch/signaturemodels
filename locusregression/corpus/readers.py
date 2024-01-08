@@ -338,7 +338,7 @@ class CorpusReader:
             for w in tqdm.tqdm(window_set, nrows=30, desc = 'Aggregating trinucleotide content')
         ]
 
-        trinuc_matrix = np.array(trinuc_matrix) # add a pseudocount
+        trinuc_matrix = np.array(trinuc_matrix) # DON'T (!) add a pseudocount
 
         return trinuc_matrix/trinuc_matrix.sum(1, keepdims = True)
     
