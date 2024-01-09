@@ -309,3 +309,29 @@ the data form the provided corpus. The pseudo-R^2 score is reported (-1 to 1, hi
         -d tutorial/corpus.h5
 
 
+In python, there are more flexible plotting alternatives available:
+
+.. code-block:: python
+
+    import locusregression
+    import numpy as np
+
+    # load model
+    model = locusregression.load_model('path/to/model')
+    corpus = locusregression.stream_corpus('path/to/corpus')
+
+    empirical_mr = corpus.get_empirical_mutation_rate()
+    predicted_mr = np.exp( model.get_log_marginal_mutation_rate('corpus_name') )
+    component_rates = np.exp( model.get_log_component_mutation_rate('corpus_name') )
+
+    # plot mutation rates
+    locusregression.plot.plot_mutation_rate(empirical_mr, plot_raw=False, smoothing=300, color = 'black')
+    locusregression.plot.plot_mutation_rate(predicted_mr, plot_raw=False, smoothing=300, color = 'black')
+
+    # plot a mutation rate matrix (K x L)
+    locusregression.plot.plot_rate_matrix(
+        component_rates, 
+        model.component_names, 
+        ylim = (0,1e-5), 
+        color = 'black'
+    )
