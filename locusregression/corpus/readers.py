@@ -1,5 +1,4 @@
 
-from .genome_tools import Region
 from .featurization import CONTEXT_IDX
 from .corpus import Corpus, InMemorySamples
 from pyfaidx import Fasta
@@ -12,8 +11,16 @@ from .make_windows import check_regions_file
 import os
 from joblib import Parallel, delayed
 from functools import partial
+from dataclasses import dataclass
 logger = logging.getLogger('DataReader')
 logger.setLevel(logging.INFO)
+
+@dataclass
+class Region:
+    chromosome: str
+    start: int
+    end: int
+    annotation: dict = None
 
 
 class CorpusReader:
@@ -243,7 +250,7 @@ class CorpusReader:
                     try:
                         
                         windows.append(
-                            Region(*line[:3], annotation= {'name' : line[3]} if len(line) > 3 else None)
+                            Region(chromosome=line[0], start=int(line[1]), end=int(line[2]))
                         )
                         
                     except ValueError as err:

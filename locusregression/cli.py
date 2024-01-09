@@ -81,11 +81,11 @@ def _get_basemodel(model_type):
 parser = argparse.ArgumentParser(
     formatter_class=argparse.ArgumentDefaultsHelpFormatter,
 )
-subparsers = parser.add_subparsers(help = 'commands')
+subparsers = parser.add_subparsers(help = 'Commands')
 
 
-
-make_windows_parser = subparsers.add_parser('get-regions', help = 'Make windows from a genome file.')
+make_windows_parser = subparsers.add_parser('get-regions', help = 'Make windows from a genome file.',
+                                            formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 make_windows_parser.add_argument('--genome-file','-g', type = file_exists, required = True, help = 'Also known as a "Chrom sizes" file.')    
 make_windows_parser.add_argument('--blacklist-file','-v', type = file_exists, default = None, help = 'Bed file of regions to exclude from windows.')
 make_windows_parser.add_argument('--window-size','-w', type = posint, required = True, help = 'Size of windows to make.')
@@ -97,9 +97,17 @@ make_windows_parser.set_defaults(func = make_windows)
 trinuc_sub = subparsers.add_parser('get-trinucs', help = 'Write trinucleotide context file for a given genome.')
 trinuc_sub.add_argument('--fasta-file','-fa', type = file_exists, required = True, help = 'Sequence file, used to find context of mutations.')
 trinuc_sub.add_argument('--regions-file','-r', type = file_exists, required = True)
+trinuc_sub.add_argument('--n-jobs','-j', type = posint, default = 1, help = 'Number of parallel processes to use. Currently does nothing.')
 trinuc_sub.add_argument('--output','-o', type = valid_path, required = True, help = 'Where to save compiled corpus.')
 trinuc_sub.set_defaults(func = CorpusReader.create_trinuc_file)
 
+
+bigwig_sub = subparsers.add_parser('ingest-bigwig', help = 'Summarize bigwig file for a given cell type.')
+bigwig_sub.add_argument('bigwig-file', type = file_exists)
+bigwig_sub.add_argument('--regions-file','-r', type = file_exists, required=True,)
+bigwig_sub.add_argument('--feature-name','-name', type = str, required=True,)
+bigwig_sub.add_argument('--output','-o', type = argparse.FileType('w'), default=sys.stdout)
+bigwig_sub.set_defaults(func = process_bigwig)
 
 
 def write_dataset(
@@ -147,7 +155,8 @@ def write_dataset(
 
 dataset_sub = subparsers.add_parser('corpus-make', 
     help= 'Read VCF files and genomic correlates to compile a formatted dataset'
-          ' for locus modeling.'
+          ' for locus modeling.',
+    formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
 
 dataset_sub.add_argument('--corpus-name','-n', type = str, required = True, help = 'Name of corpus, must be unique if modeling with other corpuses.')
@@ -232,7 +241,9 @@ overwrite_features_parser.set_defaults(func = _overwrite_features_helper)
 
 tune_sub = subparsers.add_parser('study-create', 
     help = 'Tune number of signatures for LocusRegression model on a pre-compiled corpus using the'
-    'hyperband or successive halving algorithm.')
+    'hyperband or successive halving algorithm.',
+    formatter_class=argparse.ArgumentDefaultsHelpFormatter
+)
 
 tune_required = tune_sub.add_argument_group('Required arguments')
 tune_required.add_argument('--corpuses', '-d', type = file_exists, nargs = '+', required=True,
@@ -414,7 +425,9 @@ def train_model(
 
 
 
-trainer_sub = subparsers.add_parser('model-train', help = 'Train LocusRegression model on a pre-compiled corpus.')
+trainer_sub = subparsers.add_parser('model-train', 
+                                    help = 'Train LocusRegression model on a pre-compiled corpus.',
+                                    formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
 trainer_required = trainer_sub.add_argument_group('Required arguments')
 trainer_required .add_argument('--n-components','-k', type = posint, required=True,
@@ -427,9 +440,9 @@ trainer_required .add_argument('--output','-o', type = valid_path, required=True
 trainer_optional = trainer_sub.add_argument_group('Optional arguments')
 
 trainer_optional.add_argument('--model-type','-model', choices=['regression','gbt'], default='regression')
-trainer_optional.add_argument('--locus-subsample','-sub', type = posfloat, default = 0.125,
+trainer_optional.add_argument('--locus-subsample','-sub', type = posfloat, default = None,
     help = 'Whether to use locus subsampling to speed up training via stochastic variational inference.')
-trainer_optional.add_argument('--batch-size','-batch', type = posint, default = 128,
+trainer_optional.add_argument('--batch-size','-batch', type = posint, default = 100000,
     help = 'Use minibatch updates via stochastic variational inference.')
 trainer_optional.add_argument('--begin-prior-updates', type = int, default=10)
 trainer_optional.add_argument('--time-limit','-time', type = posint, default = None,
@@ -506,21 +519,6 @@ summary_plot_parser.add_argument('--output','-o', type = valid_path, required=Tr
 summary_plot_parser.set_defaults(func = summary_plot)
 
 
-def multidimensional_plot(*, model, output, cluster_distance):
-    model = load_model(model)
-    model.plot_compare_coefficients(cluster_distance = cluster_distance)
-    savefig(output, bbox_inches='tight', dpi = 300)
-
-multidimensional_plot_parser = subparsers.add_parser('model-plot-coefs', 
-                                                    help = 'Plot multidimensional coefficients comparison.')
-multidimensional_plot_parser.add_argument('model', type = file_exists)
-multidimensional_plot_parser.add_argument('--cluster-distance', '-dist', type = float, default=0.75,
-                                          help = 'Distance threshold for clustering coefficients. Increasing this value will result in fewer clusters.')
-multidimensional_plot_parser.add_argument('--output','-o', type = valid_path, required=True,
-                                    help = 'Path to save plot, the file extension determines the format')
-multidimensional_plot_parser.set_defaults(func = multidimensional_plot)
-
-
 def save_signatures(*, model, output):
     
     model = load_model(model)
@@ -536,22 +534,6 @@ signatures_parser.add_argument('--output','-o', type =  argparse.FileType('w'), 
 signatures_parser.set_defaults(func = save_signatures)
 
 
-def save_associations(*, model, output):
-
-    model = load_model(model)
-
-    print('', *model.feature_names, sep = ',', file = output)
-    for i, component_name in enumerate(model.component_names):
-        print(component_name, *model.model_state.beta_mu[i], sep = ',', file = output)
-
-
-associations_parser = subparsers.add_parser('model-save-associations',
-                                            help = 'Save associations to file.')
-associations_parser.add_argument('model', type = file_exists)
-associations_parser.add_argument('--output','-o', type = argparse.FileType('w'), default=sys.stdout)
-associations_parser.set_defaults(func = save_associations)
-
-
 def list_corpuses(*,model):
     model = load_model(model)
     print(*model.corpus_states.keys(), sep = '\n', file = sys.stdout)
@@ -560,41 +542,6 @@ list_corpuses_parser = subparsers.add_parser('model-list-corpuses',
                                              help = 'List the names of corpuses used to train a model.')
 list_corpuses_parser.add_argument('model', type = file_exists)
 list_corpuses_parser.set_defaults(func = list_corpuses)
-
-
-def save_per_component_mutation_rates(*,model, output, corpus_name):
-
-    model = load_model(model)
-
-    component_locus_distribution = model.get_component_locus_distribution(corpus_name).T
-
-    print(*model.component_names, sep = ',', file = output)
-    
-    for i in range(model.n_loci):
-        print(*component_locus_distribution[i,:], sep = ',', file = output)
-
-component_mutrates_parser = subparsers.add_parser('model-save-component-mutation-rates',
-                                                    help = 'Save the relative log (natural) mutation rate across loci for each mutational process w.r.t. the correlates of some corpus.')
-component_mutrates_parser.add_argument('model', type = file_exists)
-component_mutrates_parser.add_argument('--corpus-name','-n', type = str, required=True)
-component_mutrates_parser.add_argument('--output','-o', type = argparse.FileType('w'), default=sys.stdout)
-component_mutrates_parser.set_defaults(func = save_per_component_mutation_rates)
-
-
-def save_overall_mutation_rate(*, model, output, corpus_name):
-
-    model = load_model(model)
-    
-    print(*model.get_log_expected_mutation_rate(corpus_name), 
-          file = output,
-          sep = '\n'
-         )
-mutrate_parser = subparsers.add_parser('model-save-overall-mutation-rate',
-                                        help = 'Save the log (natural) expected mutation rate for some corpus for each loci',)
-mutrate_parser.add_argument('model', type = file_exists)
-mutrate_parser.add_argument('--corpus-name','-n', type = str, required=True)
-mutrate_parser.add_argument('--output','-o', type = argparse.FileType('w'), default=sys.stdout)
-mutrate_parser.set_defaults(func = save_overall_mutation_rate)
 
 
 def get_mutation_rate_r2(*, model, corpuses):
@@ -615,7 +562,7 @@ mutrate_r2_parser.add_argument('--corpuses', '-d', type = file_exists, nargs = '
 mutrate_r2_parser.set_defaults(func = get_mutation_rate_r2)
 
 
-
+'''
 def summarize_all_model_attributes(*,model, prefix):
 
     corpuses = list(load_model(model).corpus_states.keys())
@@ -640,9 +587,9 @@ summarize_parser = subparsers.add_parser('model-summarize', help = 'Save all sum
 summarize_parser.add_argument('model', type = file_exists)
 summarize_parser.add_argument('--prefix','-p', type = str, required=True)
 summarize_parser.set_defaults(func = summarize_all_model_attributes)
+'''
 
-
-
+'''
 def add_sample_ingest_args(parser):
     parser.add_argument('model', type = file_exists)
     parser.add_argument('--vcf-file','-vcf', type = file_exists, required=True)
@@ -723,7 +670,6 @@ assign_corpus_parser.add_argument('--max-mutations','-max', type = posint, defau
 assign_corpus_parser.set_defaults(func = assign_corpus)
 
 
-
 def assign_corpus_mutation(*,model,vcf_file, exposure_file, output,
                         regions_file, fasta_file, iters = 100, anneal_steps = 100,
                         chr_prefix = ''):
@@ -752,38 +698,7 @@ add_sample_ingest_args(assign_corpus_mutation_parser)
 assign_corpus_mutation_parser.add_argument('--iters','-iters', type = posint, default = 100)
 assign_corpus_mutation_parser.add_argument('--anneal-steps','-steps', type = posint, default = 100)
 assign_corpus_mutation_parser.set_defaults(func = assign_corpus_mutation)
-
-
-
-
-def _fetch_roadmap_wrapper(**kw):
-    logging.basicConfig(level=logging.INFO)
-    fetch_roadmap_features(**kw)
-
-roadmap_sub = subparsers.add_parser('fetch-marks', help = 'Download and summarize Roadmap Epigenomics data for a given cell type.')
-roadmap_sub.add_argument('--roadmap-id','-id', type = str, required=True,)
-roadmap_sub.add_argument('--regions-file','-r', type = file_exists, required=True,)
-roadmap_sub.add_argument('--output','-o', type = argparse.FileType('w'), default=sys.stdout)
-roadmap_sub.add_argument('--n-jobs','-j', type = posint, default=1)
-roadmap_sub.add_argument('--bigwig-dir','-bw',type = valid_path, default = 'bigwigs')
-roadmap_sub.set_defaults(func = _fetch_roadmap_wrapper)
-
-
-bigwig_sub = subparsers.add_parser('ingest-bigwig', help = 'Summarize bigwig file for a given cell type.')
-bigwig_sub.add_argument('bigwig-file', type = file_exists)
-bigwig_sub.add_argument('--regions-file','-r', type = file_exists, required=True,)
-bigwig_sub.add_argument('--feature-name','-name', type = str, required=True,)
-bigwig_sub.add_argument('--output','-o', type = argparse.FileType('w'), default=sys.stdout)
-bigwig_sub.set_defaults(func = process_bigwig)
-
-
-bedgraph_sub = subparsers.add_parser('ingest-bedgraph', help = 'Summarize bigwig file for a given cell type.')
-bedgraph_sub.add_argument('bedgraph-file', type = file_exists)
-bedgraph_sub.add_argument('--regions-file','-r', type = file_exists, required=True,)
-bedgraph_sub.add_argument('--normalization','-norm', choices=['power','standardize','minmax'], default=None)
-bedgraph_sub.add_argument('--feature-name','-name', type = str, required=True,)
-bedgraph_sub.add_argument('--output','-o', type = argparse.FileType('w'), default=sys.stdout)
-bedgraph_sub.set_defaults(func = process_bigwig)
+'''
 
 
 code_sub = subparsers.add_parser('code-sbs')

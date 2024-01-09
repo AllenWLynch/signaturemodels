@@ -1,6 +1,4 @@
 from .featurization import MUTATIONS_IDX, CONTEXT_IDX
-from .genome_tools import Region
-
 import os
 import subprocess
 import tempfile
@@ -8,18 +6,6 @@ import sys
 from pyfaidx import Fasta
 from dataclasses import dataclass
 import numpy as np
-
-
-class SbsRegion(Region):
-
-    @property
-    def ref(self):
-        return self.annotation[0]
-
-    @property
-    def alt(self):
-        return self.annotation[1]
-
 
 complement = {'A' : 'T','T' : 'A','G' : 'C','C' : 'G'}
 

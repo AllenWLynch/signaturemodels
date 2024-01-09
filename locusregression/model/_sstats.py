@@ -133,11 +133,8 @@ class MetaSstats:
 
         self.mutation_sstats =  np.zeros_like(first_corpus._mutation_sstats)
         self.context_sstats = np.zeros_like(first_corpus._context_sstats)
-        self.locus_sstats = defaultdict(lambda : np.zeros(model_state.n_components))
 
         for corpus in corpus_sstats.values():
             self.mutation_sstats += corpus.mutation_sstats
             self.context_sstats += corpus.context_sstats
             
-            for locus, stat in corpus.locus_sstats.items():
-                self.locus_sstats[locus] += stat

@@ -20,8 +20,8 @@ def _get_nfs_storage(study_name):
 
 
 def create_study(
-    locus_subsample = 0.125,
-    batch_size = 32,
+    locus_subsample = None,
+    batch_size = 100000,
     factor = 3,
     train_size = 0.7,
     skip_tune_subsample=False,
@@ -31,7 +31,7 @@ def create_study(
     num_epochs = 500,
     fix_signatures = None,
     use_pruner = False,
-    locus_subsample_rates = [0.0625, 0.125, 0.25, 0.5, 1.],
+    locus_subsample_rates = [0.125, 0.25, 0.5, 1.],
     storage = None,
     seed = 0,*,
     corpuses,
