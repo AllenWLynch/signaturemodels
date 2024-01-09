@@ -22,6 +22,9 @@ class Region:
     end: int
     annotation: dict = None
 
+    def __len__(self):
+        return self.end - self.start
+
 
 class CorpusReader:
 
