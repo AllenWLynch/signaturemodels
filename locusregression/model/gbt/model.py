@@ -15,7 +15,7 @@ class GBTRegressor(LocusRegressor):
                  max_depth = 5,
                  max_trees_per_iter = 25,
                  l2_regularization=0.,
-                 n_iter_no_change=1,
+                 n_iter_no_change=3,
                   **kw, 
                 ):
         super().__init__(**kw)
@@ -39,9 +39,9 @@ class GBTRegressor(LocusRegressor):
     @classmethod
     def sample_params(cls, trial):
         return dict(
-            tau = trial.suggest_categorical('tau', [1, 16, 48]),
-            n_iter_no_change = trial.suggest_categorical('n_iter_no_change', [1,3,5]),
-            l2_regularization = trial.suggest_categorical('l2_regularization', [0., 1e-10, 1e-7, 1e-5, 1e-3, 1e-2])
+            #tau = trial.suggest_categorical('tau', [1, 16, 48]),
+            #n_iter_no_change = trial.suggest_categorical('n_iter_no_change', [1,3,5]),
+            #l2_regularization = trial.suggest_categorical('l2_regularization', [0., 1e-10, 1e-7, 1e-5, 1e-3, 1e-2])
         )
     
 

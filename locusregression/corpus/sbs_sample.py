@@ -108,12 +108,13 @@ def _process_mapped_sbs_codes(input):
         'weight' : [],
     }
 
-    for locus_idx, line in enumerate(input):
+    for _, line in enumerate(input):
 
-        chrom, pos, _, _, mutation_codes = line.strip().split('\t')
+        chrom, pos, _, locus_idx, mutation_codes = line.strip().split('\t')
         if mutation_codes == '.':
             continue
-
+        
+        locus_idx = int(locus_idx)
         mutation_codes = [code.split(':') for code in mutation_codes.split(',')]
 
         for code in mutation_codes:

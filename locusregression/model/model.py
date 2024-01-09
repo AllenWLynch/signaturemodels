@@ -76,7 +76,7 @@ class LocusRegressor:
     @classmethod
     def sample_params(cls, trial):
         return dict(
-            tau = trial.suggest_categorical('tau', [1, 16, 48]),
+            #tau = trial.suggest_categorical('tau', [1, 16, 48]),
         )
 
     @classmethod

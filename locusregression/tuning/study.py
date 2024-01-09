@@ -65,7 +65,7 @@ def create_study(
     study = optuna.create_study(
         study_name = study_name,
         storage = storage,
-        direction = 'maximize',
+        direction = 'minimize',
         load_if_exists = True,
         pruner = pruner,
         sampler = optuna.samplers.RandomSampler(
