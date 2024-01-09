@@ -1,6 +1,6 @@
 
 import numpy as np
-from .base import update_alpha, update_tau
+from ._dirichlet_update import update_alpha, update_tau
 from ..simulation import SimulatedCorpus, COSMIC_SIGS
 from sklearn.linear_model import PoissonRegressor
 from sklearn.preprocessing import OneHotEncoder
@@ -147,7 +147,7 @@ class ModelState:
     def update_rho(self, sstats, learning_rate):
 
         new_rho = np.vstack([
-            np.expand_dims(1 + sstats.mutation_sstats[k] if not self.fixed_signatures[k] else self.omega[k], axis = 0)
+            np.expand_dims(1 + sstats.mutation_sstats[k], axis = 0)
             for k in range(self.n_components)
         ])
 

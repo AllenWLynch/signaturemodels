@@ -2,7 +2,7 @@ import numpy as np
 import tqdm
 from functools import partial
 from scipy.special import logsumexp
-from .base import log_dirichlet_expectation
+from ._dirichlet_update import log_dirichlet_expectation
 from scipy.stats import dirichlet_multinomial
 
 

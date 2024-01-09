@@ -8,6 +8,7 @@ from collections import Counter
 import logging
 import tqdm
 from .sbs_sample import revcomp, SBSSample
+from .make_windows import check_regions_file
 import os
 from joblib import Parallel, delayed
 from functools import partial
@@ -219,6 +220,8 @@ class CorpusReader:
 
     @staticmethod
     def read_windows(regions_file, genome_object, sep = '\t'):
+
+        check_regions_file(regions_file)
         
         logger.info('Reading windows ...')
         

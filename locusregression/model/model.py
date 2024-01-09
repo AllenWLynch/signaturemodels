@@ -1,5 +1,5 @@
 
-from .base import log_dirichlet_expectation, feldmans_r2, dirichlet_bound
+from ._dirichlet_update import log_dirichlet_expectation, feldmans_r2, dirichlet_bound
 from locusregression.corpus import COSMIC_SORT_ORDER, SIGNATURE_STRINGS, MUTATION_PALETTE
 from locusregression.corpus.sbs_sample import SBSSample
 import locusregression.model._sstats as _sstats
