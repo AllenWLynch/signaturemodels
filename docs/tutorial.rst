@@ -51,88 +51,65 @@ To start, I define a "genome" or "chrom sizes" file from a fasta:
     
     $ mkdir -p tutorial
     $ samtools faidx genomes/hg19.fa
-    $ cut -f1-2 genomes/hg19.fa.fai | sort -k1,1 | grep -vE "^chr[0-9Un]_" > tutorial/genome.txt
+    $ cut -f1-2 genomes/hg19.fa.fai | grep -vE "^chr[0-9Un]_" > tutorial/genome.txt
 
 When modeling the full genome, it is a good idea to define a genome with only main chromosomes (chr1-N), removing alt scaffolds, etc.
 
-Next, we can make our windows using the convenient command from bedtools:
+Next, bin the genome using `get-regions`:
 
 .. code-block:: bash
 
-    $ bedtools makewindows -g tutorial/genome.txt -w 10000 > tutorial/regions.bed
-
-..
-
-   **Note:**
-   It is worthwhile to check that your windows are in sorted order, or you'll run into
-   problems down the line:
-
-
-   .. code-block:: bash
-
-        $ sort -k1,1 -k2,2n --check tutorial/regions.bed
-
-Another good idea is to remove regions of the genome which are hard to map or are known to caused biased signals. For instance, you could
-remove ENCODE blacklist regions from your region set:
+    $ locusregression get-regions \
+        -g tutorial/genome.txt \
+        -w 10000 \
+        -v blacklist.bed \
+        > tutorial/regions.bed
 
 .. code-block:: bash
 
-    $ bedtools intersect -v -a tutorial/regions.bed -b encode.blacklist.bed > tutorial/filtered_regions.bed \
-        && mv tutorial/filtered_regions.bed tutorial/regions.bed
-
-The last annotation set up step is to generate a trinucleotide context distribution matrix, which helps the model to adjust for
-sequence content differences across the genome:
-
-.. code-block:: bash
-
-    $ locusregression trinucs -r tutorial/regions.bed -fa genomes/hg19.fa -o tutorial/trinucs.npz
+    $ locusregression trinucs \
+        -r tutorial/regions.bed \
+        -fa genomes/hg19.fa \
+        -o tutorial/trinucs.npz
 
 
 **Correlates**
 
-Next, we need to associate each of our windows with values for some interesting genomic correlates. I provide a method to download
-and process RoadMap data for a given cell line or cell type. All you must provide are the RoadMap ID of interest (in this case for 
-Esophogeal cells), and the regions file.
+Next, we need to associate each of our windows with values for some interesting genomic correlates. Currently, only
+continous features from bigwig files are supported. For some bigwig with H3K27ac marks, use `ingest-bigwig` to
+get the average value of the marks in each window. You must also provide a unique name:
 
 .. code-block:: bash
 
-    $ locusregression -id E079 -w tutorial/regions.bed -j 5 -o tutorial/correlates.tsv
+    $ locusregression ingest-bigwig \
+        H3K27ac.bigwig \
+        -r tutorial/regions.bed \
+        -name H3K27ac \
+        -o tutorial/H3K27ac.txt
 
 Check the output of this method to see the output format:
 
 .. code-block:: bash
 
-    $ head tutorial/correlates.tsv
+    $ head tutorial/H3K27ac.txt
+    #H3K27ac
+    0
+    0.2577
+    0.209125
+    0.20075
 
-.. csv-table:: 
-    :file: docs/example_features.tsv
-    :header-rows: 1
+These features are unnormalized, so you can add a script which normalizes them however you like.
+For continous features, the log-transformation followed by standardization is reasonable.
 
-A typical correlates file is a tab-separated matrix which has the same number of rows as the windows file. Each column is
-annotated with a name prepended with "#". You can expand this correlates file as need to add additional features.
-
-Besides RoadMap, you can also use any other genomic correlate you wish. For instance, you could download a bigWig file of
-gene expression and use the `locusregression ingest-bigwig` or `locusregression ingest-bedgraph` tool to get the average expression in each window:
+For the next step, one must assemble a matrix of these features as a tsv file. After ingesting
+any number of tracks, you can put together a combination of features into one tsv file using the `paste` command:
 
 .. code-block:: bash
 
-    $ locusregression ingest-bigwig \
-        example.bigwig \
-        -w tutorial/regions.bed \
-        -norm power \
-        -name GEX \
-        -o tutorial/expression.tsv
-
-This method requires a feature name and optionally a normalization method. The `power` normalization 
-is a zero-safe log transformation followed by standardization. Other options are `standardize` and `minmax`,
-which convert features to z-scores or fixes their ranges to 0-1, respectively. If no normalization is desired,
-just omit the `-norm` flag.
-
-You can put together any ad-hoc combination of features into one tsv file using the `paste` command.
-
+    $ paste tutorial/H3K27ac.txt tutorial/H3K36me3.txt > tutorial/correlates.tsv
 
 **The locusregression software will not adjust the features you provide, so
-be sure to standardize them beforehand.**
+be sure to normalize them beforehand.**
 
 
 **Exposures**
@@ -169,22 +146,27 @@ To produce a corpus for some hypothetical set of samples stored in `vcfs.txt`:
 
 .. code-block:: bash
 
-    $ locusregression make-corpus \
+    $ locusregression corpus-make \
         -vcf `cat vcfs.txt` \
         -fa hg19.fa \
         --regions-file tutorial/regions.bed \
         --correlates-file tutorial/correlates.tsv \
         --trinuc tutorial/trinucs.npz \
         -o tutorial/corpus.h5 \
+        --n-jobs 10 \
+        --weight-col TCF \
         --chr-prefix chr # the VCF files only have numbers, but RefSeq has "chr1", for example
 
 This will save the corpus to *tutorial/corpus.h5*.
+
+**Note:** The `--weight-col` flag is optional, and allows you to specify an INFO column in the VCFs which contains
+a weight for each mutation. This is useful if you want to weight mutations by their tumor cell fraction, for example.
 
 
 2. How many processes?
 ----------------------
 
-Choosing the number of mixture components to describe a process is a perenial problem in topic modeling,
+Choosing the number of components to describe a dataset is a perenial problem in topic modeling,
 LocusRegression notwithstanding. Here, I employ random search of the model hyperparameter space paired
 with a HyperBand bandit to find the number of components which produces a descriptive but 
 generalizeable model. This process can be parallelized for faster tuning.
@@ -194,17 +176,26 @@ and data configuration:
 
 .. code-block:: bash
 
-    $ locusregression create-study \    
+    $ locusregression study-create \    
         --corpuses tutorial/corpus.h5 \
         -min 3 -max 12 \
-        --tune-subsample \
         --study-name tutorial.1 \
-        --fix-signatures SBS1 SBS2
+        --fix-signatures SBS1 SBS2 SBS8 \
+        --empirical-bayes \
+        --model-type gbt \
+        --num-epochs 200 
 
     [I 2023-10-29 16:12:11,918] A new study created in Journal with name: tutorial.1
 
 The `--fix-signatures` flag is optional, and allows you to fix the signatures of certain processes to
 known mutational signatures.
+
+The `--empirical-bayes` flag is optional, and allows you to use empirical bayes to estimate the
+prior distribution over signatures for each corpus supplied.
+
+The `--model-type` flag is optional, and allows you to choose between a gradient-boosted tree model
+(`gbt`) or a linear model (`regression`).
+
 
 Now, by running the command:
 
@@ -230,105 +221,89 @@ or, in parallel while controlling the number of cores by having each process run
 
 The command above launches five processes in the background, each of which tries 40 model configurations.
 Using a slurm server, one can simultaneously run numerous trials in different processes. I recommend
-allocating 1500MB and 1 CPU per trial.
+allocating 2500MB and 1 CPU per trial.
 
-One can visualize the study results using the `optuna` module:
+To get the results from the the tuning stage, run:
 
-.. code-block:: python
+.. code-block::
+    
+    $ locusregression study-summarize tutorial.1 -o tutorial/tune_results.csv
 
-    from optuna.visualization.matplotlib import *
-    from locusregression import load_study
+From this CSV, you can manually choose the trial which produced the best model by eye-balling
+the ELBO of the perplexity curve (**Lower is better**):
 
-    study, dataset, training_attrs = load_study('tutorial.1')
-    plot_slice(study, params = ['n_components'])
+.. code-block:: bash
 
-.. image:: images/tuning.svg
-    :width: 400
+    $ locusregression retrain \
+        tutorial.1 \
+        --trial-num <best_trial> \
+        -o tutorial/model.pkl
 
+If you don't set `--trial-num`, the best trial will be chosen automatically using score only.
+
+
+2b. How many processes? - Alternative
+------------------------------------
 
 If you already know how many processes are present in a sample, you can just do the following, and skip
 step 3:
 
 .. code-block:: bash
 
-    $ locusregression train-model -k 5 -d tutorial/corpus.h5 -o tutorial/model.pkl
+    $ locusregression train-model \
+        -k 15 \
+        -d tutorial/corpus.h5 \
+        -o tutorial/model.pkl \
+        --empirical-bayes \
+        --fix-signatures SBS1 SBS2 SBS8 \
+        --model-type gbt
 
- 
-1. Training the model
----------------------
-
-To train the representative model for the dataset, use the `locusregression retrain` command, 
-again referencing the study name. By default, locusregression will choose the best model to retrain. If 
-desired, you can choose some other model configuration by specifying `--trial-num <num>`. 
+You can test different values of `k` using a test set corpus:
 
 .. code-block:: bash
 
-    $ locusregression retrain \
-        tutorial.1 \
-        -o tutorial/model.pkl
+    $ locusregression corpus-split tutorial/corpus.h5 \
+        -to tutorial/train.h5 \
+        -vo tutorial/test.h5
+
+where `to` and `vo` stand for train out and validation out, respectively. Get the perplexity score
+of the model on the validation corpus using:
+
+.. code-block:: bash
+
+    $ locusregression model-score \
+        tutorial/model.pkl \
+        -d tutorial/test.h5
+ 
 
 
-4. Analysis
+3. Analysis
 -----------
 
-.. code-block:: bash
-
-    $ locusregression model-predict tutorial/model.pkl -d tutorial/corpus.h5 -o tutorial/exposures.csv
-
-    $ locusregression model-save-associations tutorial/model.pkl -o tutorial/associations.csv
-    $ locusregression model-save-signatures tutorial/model.pkl -o tutorial/signatures.csv
-
-    $ locusregression model-plot-summary tutorial/model.pkl -o tutorial/summary.pdf
-    $ locusregression model-plot-coefs tutorial/model.pkl -o tutorial/associations.pdf
-
-
-1. Summary
-----------
-
-Altogether, the steps to start an analysis are:
+I am currently rebuilding the analysis CLI, but for now, three main methods are implemented. First,
+`model-predict` produces the exposure matrix for each sample:
 
 .. code-block:: bash
 
-    #1. Set up genome annotations
+    $ locusregression model-predict \
+        tutorial/model.pkl \
+        -d tutorial/corpus.h5 \
+        -o tutorial/exposures.csv
 
-    #1.1 Make genome file
-    $ samtools faidx genomes/hg19.fa
-    $ cut -f1-2 genomes/hg19.fa.fai | sort -k1,1 | grep -vE "^chr[0-9Un]_" > tutorial/genome.txt
-    
-    #1.2 Make windows file 
-    $ bedtools makewindows -g tutorial/genome.txt -w 10000 > tutorial/regions.bed
-    $ sort -k1,1 -k2,2n --check tutorial/regions.bed
-    
-    $ bedtools intersect -v -a tutorial/regions.bed -b encode.blacklist.bed > tutorial/filtered_regions.bed \
-        && mv tutorial/filtered_regions.bed tutorial/regions.bed
+Next, `model-plot-summary` produces a plot of the signatures:
 
-    #1.3 Make trinucleotide file
-    $ locusregression trinucs -r tutorial/regions.bed -fa genomes/hg19.fa -o tutorial/trinucs.npz
+.. code-block:: bash
 
-    #2. Make features matrix
-    $ locusregression -id E079 -w tutorial/regions.bed -j 5 -o tutorial/E110-marks.tsv
+    $ locusregression model-plot-summary \
+        tutorial/model.pkl \
+        -o tutorial/summary.pdf
 
-    $ <normalization script here, I use scikit-learn\'s PowerTransformer>
 
-    #3. Compile corpus
-    $ locusregression make-corpus \
-        -vcf `cat vcfs.txt` \
-        -fa hg19.fa \
-        --regions-file tutorial/regions.bed \
-        --correlates-file tutorial/correlates.tsv \
-        --trinuc tutorial/trinucs.npz \
-        -o tutorial/corpus.h5
+Finally, `model-mutation-rate-r2` evalutates the model's marginal mutation rate prediction against
+the data form the provided corpus. The pseudo-R^2 score is reported (-1 to 1, higher is better):
 
-    # 4. Find hyperparameters 
-    $ locusregression tune \    
-        --corpus tutorial/corpus.pkl \
-        -min 3 -max 12 \
-        --n-jobs 5 \
-        --tune-subsample \
-        -o tutorial/tune_results.json
+.. code-block:: bash
 
-    # 5. Retrain final model on whole corpus
-    $ locusregression retrain \
-        -d tutorial/corpus.pkl \
-        -o tutorial/model.pkl \
-        --tune-results tutorial/tune_results.json
+    $ locusregression model-mutation-rate-r2 \
+        tutorial/model.pkl \
+        -d tutorial/corpus.h5
