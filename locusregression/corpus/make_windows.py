@@ -189,24 +189,36 @@ def check_regions_file(regions_file):
             if line.startswith('#'):
                 continue
             
-            assert len( line.strip().split('\t') ) == 4, \
+            cols = line.strip().split('\t')
+            assert len(cols) == 4, \
                 f'Expected 4 columns in {regions_file}, with the fourth column being an integer ID.\n' \
                 f'Add a column to the regions file using \'awk -v OFS="\\t" \'{{print $0,NR}}\' <filename>\''
             
             try:
-                chr, start, end, idx = line.strip().split('\t')
+                chr, start, end, idx = cols
                 idx = int(idx); start = int(start); end = int(end)
-            except ValueError:
-                raise ValueError(
+            except TypeError:
+                raise TypeError(
                     f'Count not parse line {i} in {regions_file}: {line}.\n'
                     'Make sure the regions file is tab-delimited with columns chr<str>, start<int>, end<int>, idx<int>.\n'
                 )
             
             encountered_idx[idx] = True
 
+    assert len(encountered_idx) > 0, \
+        f'Expected regions file to have at least one region.'
+
     largest_bin = max(encountered_idx.keys())
     assert all([encountered_idx[i] for i in range(largest_bin + 1)]), \
         f'Expected regions file to have a contiguous set of indices from 0 to {largest_bin}.\n'
+    
+    try:
+        subprocess.check_output(['sort', '-k','1,1', '-k','2,2n', '-c', regions_file])
+    except subprocess.CalledProcessError:
+        raise ValueError(
+            f'Expected regions file to be sorted by chromosome and start position.\n'
+            f'Use \'sort -k1,1 -k2,2n -o <filename> <filename>\' to sort the file.\n'
+        )
 
     
 '''if __name__ == "__main__":

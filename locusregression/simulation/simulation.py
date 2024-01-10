@@ -122,7 +122,8 @@ class SimulatedCorpus:
             total = len(cell_pi), ncols = 100, desc = 'Generating samples'):
 
             if i == 0 or not shared_exposures:
-                psi_matrix = SimulatedCorpus.get_psi_matrix(signals, exposure, 
+                psi_matrix = SimulatedCorpus.get_psi_matrix(
+                        signals, exposure, 
                         beta_matrix = beta_matrix, 
                         rate_function = rate_function,
                         mutation_rate_noise = mutation_rate_noise,
@@ -141,18 +142,20 @@ class SimulatedCorpus:
                     name = str(i),
                 )
             )
-        
-        signals = np.vstack([
-            signals, np.ones((1,signals.shape[-1]))
-        ])
 
         corpus = Corpus(
                 name = corpus_name,
                 samples = InMemorySamples(samples),
-                X_matrix = signals,
                 trinuc_distributions = trinuc_distributions,
-                feature_names = [f'Signal {i}' for i in range(num_states)] + ['Constant'],
                 shared_exposures = shared_exposures,
+                features = {
+                    'feature' + str(k) : {
+                        'type' : 'continuous',
+                        'values' : signal,
+                        'group' : 'all'
+                    }
+                    for k, signal in enumerate(signals)
+                }
         )
 
         generative_parameters = {
@@ -255,9 +258,6 @@ class SimulatedCorpus:
                         weight=np.ones_like(loci).astype(float),
                         name = name,
                         exposures = exposures,
-                        chrom = np.array(['chr1']*len(loci)).astype('S'),
-                        pos = np.array(loci),
-                        cosmic_str = np.array(['']*len(loci)).astype('S'),
                     )
 
 

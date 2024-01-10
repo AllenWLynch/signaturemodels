@@ -85,9 +85,6 @@ def code_SBS_mutation(*,query_file, fasta_file,
 
 def _process_mapped_sbs_codes(input):
     data = {
-        'chrom': [],
-        'pos': [],
-        'cosmic_str': [],
         'mutation': [],
         'context': [],
         'locus': [],
@@ -104,17 +101,15 @@ def _process_mapped_sbs_codes(input):
         mutation_codes = [code.split(':') for code in mutation_codes.split(',')]
 
         for code in mutation_codes:
-            data['chrom'].append(chrom)
-            data['pos'].append(int(pos))
-            data['cosmic_str'].append(code[0])
             data['mutation'].append(int(code[1]))
             data['context'].append(int(code[2]))
             data['weight'].append(float(code[3]))
             data['locus'].append(locus_idx)
 
-    data = {key: np.array(value).astype('S') if key in ['chrom','cosmic_str'] else np.array(value)
+    data = {
+            key: np.array(value)
             for key, value in data.items()
-            }  # Convert lists to numpy arrays
+           }  # Convert lists to numpy arrays
 
     return data
 

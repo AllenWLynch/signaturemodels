@@ -102,12 +102,94 @@ trinuc_sub.add_argument('--output','-o', type = valid_path, required = True, hel
 trinuc_sub.set_defaults(func = CorpusReader.create_trinuc_file)
 
 
+def process_bigwig(group='all',*,
+                   bigwig_file, 
+                   regions_file, 
+                   feature_name, 
+                   output):
+
+    feature_vals = make_continous_features(
+        bigwig_file=bigwig_file,
+        regions_file=regions_file,
+    )
+
+    print('#feature=' + feature_name, file=output)
+    print('#type=continuous', file=output)
+    print('#group=' + group, file = output)
+    print(*feature_vals, sep = '\n', file = output)
+
+
 bigwig_sub = subparsers.add_parser('ingest-bigwig', help = 'Summarize bigwig file for a given cell type.')
 bigwig_sub.add_argument('bigwig-file', type = file_exists)
 bigwig_sub.add_argument('--regions-file','-r', type = file_exists, required=True,)
 bigwig_sub.add_argument('--feature-name','-name', type = str, required=True,)
+bigwig_sub.add_argument('--group','-g', type = str, default='all', help = 'Group name for feature.')
 bigwig_sub.add_argument('--output','-o', type = argparse.FileType('w'), default=sys.stdout)
 bigwig_sub.set_defaults(func = process_bigwig)
+
+
+def process_distance_feature(
+        group='all',*,
+        bed_file,
+        regions_file,
+        feature_name,
+        output,
+):
+    
+    upstream, downstream = make_distance_features(
+        genomic_features=bed_file,
+        regions_file=regions_file,
+    )
+
+    print(f'#feature={feature_name}_upstream\t#feature={feature_name}_downstream', file=output)
+    print('#type=distance\t#type=distance', file=output)
+    print(f'#group={group}\t#group={group}', file = output)
+    print(*map('\t'.join, zip(upstream, downstream)), sep = '\n', file = output)
+
+distance_sub = subparsers.add_parser('ingest-distance', help = 'Summarize distance to nearest feature upstream and downstream for some genomic elements.')
+distance_sub.add_argument('bed-file', type = file_exists, help = 'Bed file of genomic features. Only three columns are required, all other columns are ignored.')
+distance_sub.add_argument('--regions-file','-r', type = file_exists, required=True,)
+distance_sub.add_argument('--feature-name','-name', type = str, required=True,)
+distance_sub.add_argument('--group','-g', type = str, default='all', help = 'Group name for feature.')
+distance_sub.add_argument('--output','-o', type = argparse.FileType('w'), default=sys.stdout)
+distance_sub.set_defaults(func = process_distance_feature)
+
+
+def process_discrete(
+        group='all',*,
+        bed_file,
+        regions_file,
+        feature_name,
+        output,
+        null='.',
+        class_priority=None,
+        column=4,
+):
+
+    discrete_features = make_discrete_features(
+        genomic_features=bed_file,
+        regions_file=regions_file,
+        null=null,
+        class_priority=class_priority,
+        column=column,
+    )
+
+    print(f'#feature={feature_name}', file=output)
+    print('#type=discrete', file=output)
+    print(f'#group={group}', file = output)
+    print(*discrete_features, sep = '\n', file = output)
+
+
+discrete_sub = subparsers.add_parser('ingest-discrete', help = 'Summarize discrete genomic features for some genomic elements.')
+discrete_sub.add_argument('bed-file', type = file_exists, help = 'Bed file of genomic features. Only three columns are required, all other columns are ignored.')
+discrete_sub.add_argument('--regions-file','-r', type = file_exists, required=True,)
+discrete_sub.add_argument('--feature-name','-name', type = str, required=True,)
+discrete_sub.add_argument('--group','-g', type = str, default='all', help = 'Group name for feature.')
+discrete_sub.add_argument('--output','-o', type = argparse.FileType('w'), default=sys.stdout)
+discrete_sub.add_argument('--null','-null', type = str, default='None', help = 'Value to use for missing features.')
+discrete_sub.add_argument('--class-priority','-p', type = str, nargs = '+', default=None, help = 'Priority for resolving multiple classes for a single region.')
+discrete_sub.add_argument('--column','-c', type = posint, default=4, help = 'Column in bed file to use for feature.')
+discrete_sub.set_defaults(func = process_discrete)
 
 
 def write_dataset(

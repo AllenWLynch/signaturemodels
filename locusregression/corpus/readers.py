@@ -20,7 +20,7 @@ class Region:
     chromosome: str
     start: int
     end: int
-    annotation: dict = None
+    id: int
 
     def __len__(self):
         return self.end - self.start
@@ -84,11 +84,13 @@ class CorpusReader:
                 np.ones((1, len(windows)))
             )
         
-        features, feature_names = cls.read_correlates(
-            correlates_file, required_columns=None
-        )
-
-        assert len(features) == len(windows), 'The number of correlates provided in {} does not match the number of specified windows.\n'\
+        correlates_dict = cls.read_correlates(
+                            correlates_file, 
+                            required_columns=None
+                        )
+        
+        assert len(correlates_dict[next(correlates_dict.keys())]['values']) == len(windows), \
+                'The number of correlates provided in {} does not match the number of specified windows.\n'\
                 'Each window must have correlates provided.'
 
         samples = cls.collect_vcfs(
@@ -117,10 +119,10 @@ class CorpusReader:
         if shared:
             logger.info('Sharing exposures between samples.')
 
+
         return Corpus(
             samples = InMemorySamples(samples),
-            feature_names = feature_names,
-            X_matrix = features.T,
+            features = correlates_dict,
             trinuc_distributions = trinuc_distributions.T,
             shared_exposures = shared,
             name = corpus_name,
@@ -128,7 +130,7 @@ class CorpusReader:
                 'regions_file' : os.path.abspath(regions_file),
                 'fasta_file' : os.path.abspath(fasta_file),
                 'correlates_file' : os.path.abspath(correlates_file),
-                'trinuc_file' : os.path.abspath(trinuc_file),
+                'trinuc_file' : os.path.abspath(trinuc_file) if not trinuc_file is None else None,
                 'chr_prefix' : str(chr_prefix),
             }
         )
@@ -169,63 +171,95 @@ class CorpusReader:
         required_columns = None, sep = '\t'):
         
         logger.info('Reading genomic features ...')
+
+        type_map = {
+                    'continuous' : float,
+                    'discrete' : str,
+                    'distance' : int,
+                    }
         
-        numcols = None
+        
         correlates = []
         with open(correlates_file, 'r') as f:
             
+            cols = next(f).strip().split(sep)
+            assert len(cols) > 0
+            numcols = len(cols)
+            
+            if not all(col.startswith('#feature=') for col in cols):
+                raise ValueError('The first line of the tsv file must be columns of "#feature=" followed by the feature name.\n'
+                                    'e.g. #feature=H3K27ac\n'
+                                    'The first line of the file will be treated as column names.'
+                                )
+
+            feature_names = [col.removeprefix('#feature=') for col in cols]
+
+            if required_columns is None:
+                logger.info('Using correlates: ' + ', '.join(feature_names))
+            else:
+                missing_cols = set(required_columns).difference(feature_names)
+
+                if len(missing_cols) > 0:
+                    raise ValueError('The required correlate {} was missing from file: {}.\n All correlates must be specified for all samples'.format(
+                            's ' + ', '.join(missing_cols) if len(missing_cols) > 1 else ' ' + list(missing_cols)[0], correlates_file
+                        ))
+
+            cols = next(f).strip().split(sep)
+            if not all(col.startswith('#type=') for col in cols):
+                raise ValueError('The second line of the tsv file must be columns of "#type=" followed by the feature type.\n'
+                                    'e.g. #type=continuous\n'
+                                    'The second line of the file will be treated as column names.'
+                                )
+            
+            feature_types= [col.removeprefix('#type=') for col in cols]
+            
+            if not all(t in ['continuous', 'discrete', 'distance'] for t in feature_types):
+                raise ValueError('Found invalid types. The feature type must be either "continuous", "discrete", or "distance".')
+            
+            cols = next(f).strip().split(sep)
+            if not all(col.removeprefix('#group=') for col in cols):
+                raise ValueError('The third line of the tsv file must be columns of "#group=" followed by the feature group.\n'
+                                    'e.g. #group=replication timing\n'
+                                    'The third line of the file will be treated as column names.'
+                                )
+            
+            groups = [col.strip('#group=') for col in cols]
+            
             for lineno, txt in enumerate(f):
-                
+                lineno+=3
+
                 line = txt.strip().split(sep)
-
-                if lineno == 0:
-                    numcols = len(line)
-                    if not txt[0] == '#':
-                        logger.warn(
-                            'The first line of the tsv file does not start with colnames prefixed with "#".\n'
-                            'e.g. #chr\t#start\t#end\t#feature1 ... etc.'
-                            'The first line of the file will be treated as column names.'
-                            )
-
-                    assert len(line) >= 1, 'Cannot run algorithm without at least one feature provided.'
-                    columns = [col.strip('#') for col in line]
-
-                    if required_columns is None:
-                        logger.info('Using correlates: ' + ', '.join(columns))
-                    else:
-                        missing_cols = set(required_columns).difference(columns)
-
-                        if len(missing_cols) > 0:
-                            raise ValueError('The required correlate {} was missing from file: {}.\n All correlates must be specified for all samples'.format(
-                                    's ' + ', '.join(missing_cols) if len(missing_cols) > 1 else ' ' + list(missing_cols)[0], correlates_file
-                                ))
-                        else:
-                            assert columns == required_columns, 'Columns must be provided in the same order for all correlates tsv files.'
-
-                else:
-                    assert len(line) == numcols, 'Record {}\non line {} has inconsistent number of columns. Expected {} columns, got {}.'.format(
-                            txt, lineno, numcols, len(line)
-                        )
-                        
-                    if any([f == '.' for f in line]):
-                        raise ValueError('A value was not recorded for window {}: {}'
-                                         'If this entry was made by "bedtools map", this means that the genomic feature file did not cover all'
-                                         ' of the windows. Consider imputing a feature value or removing those windows.'.format(
-                                             lineno, txt
-                                         )
+                assert len(line) == numcols, 'Record {}\non line {} has inconsistent number of columns. Expected {} columns, got {}.'.format(
+                        txt, lineno, numcols, len(line)
+                    )
+                    
+                if any([f == '.' and t in ('continuous','distance') for f,t in zip(line, feature_types)]):
+                    raise ValueError('A value was not recorded for window {}: {} for a continous feature.'
+                                        'If this entry was made by "bedtools map", this means that the genomic feature file did not cover all'
+                                        ' of the windows. Consider imputing a feature value or removing those windows.'.format(
+                                            lineno, txt
                                         )
-                    try:
-                        
-                        correlates.append(
-                            [float(f) for f in line]
-                        )
+                                    )
+                try:
+                    correlates.append(
+                        [type_map[t](f) for f,t in zip(line, feature_types)]
+                    )
 
-                    except ValueError as err:
-                        raise ValueError('Could not ingest line {}: {}'.format(lineno, txt)) from err
+                except ValueError as err:
+                    raise ValueError('Could not ingest line {}: {}'.format(lineno, txt)) from err
 
-        correlates = np.array(correlates)
-
-        return correlates, columns
+        correlates_dict = {}
+        for name, _type, group, vals in zip(
+            feature_names, feature_types, groups, zip(*correlates)
+        ):
+            
+            correlates_dict[name] = {
+                'type' : _type,
+                'group' : group,
+                'values' : np.array(vals).astype(type_map[_type]),
+            }
+            
+        return correlates_dict
     
 
     @staticmethod
@@ -239,9 +273,7 @@ class CorpusReader:
         with open(regions_file, 'r') as f:
             
             for lineno, txt in enumerate(f):
-
                 if not txt[0] == '#':
-                
                     line = txt.strip().split(sep)
                     assert len(line) >= 3, 'Bed files have three or more columns: chr, start, end, ...'
 
@@ -249,23 +281,12 @@ class CorpusReader:
                         logger.warn(
                             'The only information ingested from the "regions_file" is the chr, start, end, and name of genomic bins. All other fields are ignored.'
                         )
-
                     try:
-                        
                         windows.append(
-                            Region(chromosome=line[0], start=int(line[1]), end=int(line[2]))
+                            Region(chromosome=line[0], start=int(line[1]), end=int(line[2]), id=int(line[3]))
                         )
-                        
                     except ValueError as err:
                         raise ValueError('Could not ingest line {}: {}'.format(lineno, txt)) from err
-                    
-
-        last_w = windows[0]
-        for w in windows[1:]:
-            assert w.chromosome > last_w.chromosome or (w.chromosome == last_w.chromosome) and w.start > last_w.start,\
-                'Provided windows must be in sorted order! Run "sort -k1,1 -k2,2n <windows>" to sort them.\n'\
-                f'Last window: {last_w.chromosome}-{last_w.start}, next window: {w.chromosome}-{w.start}\n'\
-                'IF YOU HAVE ALREADY MADE CORRELATES AND EXPOSURES TSVs, DO NOT FORGET TO REORDER THOSE SO THAT THEY MATCH WITH THE CORRECT WINDOWS!'
 
         return windows
 
@@ -292,6 +313,8 @@ class CorpusReader:
         else:
             _exposures = list(exposures)
 
+            assert len(_exposures) == len(vcf_files), \
+                'If providing exposures, provide one for the whole corpus, or one per sample.'
 
         read_vcf_fn = partial(
             SBSSample.featurize_mutations,

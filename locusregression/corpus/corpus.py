@@ -12,15 +12,13 @@ class CorpusMixin(ABC):
         metadata = {},*,
         name,
         samples,
-        feature_names,
-        X_matrix,
+        features,
         trinuc_distributions,
         shared_exposures,
     ):
         self.name = name
         self.samples = samples
-        self.feature_names = feature_names
-        self.X_matrix = X_matrix
+        self.features = features
         self.trinuc_distributions = trinuc_distributions
         self._shared_exposures = shared_exposures
         self.metadata = metadata
@@ -30,7 +28,11 @@ class CorpusMixin(ABC):
 
     @property
     def shape(self):
-        return self.X_matrix.shape
+        return (len(self.features), len(next(iter(self.features.values()))['values']))
+    
+    @property
+    def feature_names(self):
+        return list(self.features.keys())
 
     @property
     def exposures(self):
@@ -136,8 +138,13 @@ def save_corpus(corpus, filename):
             metadata_group.attrs[key] = val
 
         data_group.create_dataset('trinuc_distributions', data = corpus.trinuc_distributions)
-        data_group.create_dataset('X_matrix', data = corpus.X_matrix)
-        data_group['X_matrix'].attrs['feature_names'] = corpus.feature_names
+        features_group = data_group.create_group('features')
+
+        for feature_name, feature in corpus.features.items():
+            feature_group = features_group.create_group(feature_name)
+            feature_group.attrs['type'] = feature['type']
+            feature_group.attrs['group'] = feature['group']
+            feature_group.create_dataset('values', data = feature['values'])
 
         samples_group = f.create_group('samples')
 
@@ -145,91 +152,67 @@ def save_corpus(corpus, filename):
             sample.create_h5_dataset(samples_group, str(i))
 
 
-def overwrite_corpus_features(filename, X_matrix, feature_names):
+def _read_features(data):
 
-    n_features, n_loci_X = X_matrix.shape
-    assert len(feature_names) == n_features, 'The number of feature names provided must match the first dimension of the provided X_matrix.'
+    features = {}
+    feature_groups = data['data/features']
+    
+    for feature_name in feature_groups.keys():
+        feature_group = feature_groups[feature_name]
+        features[feature_name] = {
+            'type' : feature_group.attrs['type'],
+            'group' : feature_group.attrs['group'],
+            'values' : feature_group['values'][...],
+        }
 
-    with h5.File(filename, 'a') as f:
+    return features
 
-        _, n_loci = f['data/trinuc_distributions'].shape
 
-        assert n_loci_X == n_loci, \
-            f'The new provided feature matrix does not have the required number of loci (Expected {n_loci}, got {n_loci_X}).'
+def _load_corpus(filename, sample_obj):
 
-        data_group = f['data']
+    with h5.File(filename, 'r') as f:
 
-        old_feature_names = data_group['X_matrix'].attrs['feature_names']
-        old_features = data_group['X_matrix'][...]
+        is_shared = f['data'].attrs['shared_exposures']
 
-        try:
-            del data_group['X_matrix']
-            data_group.create_dataset('X_matrix', data = X_matrix)
-            data_group['X_matrix'].attrs['feature_names'] = feature_names
+        if 'metadata' in f.keys():
+            metadata = {
+                key : val for key, val in f['metadata'].attrs.items()
+            }
+        else:
+            metadata = {}
 
-        except Exception as err:
-            
-            if 'X_matrix' in data_group.keys():
-                del data_group['X_matrix']
 
-            data_group.create_dataset('X_matrix', data = old_features)
-            data_group['X_matrix'].attrs['feature_names'] = old_feature_names
-            raise err
-        
+        return Corpus(
+            trinuc_distributions = f['data/trinuc_distributions'][...],
+            features = _read_features(f),
+            samples = sample_obj,
+            shared_exposures=is_shared,
+            name = f['data'].attrs['name'],
+            metadata=metadata
+        )
+
 
 
 def load_corpus(filename):
 
     with h5.File(filename, 'r') as f:
+        samples = InMemorySamples([
+            SBSSample.read_h5_dataset(f, f'samples/{i}')
+            for i in range(len(f['samples'].keys()))
+        ])
 
-        is_shared = f['data'].attrs['shared_exposures']
-
-        if 'metadata' in f.keys():
-            metadata = {
-                key : val for key, val in f['metadata'].attrs.items()
-            }
-        else:
-            metadata = {}
-
-        
-
-        return Corpus(
-            trinuc_distributions = f['data/trinuc_distributions'][...],
-            X_matrix = f['data/X_matrix'][...],
-            feature_names = f['data/X_matrix'].attrs['feature_names'],
-            samples = InMemorySamples([
-                SBSSample.read_h5_dataset(f, f'samples/{i}')
-                for i in range(len(f['samples'].keys()))
-            ]),
-            shared_exposures=is_shared,
-            name = f['data'].attrs['name'],
-            metadata=metadata
-        )
-
+    return _load_corpus(
+        filename,
+        samples,
+    )
+    
 
 def stream_corpus(filename):
 
-    with h5.File(filename, 'r') as f:
-
-        is_shared = f['data'].attrs['shared_exposures']
-
-        if 'metadata' in f.keys():
-            metadata = {
-                key : val for key, val in f['metadata'].attrs.items()
-            }
-        else:
-            metadata = {}
-            
-
-        return Corpus(
-            trinuc_distributions = f['data/trinuc_distributions'][...],
-            X_matrix = f['data/X_matrix'][...],
-            feature_names = f['data/X_matrix'].attrs['feature_names'],
-            samples = SampleLoader(filename),
-            shared_exposures=is_shared,
-            name = f['data'].attrs['name'],
-            metadata=metadata
-        )
+    return _load_corpus(
+        filename,
+        SampleLoader(filename)
+    )
 
 
 def train_test_split(corpus, seed = 0, train_size = 0.7):
@@ -288,8 +271,7 @@ class Corpus(CorpusMixin):
 
         return Corpus(
             samples = self.samples.subset(subset_idx),
-            feature_names = self.feature_names,
-            X_matrix = self.X_matrix,
+            features=self.features,
             trinuc_distributions = self.trinuc_distributions,
             shared_exposures = self.shared_exposures,
             name = self.name,
@@ -301,7 +283,7 @@ class Corpus(CorpusMixin):
 
         subsample_lookup = dict(zip(loci, np.arange(len(loci)).astype(int)))
         
-        bool_array = np.zeros(self.X_matrix.shape[1]).astype(bool)
+        bool_array = np.zeros(self.shape[1]).astype(bool)
         bool_array[loci] = True
 
         #total_mutations = 0
@@ -325,9 +307,15 @@ class Corpus(CorpusMixin):
         
         return Corpus(
             samples = InMemorySamples(new_samples),
-            X_matrix=self.X_matrix[:,loci],
+            features = {
+                feature_name : {
+                    'type' : v['type'], 
+                    'group' : v['group'],
+                    'values' : v['values'][loci]
+                }
+                for feature_name, v in self.features.items()
+            },
             trinuc_distributions = self.trinuc_distributions[:,loci],
-            feature_names = self.feature_names,
             shared_exposures = self.shared_exposures,
             name = self.name,
         )
