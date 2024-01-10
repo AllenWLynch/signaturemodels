@@ -40,27 +40,3 @@ class GBTRegressor(LocusRegressor):
     def sample_params(cls, trial):
         return dict()
     
-
-    def plot_summary(self, fontsize = 7):
-        
-        _, ax = plt.subplots(
-                            self.n_components,1,
-                            figsize = (5.5, 1.25*self.n_components),
-                            sharex = 'col',
-                            )
-        
-        for i in range(self.n_components):
-
-            self.plot_signature(i, ax = ax[i], normalization='global', fontsize=fontsize)
-            ax[i].set(xlabel = '', ylabel = 'Component ' + str(i), title = '')
-            ax[i].yaxis.label.set_size(fontsize)
-
-        return ax
-    
-
-    def plot_compare_coefficients(self,*args,**kw):
-        raise NotImplementedError(
-            'GBTRegressor does not support plot_compare_coefficients'
-        )
-        
-

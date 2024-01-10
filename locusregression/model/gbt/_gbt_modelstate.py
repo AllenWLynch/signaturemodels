@@ -4,22 +4,11 @@ from numpy import array
 from functools import partial
 
 
-'''def _multinomial_r2(*, y_true, raw_prediction, design_matrix, sample_weight = None, n_threads = 1):
-        
-        loss_kw = dict(
-            y_true = y_true,
-            design_matrix = design_matrix,
-            sample_weight = sample_weight,
-            n_threads = n_threads,
-        )
-
-        fit_ll = -_multinomial_loss(
-            **loss_kw,
-            raw_prediction = raw_prediction,
-        )'''
-
-
-def _get_model_fn(design_matrix, X_tild, 
+def _get_model_fn(*,
+                  design_matrix,
+                  features,
+                  categorical_features,
+                  interaction_groups,
                   tree_learning_rate = 0.1, 
                   max_depth = 5,
                   l2_regularization = 0.0,
@@ -38,10 +27,12 @@ def _get_model_fn(design_matrix, X_tild,
                 validation_fraction=0.2,
                 n_iter_no_change=n_iter_no_change,
                 l2_regularization=l2_regularization,
+                categorical_features=categorical_features,
+                interaction_cst = interaction_groups,
                 verbose=False,
             )
     
-    model.fit_binning(X_tild)
+    model.fit_binning(features)
 
     return model
 
@@ -72,10 +63,13 @@ class GBTModelState(ModelState):
         self.predict_from = [None]*self.n_components
 
     
-    def update_rate_model(self, sstats, learning_rate):
+    def update_rate_model(self, sstats, corpus_states, learning_rate):
         
-        for k, (X,y, sample_weights, raw_predictions, design_matrix) in enumerate(
-            self._get_features(sstats)
+        design_matrix = self._get_design_matrix(corpus_states)
+        X = self.feature_transformer.transform(corpus_states)
+
+        for k, (y, sample_weights, lograte_prediction) in enumerate(
+            self._get_targets(sstats, corpus_states)
         ):
             
             rate_model = self.rate_models[k]
@@ -92,7 +86,7 @@ class GBTModelState(ModelState):
                 y,
                 sample_weight = sample_weights,
                 design_matrix = design_matrix,
-                raw_predictions = raw_predictions.reshape((-1,1)),
+                raw_predictions = lograte_prediction.reshape((-1,1)),
                 svi_shrinkage = learning_rate,
             )
 
@@ -103,13 +97,14 @@ class GBTCorpusState(CorpusState):
     
     def update_mutation_rate(self, model_state):
 
-        _, X_tild = model_state.feature_transformer(
-            [self.name],[self.X_matrix]
-        )
+        #design_matrix = model_state._get_design_matrix({self.name : self})
+        X = model_state.feature_transformer.transform(
+                                    {self.name : self}
+                                )
 
         self._logmu = array([
             model_state.rate_models[k]._raw_predict_from(
-                X_tild, 
+                X, 
                 self._logmu[k].reshape((-1,1)), 
                 from_iteration = model_state.predict_from[k]
             ).ravel()

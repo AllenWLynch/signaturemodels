@@ -1,67 +1,20 @@
 
 import numpy as np
-from ._dirichlet_update import update_alpha, update_tau
+from ._dirichlet_update import update_alpha
 from ..simulation import SimulatedCorpus, COSMIC_SIGS
 from sklearn.linear_model import PoissonRegressor
-from sklearn.preprocessing import OneHotEncoder
 from scipy.special import logsumexp
+from sklearn.preprocessing import OneHotEncoder
+from ._feature_transformer import FeatureTransformer
 
-def _get_linear_model(*args):
+
+def _get_linear_model(*args, **kw):
     return PoissonRegressor(
         alpha = 0, 
         solver = 'newton-cholesky',
         warm_start = True,
         fit_intercept = False,
     )
-
-
-class FeatureTransformer:
-
-    def __init__(self):
-        pass
-        
-    def fit(self, corpus_states):
-        
-        corpus_names = list(corpus_states.keys())
-
-        self.corpus_intercept_encoder_ = OneHotEncoder(
-                        sparse_output=True,
-                        drop = None,
-                    ).fit(
-                        np.array(corpus_names).reshape((-1,1))
-                    )
-        
-        self.feature_names_ = list(corpus_states[corpus_names[0]].feature_names)
-        
-        return self
-
-
-    def transform(self, corpus_states):
-
-        for corpus_state in corpus_states.values():
-            assert corpus_state.feature_names == self.feature_names_
-
-        n_loci = next(iter(corpus_states.values())).n_loci
-
-        concatenated_matrix = np.vstack([
-            np.hstack([
-                corpus_state.features[feature]['values'][:,None]
-                for feature in self.feature_names_
-            ])
-            for corpus_state in corpus_states.values()
-        ])
-        
-        labels = np.concatenate([[name]*n_loci for name in corpus_states.keys()])
-        
-        # One-hot encode the labels
-        encoded_labels = self.corpus_intercept_encoder_.transform(
-            labels.reshape((-1,1))
-        )
-
-        # Concatenate the encoded labels with the concatenated matrix
-        return (encoded_labels, concatenated_matrix)
-
-
 
 class ModelState:
 
@@ -111,10 +64,21 @@ class ModelState:
 
         #self.corpus_encoder = self._fit_corpus_encoder(corpus_states)
         self.feature_transformer = FeatureTransformer().fit(corpus_states)
+        self._fit_corpus_encoder(corpus_states)
 
-        design_matrix, X_tild = self.feature_transformer.transform(corpus_states)
+        design_matrix = self._get_design_matrix(corpus_states)
+        X = self.feature_transformer.transform(corpus_states)
 
-        self.rate_models = [get_model_fn(design_matrix, X_tild) for _ in range(n_components)]
+        self.rate_models = [
+            get_model_fn(
+                design_matrix = design_matrix, 
+                features = X,
+                categorical_features = self.feature_transformer.list_categorical_features(),
+                interaction_groups = self.feature_transformer.list_feature_groups(),
+            ) 
+            for _ in range(n_components)
+        ]
+
         self.n_distributions = design_matrix.shape[1]
 
         self.context_models = [
@@ -122,6 +86,28 @@ class ModelState:
             for _ in range(n_components)
         ]
 
+
+    def _fit_corpus_encoder(self, corpus_states):
+
+        corpus_names = list(corpus_states.keys())
+
+        self.corpus_intercept_encoder_ = OneHotEncoder(
+                        sparse_output=True,
+                        drop = None,
+                    ).fit(
+                        np.array(corpus_names).reshape((-1,1))
+                    )
+        
+
+    def _get_design_matrix(self, corpus_states):
+        n_loci = next(iter(corpus_states.values())).n_loci
+        labels = np.concatenate([[name]*n_loci for name in corpus_states.keys()])
+        # One-hot encode the labels
+        encoded_labels = self.corpus_intercept_encoder_.transform(
+            labels.reshape((-1,1))
+        )
+        return encoded_labels
+    
 
     def _fix_signatures(self, fix_signatures,*,
                         n_components, 
@@ -253,7 +239,9 @@ class ModelState:
 
     def update_rate_model(self, sstats, corpus_states, learning_rate):
 
-        design_matrix, X = self.feature_transformer.transform(corpus_states)
+        design_matrix = self._get_design_matrix(corpus_states)
+        X = self.feature_transformer.transform(corpus_states)
+
         X = np.hstack([X, design_matrix.toarray()])
 
         for k, (y, sample_weights, lograte_prediction) in enumerate(
@@ -360,11 +348,12 @@ class CorpusState(ModelState):
 
     def update_mutation_rate(self, model_state):
         
-        design_matrix, X_tild = model_state.feature_transformer.transform(
+        design_matrix = model_state._get_design_matrix({self.name : self})
+        X = model_state.feature_transformer.transform(
                                     {self.name : self}
                                 )
 
-        X = np.hstack([X_tild, design_matrix.toarray()])
+        X = np.hstack([X, design_matrix.toarray()])
 
         self._logmu = np.array([
             np.log(model_state.rate_models[k].predict(X).T)

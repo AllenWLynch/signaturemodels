@@ -379,7 +379,7 @@ class MetaCorpus(CorpusMixin):
         assert len(set([corpus.name for corpus in corpuses])) == len(corpuses), \
             'All corpuses must have unique names.'
         assert all([np.all(corpuses[0].feature_names == corpus.feature_names) for corpus in corpuses])
-        assert all([corpuses[0].X_matrix.shape == corpus.X_matrix.shape for corpus in corpuses])
+        assert all([corpuses[0].shape == corpus.shape for corpus in corpuses])
 
         self._corpuses = corpuses
         self.idx_starts = np.cumsum(
@@ -396,7 +396,7 @@ class MetaCorpus(CorpusMixin):
 
     @property
     def shape(self):
-        return self.corpuses[0].X_matrix.shape
+        return self.corpuses[0].shape
 
 
     def __len__(self):
