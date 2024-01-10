@@ -15,6 +15,54 @@ def _get_linear_model(*args):
     )
 
 
+class FeatureTransformer:
+
+    def __init__(self):
+        pass
+        
+    def fit(self, corpus_states):
+        
+        corpus_names = list(corpus_states.keys())
+
+        self.corpus_intercept_encoder_ = OneHotEncoder(
+                        sparse_output=True,
+                        drop = None,
+                    ).fit(
+                        np.array(corpus_names).reshape((-1,1))
+                    )
+        
+        self.feature_names_ = list(corpus_states[corpus_names[0]].feature_names)
+        
+        return self
+
+
+    def transform(self, corpus_states):
+
+        for corpus_state in corpus_states.values():
+            assert corpus_state.feature_names == self.feature_names_
+
+        n_loci = next(iter(corpus_states.values())).n_loci
+
+        concatenated_matrix = np.vstack([
+            np.hstack([
+                corpus_state.features[feature]['values'][:,None]
+                for feature in self.feature_names_
+            ])
+            for corpus_state in corpus_states.values()
+        ])
+        
+        labels = np.concatenate([[name]*n_loci for name in corpus_states.keys()])
+        
+        # One-hot encode the labels
+        encoded_labels = self.corpus_intercept_encoder_.transform(
+            labels.reshape((-1,1))
+        )
+
+        # Concatenate the encoded labels with the concatenated matrix
+        return (encoded_labels, concatenated_matrix)
+
+
+
 class ModelState:
 
     n_contexts = 32
@@ -60,12 +108,11 @@ class ModelState:
         else:
             self.fixed_signatures = [False]*n_components
         
-        self.corpus_encoder = self._fit_corpus_encoder(corpus_states)
 
-        design_matrix, X_tild = self.feature_transformer(
-            corpus_states.keys(), 
-            [corpus_state.X_matrix for corpus_state in corpus_states.values()]
-        )
+        #self.corpus_encoder = self._fit_corpus_encoder(corpus_states)
+        self.feature_transformer = FeatureTransformer().fit(corpus_states)
+
+        design_matrix, X_tild = self.feature_transformer.transform(corpus_states)
 
         self.rate_models = [get_model_fn(design_matrix, X_tild) for _ in range(n_components)]
         self.n_distributions = design_matrix.shape[1]
@@ -74,37 +121,6 @@ class ModelState:
             PoissonRegressor(alpha = 0, fit_intercept=True, solver='newton-cholesky', warm_start=True)
             for _ in range(n_components)
         ]
-
-
-    def feature_transformer(self, corpus_names, X_matrices):
-        
-        #corpus_names = sstats.corpus_names; X_matrices = sstats.X_matrices
-        _, n_loci = X_matrices[0].shape
-        # Concatenate the matrices
-        concatenated_matrix = np.hstack(X_matrices).T
-
-        labels = np.concatenate([[name]*n_loci for name in corpus_names])
-        # One-hot encode the labels
-        encoded_labels = self.corpus_encoder.transform(
-            labels.reshape((-1,1))
-        )
-
-        # Concatenate the encoded labels with the concatenated matrix
-        return (encoded_labels, concatenated_matrix)
-    
-
-    def _fit_corpus_encoder(self, corpus_states):
-    
-        corpus_names = list(corpus_states.keys())
-
-        encoder = OneHotEncoder(
-                        sparse_output=True,
-                        drop = None,
-                    ).fit(
-                        np.array(corpus_names).reshape((-1,1))
-                    )
-        
-        return encoder
 
 
     def _fix_signatures(self, fix_signatures,*,
@@ -144,7 +160,7 @@ class ModelState:
         return self.__getattribute__(param)
 
 
-    def update_rho(self, sstats, learning_rate):
+    def update_rho(self, sstats, corpus_states, learning_rate):
 
         new_rho = np.vstack([
             np.expand_dims(1 + sstats.mutation_sstats[k], axis = 0)
@@ -154,12 +170,13 @@ class ModelState:
         self._svi_update('omega', new_rho, learning_rate)
 
     
-    def _lambda_update(self, k, sstats):
+    def _lambda_update(self, k, sstats, corpus_states):
 
-        context_exposure = sum([
-            sstats.trinuc_distributions @ (exposure_.ravel() * np.exp(theta_l[k]))
-            for theta_l, exposure_ in zip(sstats.logmus, sstats.exposures)
-        ])
+        def _get_context_exposure(corpus_state):
+            return corpus_state.trinuc_distributions @ \
+                (corpus_state.exposures.ravel() * np.exp(corpus_state.logmu[k]))
+
+        context_exposure = sum(map(_get_context_exposure, corpus_states.values()))
 
         y = sstats.context_sstats[k] #+ 1
 
@@ -170,22 +187,23 @@ class ModelState:
             .fit(
                 X, 
                 y/context_exposure,
-                sample_weight = context_exposure
+                sample_weight=context_exposure
             ).coef_
         )
 
     
-    def update_lambda(self, sstats, learning_rate):
+    def update_lambda(self, sstats, corpus_states, learning_rate):
         
         _delta = np.array([
-            self._lambda_update(k, sstats)
+            self._lambda_update(k, sstats, corpus_states)
             for k in range(self.n_components)
         ])
 
         self._svi_update('delta', _delta, learning_rate)
 
     
-    def _convert_beta_sstats_to_array(self, beta_sstats, len):
+    @staticmethod
+    def _convert_beta_sstats_to_array(k, sstats, len):
         
         def statsdict_to_arr(stats, k):
             arr = np.zeros(len)
@@ -193,71 +211,66 @@ class ModelState:
                 arr[l] = v[k]
             return arr
         
-        for k in range(self.n_components):
-            yield np.concatenate([
+        return np.concatenate([
                 statsdict_to_arr(corpusstats, k)
-                for corpusstats in beta_sstats
+                for corpusstats in sstats.beta_sstats
             ])
 
 
-    def _get_features(self, sstats):
+    def _get_nucleotide_effect(self, k, trinuc_distributions):
+        return (self.n_contexts * self.delta[k]/self.delta[k].sum()) @ trinuc_distributions
+    
 
-        def _get_nucleotide_effect(k, sstats):
-            return np.repeat(
-                (self.n_contexts * self.delta[k]/self.delta[k].sum()) @ sstats.trinuc_distributions,
-                len(sstats.X_matrices)
+    def _get_targets(self, sstats, corpus_states):
+
+        trinuc_matrix = next(iter(corpus_states.values())).trinuc_distributions
+        num_corpuses = len(corpus_states); n_bins=trinuc_matrix.shape[1]
+
+        exposures = np.concatenate(
+            [corpus_states[name].exposures for name in sstats.corpus_names]
+        ).ravel()
+
+        for k in range(self.n_components):
+
+            current_lograte_prediction = np.concatenate(
+                [corpus_states[name].logmu[k] for name in sstats.corpus_names]
+            ).ravel()
+
+            context_effect = np.repeat(
+                self._get_nucleotide_effect(k, trinuc_matrix),
+                num_corpuses
             )
-        
-        n_samples = sstats.X_matrices[0].shape[1]
 
-        design_matrix, X_cat = self.feature_transformer(
-            sstats.corpus_names, sstats.X_matrices
-        )
+            sample_weights = exposures * context_effect
+            target = self._convert_beta_sstats_to_array(k, sstats, n_bins)
 
-        exposures = np.concatenate(sstats.exposures).ravel()
-        
-        for k, beta_arr in enumerate(
-            self._convert_beta_sstats_to_array(sstats.beta_sstats, n_samples)
-        ):  
+            yield (
+                target/sample_weights,
+                sample_weights,
+                current_lograte_prediction
+            )        
 
-            current_lograte_prediction = np.concatenate([logmus[k] for logmus in sstats.logmus])
-            #
-            # For poisson model with exposures, have to divide the observations by the exposures
-            # then also provide the exposures as sample weights
-            #
-            signature_exposures = exposures.copy() * _get_nucleotide_effect(k, sstats)
 
-            yield(
-                X_cat,
-                beta_arr/signature_exposures,
-                signature_exposures,
-                current_lograte_prediction.ravel(),
-                design_matrix,
-            )
-        
-        
+    def update_rate_model(self, sstats, corpus_states, learning_rate):
 
-    def update_rate_model(self, sstats, learning_rate):
+        design_matrix, X = self.feature_transformer.transform(corpus_states)
+        X = np.hstack([X, design_matrix.toarray()])
 
-        for k, (X,y, sample_weights, _, design_matrix) in enumerate(
-            self._get_features(sstats)
+        for k, (y, sample_weights, lograte_prediction) in enumerate(
+            self._get_targets(sstats, corpus_states)
         ):
             
             # store the current model state (ignore the intercept fits)
             try:
                 old_coef = self.rate_models[k].coef_.copy()
             except AttributeError:
-                old_coef = np.zeros(X.shape[1] + design_matrix.shape[1])
-            
-            # add the design matrix to the features
-            # to encode intercept terms
-            X = np.hstack([X, design_matrix.toarray()])
+                old_coef = np.zeros(X.shape[1])            
 
             # update the model with the new suffstats
             self.rate_models[k].fit(
                 X, 
                 y,
-                sample_weight = sample_weights,
+                sample_weight=sample_weights,
             )
 
             # merge the new model state with the old
@@ -267,20 +280,12 @@ class ModelState:
                 learning_rate
             )
 
-
-    def update_tau(self, sstats, learning_rate):
-        
-        _tau = update_tau(self.beta_mu, self.beta_nu)
-        
-        self._svi_update('tau', _tau, learning_rate)
-
-
-    def update_state(self, sstats, learning_rate):
+    def update_state(self, sstats, corpus_states, learning_rate):
         
         update_params = ['rate_model','lambda','rho']
         
         for param in update_params:
-            self.__getattribute__('update_' + param)(sstats, learning_rate) # call update function
+            self.__getattribute__('update_' + param)(sstats, corpus_states, learning_rate) # call update function
 
         
 
@@ -311,8 +316,6 @@ class CorpusState(ModelState):
             self.n_components, self.n_loci, self.dtype
         )
 
-        #if self.corpus.shared_exposures:
-        #    self._log_denom = self._calc_log_denom(self.corpus.exposures)
         
     def _get_baseline_prediction(self, n_components, n_loci, dtype):
         return np.zeros((n_components, n_loci), dtype = dtype)
@@ -352,15 +355,14 @@ class CorpusState(ModelState):
     def _calc_log_denom(self, model_state, exposures):
         # (KxC) @ (CxL) |-> (KxL)
         logits = self._get_mutation_rate_logits(model_state, exposures)
-        #np.log(model_state.delta @ self.trinuc_distributions) + self._logmu + np.log(exposures)
         return logsumexp(logits, axis = 1, keepdims = True)
 
 
     def update_mutation_rate(self, model_state):
         
-        design_matrix, X_tild = model_state.feature_transformer(
-            [self.name],[self.X_matrix]
-        )
+        design_matrix, X_tild = model_state.feature_transformer.transform(
+                                    {self.name : self}
+                                )
 
         X = np.hstack([X_tild, design_matrix.toarray()])
 
@@ -410,10 +412,13 @@ class CorpusState(ModelState):
         return self.corpus.trinuc_distributions
     
     @property
-    def X_matrix(self):
-        return self.corpus.X_matrix
+    def features(self):
+        return self.corpus.features
     
     @property
     def name(self):
         return self.corpus.name
         
+    @property
+    def feature_names(self):
+        return self.corpus.feature_names

@@ -255,7 +255,7 @@ class LocusRegressor:
         ):
         
         sstat_collections = {
-            corp.name : self.SSTATS.CorpusSstats(corp, model_state, corpus_states[corp.name]) 
+            corp.name : self.SSTATS.CorpusSstats(model_state) 
             for corp in corpus.corpuses
         }
 
@@ -275,7 +275,7 @@ class LocusRegressor:
             sstat_collections[sample.corpus_name] += sample_sstats
             gammas.append(sample_sstats.gamma)
 
-        return self.SSTATS.MetaSstats(sstat_collections, self.model_state), np.vstack(gammas)
+        return self.SSTATS.MetaSstats(sstat_collections), np.vstack(gammas)
         
 
     def _update_mutation_rates(self):
@@ -438,7 +438,7 @@ class LocusRegressor:
 
                 with TimerContext('M-step'):
 
-                    self.model_state.update_state(sstats, learning_rate_fn(epoch))
+                    self.model_state.update_state(sstats, inner_corpus_states, learning_rate_fn(epoch))
                 
                     if epoch >= self.begin_prior_updates and self.empirical_bayes:
                         # wait some # of epochs to update the prior to prevent local minimas
@@ -825,16 +825,54 @@ class LocusRegressor:
 
 
     def plot_summary(self):
+        """
+        Plot the summary of the model.
 
-        fig, ax = plt.subplots(self.n_components,1, 
-                               figsize = (5.5, 1.25*self.n_components), 
-                               sharex = True
+        Returns:
+            ax (matplotlib.axes.Axes): The axes object containing the plot.
+        """
+
+        fig, ax = plt.subplots(self.n_components, 1, 
+                               figsize=(5.5, 1.25*self.n_components), 
+                               sharex=True
                                )
-        
+
         for i in range(self.n_components):
-            self.plot_signature(i, ax = ax[i])
+            self.plot_signature(i, ax=ax[i])
             ax[i].title('')
-            ax[i].set_ylabel(self.component_names[i], fontsize = 7)
+            ax[i].set_ylabel(self.component_names[i], fontsize=7)
 
         return ax
+    
+
+    def get_empirical_component_mutation_rate(self, corpus):
+        """
+        Calculate the empirical component mutation rate for a given corpus.
+
+        Parameters:
+        corpus (Corpus): The corpus for which to calculate the empirical component mutation rate.
+
+        Returns:
+        numpy.ndarray: An array containing the empirical component mutation rate.
+        """
+        try:
+            self.corpus_states[corpus.name]
+        except KeyError:
+            raise ValueError(f'Corpus {corpus.name} not found in model.')
+        
+        
+        sstats, _ = self._inference(
+            locus_subsample_rate=1,
+            batch_subsample_rate=1,
+            learning_rate=1,
+            corpus = corpus,
+            model_state = self.model_state,
+            corpus_states = self.corpus_states,
+            gamma = self._init_doc_variables(len(corpus))
+        )
+
+        return np.array(
+            list(self.model_state._convert_beta_sstats_to_array(sstats.beta_sstats[0], self.n_loci))
+        )
+    
         
