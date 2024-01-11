@@ -3,18 +3,14 @@ from ._dirichlet_update import log_dirichlet_expectation, feldmans_r2, dirichlet
 from locusregression.corpus import COSMIC_SORT_ORDER, SIGNATURE_STRINGS, MUTATION_PALETTE
 from locusregression.corpus.sbs_sample import SBSSample
 import locusregression.model._sstats as _sstats
-import locusregression.model._importance_sampling as IS
 from ._model_state import ModelState, CorpusState
 
 # external imports
 import numpy as np
-from scipy.cluster import hierarchy
-from scipy.special import logsumexp
 import time
 import warnings
 import matplotlib.pyplot as plt
 import pickle
-from collections import defaultdict
 import logging
 logger = logging.getLogger(' LocusRegressor')
 
@@ -244,10 +240,10 @@ class LocusRegressor:
         )
 
     
-    def _inference(self,*,
-            locus_subsample_rate,
-            batch_subsample_rate,
-            learning_rate,
+    def _inference(self,
+            locus_subsample_rate=1,
+            batch_subsample_rate=1,
+            learning_rate=1,*,
             corpus,
             model_state,
             corpus_states,

@@ -2,7 +2,7 @@ from .._model_state import ModelState, CorpusState
 from ._hist_gbt import CustomHistGradientBooster
 from numpy import array
 from functools import partial
-
+from sklearn.preprocessing import OrdinalEncoder
 
 def _get_model_fn(*,
                   design_matrix,
@@ -56,6 +56,7 @@ class GBTModelState(ModelState):
                 n_iter_no_change=n_iter_no_change,
                 random_state=kw['random_state'],
             ),
+            categorical_encoder=OrdinalEncoder(max_categories=254),
             **kw
         )
 
@@ -97,7 +98,6 @@ class GBTCorpusState(CorpusState):
     
     def update_mutation_rate(self, model_state):
 
-        #design_matrix = model_state._get_design_matrix({self.name : self})
         X = model_state.feature_transformer.transform(
                                     {self.name : self}
                                 )

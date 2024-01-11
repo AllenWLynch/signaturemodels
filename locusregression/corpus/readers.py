@@ -74,20 +74,14 @@ class CorpusReader:
         windows = cls.read_windows(regions_file, None, sep = '\t')
 
         if len(exposure_files) > 0:
-            exposures = cls.calculate_exposures(
-                windows, 
-                cls.collect_exposures(exposure_files, windows)
-            )
+            exposures = cls.collect_exposures(exposure_files, windows)
         else:
-            exposures = cls.calculate_exposures(
-                windows, 
-                np.ones((1, len(windows)))
-            )
+            exposures = np.ones((1, len(windows)))
         
         correlates_dict = cls.read_correlates(
                             correlates_file, 
                             required_columns=None
-                        )
+                         )
         
         assert len(correlates_dict[next(correlates_dict.keys())]['values']) == len(windows), \
                 'The number of correlates provided in {} does not match the number of specified windows.\n'\
@@ -148,9 +142,7 @@ class CorpusReader:
         with open(exposure_file, 'r') as f:
 
             for lineno, txt in enumerate(f):
-
                 if not txt[0] == '#':
-
                     try:
                         exposures.append( float(txt.strip()) )
                     except ValueError as err:
@@ -376,7 +368,7 @@ class CorpusReader:
 
         trinuc_matrix = np.array(trinuc_matrix) # DON'T (!) add a pseudocount
 
-        return trinuc_matrix/trinuc_matrix.sum(1, keepdims = True)
+        return trinuc_matrix # DON'T (!) normalize, the number of contexts in a window is part of the likelihood
     
 
     @classmethod
@@ -390,15 +382,10 @@ class CorpusReader:
         windows = cls.read_windows(regions_file, None, sep = '\t')
 
         if not exposure_file is None:
-            exposures = cls.calculate_exposures(
-                windows, 
-                cls.collect_exposures(exposure_file, windows)
-            )
+            exposures = cls.collect_exposures(exposure_file, windows)
         else:
-            exposures = cls.calculate_exposures(
-                windows, 
-                np.ones((1, len(windows)))
-            )
+            exposures = np.ones((1, len(windows)))
+
 
         return SBSSample.featurize_mutations(
             vcf_file, 

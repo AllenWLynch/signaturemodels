@@ -32,6 +32,7 @@ class ModelState:
                 genome_trinuc_distribution,
                 dtype,
                 get_model_fn = _get_linear_model,
+                categorical_encoder = OneHotEncoder(sparse=False, drop='first'),
                 **kw,
             ):
         
@@ -63,7 +64,10 @@ class ModelState:
         
 
         #self.corpus_encoder = self._fit_corpus_encoder(corpus_states)
-        self.feature_transformer = FeatureTransformer().fit(corpus_states)
+        self.feature_transformer = FeatureTransformer(
+            categorical_encoder=categorical_encoder,
+        ).fit(corpus_states)
+
         self._fit_corpus_encoder(corpus_states)
 
         design_matrix = self._get_design_matrix(corpus_states)
@@ -164,7 +168,7 @@ class ModelState:
 
         context_exposure = sum(map(_get_context_exposure, corpus_states.values()))
 
-        y = sstats.context_sstats[k] #+ 1
+        y = sstats.context_sstats[k]
 
         X = np.diag(np.ones_like(y))
 
@@ -197,42 +201,52 @@ class ModelState:
                 arr[l] = v[k]
             return arr
         
-        return np.concatenate([
+        return np.array([
                 statsdict_to_arr(corpusstats, k)
                 for corpusstats in sstats.beta_sstats
             ])
 
 
     def _get_nucleotide_effect(self, k, trinuc_distributions):
-        return (self.n_contexts * self.delta[k]/self.delta[k].sum()) @ trinuc_distributions
+        return self.delta[k] @ trinuc_distributions
     
 
     def _get_targets(self, sstats, corpus_states):
-
+        
         trinuc_matrix = next(iter(corpus_states.values())).trinuc_distributions
         num_corpuses = len(corpus_states); n_bins=trinuc_matrix.shape[1]
 
         exposures = np.concatenate(
-            [corpus_states[name].exposures for name in sstats.corpus_names]
-        ).ravel()
+            [corpus_states[name].exposures for name in sstats.corpus_names],
+            axis = 0,
+        )
 
         for k in range(self.n_components):
 
-            current_lograte_prediction = np.concatenate(
+            current_lograte_prediction = np.array(
                 [corpus_states[name].logmu[k] for name in sstats.corpus_names]
-            ).ravel()
+            )
 
             context_effect = np.repeat(
                 self._get_nucleotide_effect(k, trinuc_matrix),
-                num_corpuses
+                num_corpuses, axis = 0
             )
 
-            sample_weights = exposures * context_effect
             target = self._convert_beta_sstats_to_array(k, sstats, n_bins)
 
+            # need to fit an intercept term here to rescale the targets to mean 1.
+            # otherwise, the targets could be so small that the model doesn't learn
+            # because the change in likelihood is so small
+            intercept = target.sum(axis=1, keepdims=True)/(
+                            exposures*context_effect*np.exp(current_lograte_prediction)
+                        ).sum(axis=1, keepdims=True)
+            
+            y = target.ravel()
+            sample_weights = (exposures * context_effect * intercept).ravel()
+
             yield (
-                target/sample_weights,
-                sample_weights,
+                y/sample_weights,
+                sample_weights/sample_weights.mean(), # rescale the weights to mean 1 so that the learning rate is comparable across components and over epochs
                 current_lograte_prediction
             )        
 
