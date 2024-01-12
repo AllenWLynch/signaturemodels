@@ -96,20 +96,27 @@ class GBTModelState(ModelState):
 
 class GBTCorpusState(CorpusState):
     
-    def update_mutation_rate(self, model_state):
+    def update_mutation_rate(self, model_state, from_scratch = False):
 
         X = model_state.feature_transformer.transform(
                                     {self.name : self}
                                 )
 
-        self._logmu = array([
-            model_state.rate_models[k]._raw_predict_from(
-                X, 
-                self._logmu[k].reshape((-1,1)), 
-                from_iteration = model_state.predict_from[k]
-            ).ravel()
-            for k in range(self.n_components)
-        ])
+        if not from_scratch:
+            self._logmu = array([
+                model_state.rate_models[k]._raw_predict_from(
+                    X, 
+                    self._logmu[k].reshape((-1,1)), 
+                    from_iteration = model_state.predict_from[k]
+                ).ravel()
+                for k in range(self.n_components)
+            ])
+
+        else:
+            self._logmu = array([
+                model_state.rate_models[k]._raw_predict(X).ravel()
+                for k in range(self.n_components)
+            ])
 
         if self.corpus.shared_exposures:
             self._log_denom = self._calc_log_denom(model_state, self.corpus.exposures)

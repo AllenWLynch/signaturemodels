@@ -12,7 +12,8 @@ def objective(trial,
             model_params = {},
             tune_subsample = True,
             locus_subsample_rates = [0.125, 0.25, None],
-            model_type = 'regression',*,
+            model_type = 'regression',
+            subset_by_locus=True,*,
             num_epochs,
             train, test,
             ):
@@ -57,13 +58,14 @@ def objective(trial,
         model.num_epochs = i
         model._fit(train, reinit = False)
 
-        if i % 25 == 0:
-            intermediate_score = model.score(test)
+        if i % 5 == 0:
+            intermediate_score = model.score(test, subset_by_locus=subset_by_locus)
             trial.report(intermediate_score, i)
 
             if trial.should_prune():
                 raise optuna.TrialPruned()
             
-    
-    return model.score(test)
+    mutation_r2 = model.get_mutation_rate_r2(test)
+    trial.set_user_attr('mutation_r2', mutation_r2)
 
+    return model.score(test, subset_by_locus=subset_by_locus) 

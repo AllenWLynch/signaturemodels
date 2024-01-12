@@ -228,7 +228,7 @@ class ModelState:
             )
 
             context_effect = np.repeat(
-                self._get_nucleotide_effect(k, trinuc_matrix),
+                self._get_nucleotide_effect(k, trinuc_matrix)[None,:],
                 num_corpuses, axis = 0
             )
 
@@ -321,11 +321,26 @@ class CorpusState(ModelState):
         
     def _get_baseline_prediction(self, n_components, n_loci, dtype):
         return np.zeros((n_components, n_loci), dtype = dtype)
+    
 
+    def clone_corpusstate(self, corpus):
+        
+        new_state = self.__class__(
+            corpus = corpus,
+            pi_prior= self.pi_prior,
+            n_components=self.n_components,
+            dtype = self.dtype,
+            random_state = self.random_state,
+            subset_sample=self.subset_sample
+        )
+        new_state.alpha = self.alpha.copy()
+
+        return new_state
+    
 
     def subset_corpusstate(self, corpus, locus_subset):
 
-        newstate = CorpusState(
+        newstate = self.__class__(
             corpus = corpus,
             pi_prior= self.pi_prior,
             n_components=self.n_components,
@@ -360,7 +375,7 @@ class CorpusState(ModelState):
         return logsumexp(logits, axis = 1, keepdims = True)
 
 
-    def update_mutation_rate(self, model_state):
+    def update_mutation_rate(self, model_state, from_scratch=False):
         
         design_matrix = model_state._get_design_matrix({self.name : self})
         X = model_state.feature_transformer.transform(

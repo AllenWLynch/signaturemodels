@@ -123,11 +123,8 @@ class SBSSample:
     exposures : np.ndarray
     name : str
     weight : np.ndarray = None
-    chrom : np.ndarray = None
-    pos : np.ndarray = None
-    cosmic_str : np.ndarray = None
 
-    data_attrs = ['chrom','pos','cosmic_str','mutation','context','locus','exposures','weight']
+    data_attrs = ['mutation','context','locus','exposures','weight']
     required = ['mutation','context','locus','exposures']
 
     @classmethod

@@ -318,8 +318,10 @@ class LocusRegressor:
         fix_strs = list(self.fix_signatures) if not self.fix_signatures is None else []
         self.component_names = fix_strs + ['Component ' + str(i) for i in range(self.n_components - len(fix_strs))]
 
-        self.bounds, self.elapsed_times, self.total_time, self.epochs_trained = \
-            [], [], 0, 0
+        self.training_bounds_ = []; self.testing_bounds_ = []
+        self.elapsed_times = []
+        self.total_time = 0
+        self.epochs_trained = 0
         
         self.corpus_states = {
             corp.name : self.CORPUS_STATE(
@@ -376,7 +378,11 @@ class LocusRegressor:
 
 
 
-    def _fit(self,corpus, reinit = True):
+    def _fit(self,corpus, 
+                  reinit = True, 
+                  test_corpus = None, 
+                  subset_by_locus = False
+            ):
         
         self.batch_size = len(corpus) if self.batch_size is None else min(self.batch_size, len(corpus))
         assert 0 < self.locus_subsample <= 1
@@ -459,15 +465,20 @@ class LocusRegressor:
                                 gamma = self._gamma,
                             )
                         
-                    self.bounds.append(self._perplexity(elbo, corpus))
+                    self.training_bounds_.append(self._perplexity(elbo, corpus))
 
-                    if len(self.bounds) > 1:
-                        improvement = self.bounds[-1] - (self.bounds[-2] if epoch > 1 else self.bounds[-1])
+                    if not test_corpus is None:
+                        self.testing_bounds_.append(
+                            self.score(test_corpus, subset_by_loci = subset_by_locus)
+                        )
+
+                    if len(self.training_bounds_) > 1:
+                        improvement = self.training_bounds_[-1] - (self.training_bounds_[-2] if epoch > 1 else self.training_bounds_[-1])
                     else:
                         improvement = 0
 
                     logger.info(f' [{epoch:>3}/{self.num_epochs+1}] | Time: {elapsed_time:<3.2f}s. '
-                                f'| Perplexity: { self.bounds[-1]:<10.2f}, improvement: {-improvement:<10.2f} ')
+                                f'| Perplexity: { self.training_bounds_[-1]:<10.2f}, improvement: {-improvement:<10.2f} ')
                         
                 elif not self.quiet:
                     logger.info(f' [{epoch:<3}/{self.num_epochs+1}] | Time: {elapsed_time:<3.2f}s. ')
@@ -479,7 +490,7 @@ class LocusRegressor:
         return self
 
 
-    def fit(self, corpus):
+    def fit(self, corpus, test_corpus = None, subset_by_loci = False):
         '''
         Learn parameters of model from corpus.
 
@@ -495,7 +506,12 @@ class LocusRegressor:
         '''
 
         try:
-            self._fit(corpus)
+            self._fit(
+                corpus, 
+                reinit=True, 
+                test_corpus = test_corpus, 
+                subset_by_locus = subset_by_loci
+            )
         except KeyboardInterrupt:
             logger.info('Training interrupted by user.')
             pass
@@ -509,7 +525,21 @@ class LocusRegressor:
         return self._fit(corpus, reinit=False)
 
 
-    def score(self, corpus):
+    def _init_new_corpusstates(self, corpus):
+
+        corpus_state_clones = {
+            name : state.clone_corpusstate(corpus.get_corpus(name))
+            for name, state in self.corpus_states.items()
+            if name in corpus.corpus_names
+        }
+        
+        for clone in corpus_state_clones.values():
+            clone.update_mutation_rate(self.model_state, from_scratch = True)
+
+        return corpus_state_clones
+
+
+    def score(self, corpus, subset_by_loci = False):
         '''
         Computes the evidence lower bound score for the corpus.
 
@@ -528,17 +558,22 @@ class LocusRegressor:
         if not self.is_trained:
             logger.warn('This model was not trained to completion, results may be innaccurate')
         
-
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            
+        if not subset_by_loci:
             gamma = np.array([
                 self._predict_sample(sample) for sample in corpus
             ])
+        else:
+            logger.warn('`subset_by_loci` was TRUE, so using the predicted gamma values for the corpus.')
+            gamma = self._gamma
+
+        corpus_state_clones = self._init_new_corpusstates(corpus)
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
 
             elbo = self._bound(
                     corpus = corpus, 
-                    corpus_states = self.corpus_states,
+                    corpus_states = corpus_state_clones,
                     model_state = self.model_state,
                     gamma=gamma,
                 )
@@ -614,7 +649,6 @@ class LocusRegressor:
         return sample_names, gamma
 
 
-
     def _calc_signature_sstats(self, corpus):
 
         _genome_trinuc_distribution = np.sum(
@@ -625,18 +659,17 @@ class LocusRegressor:
         self._genome_trinuc_distribution = _genome_trinuc_distribution/_genome_trinuc_distribution.sum()
 
 
-    def get_log_nucleotide_effect(self, corpus_name):
+    def get_log_nucleotide_effect(self, corpus):
 
         try:
-            self.corpus_states[corpus_name]
+            self.corpus_states[corpus.name]
         except KeyError:
-            raise ValueError(f'Corpus {corpus_name} not found in model.')
+            raise ValueError(f'Corpus {corpus.name} not found in model.')
+        
+        return np.log( self.model_state.delta @ corpus.trinuc_distributions )
 
-        #(self.n_contexts * self.delta[k]/self.delta[k].sum()) @ sstats.trinuc_distributions
-        return np.log( self.model_state.delta @ self.corpus_states[corpus_name].trinuc_distributions )
 
-
-    def get_log_component_mutation_rate(self, corpus_name):
+    def get_log_component_mutation_rate(self, corpus):
         '''
         For a sample, calculate the psi matrix - For each component, the distribution over loci.
 
@@ -649,23 +682,24 @@ class LocusRegressor:
             is the probability of sampling that locus given a mutation was generated by component k.
 
         '''
-
         try:
-            corpus_state = self.corpus_states[corpus_name]
+            corpus_state = self.corpus_states[corpus.name]
         except KeyError:
-            raise ValueError(f'Corpus {corpus_name} not found in model.')
+            raise ValueError(f'Corpus {corpus.name} not found in model.')
         
-        return corpus_state.get_log_component_effect_rate(
-                    self.model_state, corpus_state.exposures
-                )
+        new_state = corpus_state.clone_corpusstate(corpus)
+        new_state.update_mutation_rate(self.model_state, from_scratch = True)
 
+        return new_state.get_log_component_effect_rate(
+                    self.model_state, new_state.exposures
+                )
 
 
     def _pop_corpus(self, corpus):
         return next(iter(corpus))
 
 
-    def get_log_marginal_mutation_rate(self, corpus_name, sample = None):
+    def get_log_marginal_mutation_rate(self, corpus):
         '''
         For a sample, calculate the expected mutation rate. First, we infer the mixture of 
         processes that are active in a sample. Then, we calculate the expected marginal probability
@@ -682,21 +716,18 @@ class LocusRegressor:
             in a sample.
 
         '''
-
         if not self.is_trained:
             logger.warn('This model was not trained to completion, results may be innaccurate')
 
-        psi_matrix = np.exp( self.get_log_component_mutation_rate(corpus_name) )
+        corpus_state = self.corpus_states[corpus.name]
+        gamma = corpus_state.alpha/corpus_state.alpha.sum() # use expectation of the prior over components
+        
+        psi_matrix = np.exp(self.get_log_component_mutation_rate(corpus))
+        
+        marginalized = np.squeeze(gamma @ psi_matrix)
 
-        if sample is None:
-            corpus_state = self.corpus_states[corpus_name]
-            gamma = corpus_state.alpha/corpus_state.alpha.sum() # use expectation of the prior over components
-        else:
-            gamma = self._predict(sample, corpus_name)
-
-        return np.log( np.squeeze(np.dot(gamma, psi_matrix)) )
+        return np.log(marginalized)
     
-
     
     def get_mutation_rate_r2(self, corpus):
         '''
@@ -718,9 +749,9 @@ class LocusRegressor:
             raise ValueError(f'Corpus {corpus.name} not found in model.')
         
         empirical_mr = corpus.get_empirical_mutation_rate()
-        predicted_mr = self.get_log_marginal_mutation_rate(corpus.name)
+        predicted_mr = np.exp(self.get_log_marginal_mutation_rate(corpus))
 
-        return feldmans_r2(empirical_mr, np.exp(predicted_mr))
+        return feldmans_r2(empirical_mr, predicted_mr)
     
 
     def _get_signature_idx(self, component):

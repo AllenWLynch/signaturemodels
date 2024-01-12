@@ -89,7 +89,7 @@ make_windows_parser = subparsers.add_parser('get-regions', help = 'Make windows 
 make_windows_parser.add_argument('--genome-file','-g', type = file_exists, required = True, help = 'Also known as a "Chrom sizes" file.')    
 make_windows_parser.add_argument('--blacklist-file','-v', type = file_exists, default = None, help = 'Bed file of regions to exclude from windows.')
 make_windows_parser.add_argument('--window-size','-w', type = posint, required = True, help = 'Size of windows to make.')
-make_windows_parser.add_argument('--output','-o', type = valid_path, default=sys.stdout, 
+make_windows_parser.add_argument('--output','-o', type = argparse.FileType('w'), default=sys.stdout, 
                                  help = 'Where to save windows.')
 make_windows_parser.set_defaults(func = make_windows)
 
@@ -276,11 +276,17 @@ dataset_sub.set_defaults(func = write_dataset)
     
 
 def split_corpus(*,corpus, train_output, test_output, train_prop,
+                 by_locus = False,
                  seed = 0):
 
     corpus = load_corpus(corpus)
 
-    train, test = train_test_split(corpus, train_size=train_prop, seed = seed)
+    train, test = train_test_split(
+                    corpus, 
+                    train_size=train_prop,
+                    seed = seed,
+                    by_locus=by_locus
+                )
 
     save_corpus(train, train_output)
     save_corpus(test, test_output)
@@ -291,6 +297,8 @@ split_parser.add_argument('corpus', type = file_exists)
 split_parser.add_argument('--train-output','-to', type = valid_path, required=True)
 split_parser.add_argument('--test-output', '-vo', type = valid_path, required=True)
 split_parser.add_argument('--train-prop', '-p', type = posfloat, default=0.7)
+split_parser.add_argument('--by-locus', action = 'store_true', default=False,
+                            help = 'Split by locus instead of by sample.')
 split_parser.add_argument('--seed', '-s', type = posint, default=0)
 split_parser.set_defaults(func = split_corpus)
 

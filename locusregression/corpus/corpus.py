@@ -71,6 +71,10 @@ class CorpusMixin(ABC):
         raise NotImplementedError()
     
     @abstractmethod
+    def corpus_names(self):
+        raise NotImplementedError()
+    
+    @abstractmethod
     def get_corpus(self, name):
         raise NotImplementedError()
 
@@ -215,21 +219,23 @@ def stream_corpus(filename):
     )
 
 
-def train_test_split(corpus, seed = 0, train_size = 0.7):
+
+def train_test_split(corpus, seed = 0, train_size = 0.7,
+                     by_locus = False):
 
     randomstate = np.random.RandomState(seed)
 
-    train_idx = sorted(
-        randomstate.choice(
-            len(corpus), 
-            size = int(train_size * len(corpus)),
-            replace=False
-        )
-    )
+    N = len(corpus) if not by_locus else corpus.shape[1]
+    subset_fn = corpus.subset_samples if not by_locus else corpus.subset_loci
 
-    test_idx = sorted( list( set( range(len(corpus)) ).difference(set(train_idx)) ) )
+    train_idx = sorted(randomstate.choice(
+                N, size = int(train_size * N), replace=False
+            ))
+    
+    test_idx = sorted(list( set(range(N)).difference(set(train_idx)) )) 
 
-    return corpus.subset_samples(train_idx), corpus.subset_samples(test_idx)
+    return subset_fn(train_idx), subset_fn(test_idx)
+
 
 
 class dotdict(dict):
@@ -261,6 +267,10 @@ class Corpus(CorpusMixin):
     @property
     def corpuses(self):
         return [self]
+    
+    @property
+    def corpus_names(self):
+        return [self.name]
     
     @property
     def num_mutations(self):
@@ -300,9 +310,6 @@ class Corpus(CorpusMixin):
                 'exposures' : sample.exposures[:,loci],   
                 'name' : sample.name,
             })
-
-            #total_mutations += new_sample.count.sum()
-
             new_samples.append(new_sample)
         
         return Corpus(
@@ -397,6 +404,10 @@ class MetaCorpus(CorpusMixin):
     @property
     def shape(self):
         return self.corpuses[0].shape
+    
+    @property
+    def corpus_names(self):
+        return [corpus.name for corpus in self.corpuses]
 
 
     def __len__(self):

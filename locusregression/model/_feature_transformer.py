@@ -49,7 +49,7 @@ class FeatureTransformer:
         matrix = self._assemble_matrix(corpus_states)
 
         self.transformer_ = make_column_transformer(
-            #(PowerTransformer(), self.feature_type_dict_['continuous']),
+            (PowerTransformer(), self.feature_type_dict_['continuous']),
             (self.categorical_encoder, self.feature_type_dict_['categorical']),
             (MinMaxScaler(), self.feature_type_dict_['distance']),
             remainder='passthrough',

@@ -125,6 +125,7 @@ def run_trial(*,study_name, iters, storage = None):
         dataset,
         train_size=attrs['train_size'],
         seed = attrs['seed'],
+        by_locus=True,
     )
     
     obj_func = partial(
@@ -136,6 +137,7 @@ def run_trial(*,study_name, iters, storage = None):
         locus_subsample_rates = attrs['locus_subsample_rates'],
         model_type = attrs['model_type'],
         num_epochs = attrs['num_epochs'],
+        subset_by_locus=True,
         train = train,
         test = test,
     )
