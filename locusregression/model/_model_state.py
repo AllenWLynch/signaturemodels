@@ -86,7 +86,7 @@ class ModelState:
         self.n_distributions = design_matrix.shape[1]
 
         self.context_models = [
-            PoissonRegressor(alpha = 0, fit_intercept=True, solver='newton-cholesky', warm_start=True)
+            PoissonRegressor(alpha = 0, fit_intercept=True, warm_start=True) #, solver='newton-cholesky')
             for _ in range(n_components)
         ]
 
@@ -151,9 +151,9 @@ class ModelState:
 
 
     def update_rho(self, sstats, corpus_states, learning_rate):
-
+        
         new_rho = np.vstack([
-            np.expand_dims(1 + sstats.mutation_sstats[k], axis = 0)
+            np.expand_dims(sstats.mutation_sstats[k], axis = 0)
             for k in range(self.n_components)
         ])
 
@@ -167,17 +167,19 @@ class ModelState:
                 (corpus_state.exposures.ravel() * np.exp(corpus_state.logmu[k]))
 
         context_exposure = sum(map(_get_context_exposure, corpus_states.values()))
+        target = sstats.context_sstats[k]
 
-        y = sstats.context_sstats[k]
+        intercept = target.sum()/context_exposure.sum()
 
-        X = np.diag(np.ones_like(y))
+        sample_weights = context_exposure*intercept
+        X = np.diag(np.ones_like(target))
 
         return np.exp(
             self.context_models[k]\
             .fit(
                 X, 
-                y/context_exposure,
-                sample_weight=context_exposure
+                target/sample_weights,
+                sample_weight=sample_weights/sample_weights.mean()
             ).coef_
         )
 
@@ -240,7 +242,7 @@ class ModelState:
             intercept = target.sum(axis=1, keepdims=True)/(
                             exposures*context_effect*np.exp(current_lograte_prediction)
                         ).sum(axis=1, keepdims=True)
-            
+
             y = target.ravel()
             sample_weights = (exposures * context_effect * intercept).ravel()
 

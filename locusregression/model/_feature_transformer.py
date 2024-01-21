@@ -9,7 +9,7 @@ logger = logging.getLogger(' LocusRegressor')
 
 class FeatureTransformer:
 
-    def __init__(self, categorical_encoder = OneHotEncoder(sparse=False, drop='first')):
+    def __init__(self, categorical_encoder = OneHotEncoder(sparse_output=False, drop='first')):
         self.categorical_encoder = clone(categorical_encoder)
 
 
@@ -23,11 +23,34 @@ class FeatureTransformer:
 
 
     def list_feature_groups(self):
-        return list(self.feature_groups_dict_.values())
+        
+        feature_groups_dict_ = defaultdict(list)
+        for feature_name, group in zip(
+            self.feature_names_, self.groups_
+        ):
+            try:
+                feature_groups_dict_[group].append(
+                    self.feature_names_out.index(feature_name)
+                )
+            except ValueError:
+                feature_groups_dict_[group].extend(
+                    [idx for idx, name in enumerate(self.feature_names_out) if name.startswith(feature_name + '_')]
+                )
+
+        return list(feature_groups_dict_.values())
+
+
+    @property
+    def feature_names_out(self):
+        return list(self.transformer_.get_feature_names_out())
     
 
     def list_categorical_features(self):
-        return self.feature_type_dict_['categorical']
+        if 'ordinalencoder' in self.transformer_.output_indices_:
+            _slice = self.transformer_.output_indices_['ordinalencoder']
+        else:
+            _slice = self.transformer_.output_indices_['onehotencoder']
+        return list(range(_slice.start, _slice.stop))
 
 
     def fit(self, corpus_states):
@@ -38,37 +61,33 @@ class FeatureTransformer:
         self.feature_types_ = [example_features[feature]['type'] for feature in self.feature_names_]
         self.groups_ = [example_features[feature]['group'] for feature in self.feature_names_]
         
-        self.feature_type_dict_ = defaultdict(list)        
+        feature_type_dict_ = defaultdict(list)        
         for idx, feature_type in enumerate(self.feature_types_):
-            self.feature_type_dict_[feature_type].append(idx)
-
-        self.feature_groups_dict_ = defaultdict(list)
-        for idx, feature_group in enumerate(self.groups_):
-            self.feature_groups_dict_[feature_group].append(idx)
+            feature_type_dict_[feature_type].append(idx)
 
         matrix = self._assemble_matrix(corpus_states)
 
         self.transformer_ = make_column_transformer(
-            (PowerTransformer(), self.feature_type_dict_['continuous']),
-            (self.categorical_encoder, self.feature_type_dict_['categorical']),
-            (MinMaxScaler(), self.feature_type_dict_['distance']),
+            (PowerTransformer(), feature_type_dict_['continuous']),
+            (self.categorical_encoder, feature_type_dict_['discrete']),
+            (MinMaxScaler(), feature_type_dict_['distance']),
             remainder='passthrough',
+            verbose_feature_names_out=False,
         )
 
         self.transformer_.fit(matrix)
 
-        if len(self.feature_groups_dict_['categorical']) > 0:
+        if len(feature_type_dict_['discrete']) > 0:
             logger.info(
-                f'Found categorical features: {", ".join(self.feature_names_[i] for i in self.list_categorical_features())}'
+                f'Found categorical features: {", ".join(self.feature_names_out[i] for i in self.list_categorical_features())}'
             )
             
         for feature_group in self.list_feature_groups():
             if len(feature_group) > 0:
                 logger.info(
-                    f'Found feature group: {", ".join(self.feature_names_[i] for i in feature_group)}'
+                    f'Found feature group: {", ".join(self.feature_names_out[i] for i in feature_group)}'
                 )
-            
-        
+
         return self
 
 

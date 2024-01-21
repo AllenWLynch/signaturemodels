@@ -381,11 +381,16 @@ model_options.add_argument('--pi-prior', '-pi', type = posfloat, default = 1.,
 tune_sub.set_defaults(func = create_study)
 
 
+def wraps_run_trial(**kw):
+    logging.basicConfig(level=logging.INFO)
+    logger.setLevel(logging.INFO)
+    run_trial(**kw)
+
 trial_parser = subparsers.add_parser('study-run-trial', help='Run a single trial of hyperparameter tuning.')
 trial_parser.add_argument('study-name',type = str)
 trial_parser.add_argument('--storage','-s', type = str, default=None)
 trial_parser.add_argument('--iters','-i', type = posint, default=1)
-trial_parser.set_defaults(func = run_trial)
+trial_parser.set_defaults(func = wraps_run_trial)
 
 
 def summarize_study(*,study_name, output, storage = None):

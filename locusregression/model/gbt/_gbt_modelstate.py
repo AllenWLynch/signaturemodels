@@ -13,6 +13,7 @@ def _get_model_fn(*,
                   max_depth = 5,
                   l2_regularization = 0.0,
                   n_iter_no_change = 3,
+                  use_groups=True,
                   random_state = None,
                 ):
     

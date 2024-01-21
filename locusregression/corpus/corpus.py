@@ -145,9 +145,16 @@ def save_corpus(corpus, filename):
         features_group = data_group.create_group('features')
 
         for feature_name, feature in corpus.features.items():
+            
+            logger.debug(f'Saving correlate: {feature_name} ...')
+            
             feature_group = features_group.create_group(feature_name)
             feature_group.attrs['type'] = feature['type']
             feature_group.attrs['group'] = feature['group']
+
+            if np.issubdtype(feature['values'].dtype, np.str_):
+                feature['values'] = feature['values'].astype('S')
+            
             feature_group.create_dataset('values', data = feature['values'])
 
         samples_group = f.create_group('samples')

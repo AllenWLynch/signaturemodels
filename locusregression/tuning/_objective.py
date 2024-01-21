@@ -13,7 +13,8 @@ def objective(trial,
             tune_subsample = True,
             locus_subsample_rates = [0.125, 0.25, None],
             model_type = 'regression',
-            subset_by_locus=True,*,
+            subset_by_loci=True,
+            no_improvement=5,*,
             num_epochs,
             train, test,
             ):
@@ -45,27 +46,34 @@ def objective(trial,
     )
     
     model = basemodel(
-            eval_every = 1000000,
-            quiet=True,
-            **model_params,
+            eval_every = 5,
+            quiet=False,
             seed = trial.number,
-            num_epochs=1,
+            num_epochs=num_epochs,
+            **model_params,
         )
     
-    for i in trange(1, num_epochs + 1, desc = 'Training', ncols=100, 
-                        position=0, leave=True):
-        
-        model.num_epochs = i
-        model._fit(train, reinit = False)
+    scores = []
 
-        if i % 5 == 0:
-            intermediate_score = model.score(test, subset_by_locus=subset_by_locus)
-            trial.report(intermediate_score, i)
+    for train_score, test_score in model._fit(
+        train, test_corpus=test, subset_by_loci=subset_by_loci,
+    ):
+        step = model.epochs_trained
+        trial.report(test_score, step)
+        scores.append(test_score)
 
-            if trial.should_prune():
-                raise optuna.TrialPruned()
-            
-    mutation_r2 = model.get_mutation_rate_r2(test)
-    trial.set_user_attr('mutation_r2', mutation_r2)
+        trial.set_user_attr(f'test_score_{step}',  test_score)
+        trial.set_user_attr(f'train_score_{step}',  train_score)
+        trial.set_user_attr(f'test_mutation_r2_{step}', model.get_mutation_rate_r2(test))
+        trial.set_user_attr(f'train_mutation_r2_{step}', model.get_mutation_rate_r2(train))
 
-    return model.score(test, subset_by_locus=subset_by_locus) 
+        if trial.should_prune():
+            raise optuna.TrialPruned()
+
+        if len(scores) > no_improvement and not (min(scores) in scores[-no_improvement:]):
+            break
+    
+    trial.set_user_attr('test_mutation_r2', model.get_mutation_rate_r2(test))
+    trial.set_user_attr('train_mutation_r2', model.get_mutation_rate_r2(train))
+
+    return model.score(test, subset_by_loci=subset_by_loci) 

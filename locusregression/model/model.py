@@ -21,17 +21,23 @@ def _get_observation_likelihood(*,model_state, sample, corpus_state):
     Flattened phi is the probability of a mutation and locus for each signature given the current modelstate.
     Shape: N_sigs x N_mutations
     '''
-
+    rho = model_state.omega/model_state.omega.sum(axis = -1, keepdims = True)
+    
     flattend_phi = (
-            log_dirichlet_expectation(model_state.omega) + \
+            np.log(rho) + \
             np.log(model_state.delta)[:,:,None]
         )[:, sample.context, sample.mutation]\
         + np.log(sample.exposures[:, sample.locus]) \
-        + corpus_state.trinuc_distributions[sample.context, sample.locus] \
+        + np.log(corpus_state.trinuc_distributions[sample.context, sample.locus]) \
         + corpus_state.logmu[:, sample.locus] \
         - corpus_state.get_log_denom(sample.exposures)\
     
-    return np.exp(flattend_phi)
+    exp_phi = np.nan_to_num(np.exp(flattend_phi), nan=0)
+
+    if not np.all(np.isfinite(exp_phi)):
+        print('problem!')
+
+    return exp_phi
 
 
 def _estep_update(exp_Elog_gamma, alpha, flattend_phi, count_g, likelihood_scale = 1):
@@ -161,8 +167,6 @@ class LocusRegressor:
                 corpus_state=corpus_state,
             )
         
-        flattened_logweight = log_dirichlet_expectation(gamma)[:,None] + np.log(flattened_phi)
-
         phi = _calc_local_variables(
             gamma = gamma, 
             flattend_phi=flattened_phi
@@ -172,6 +176,8 @@ class LocusRegressor:
 
         entropy_sstats = -np.sum(weighted_phi * np.where(phi > 0, np.log(phi), 0.))
         entropy_sstats += np.sum(dirichlet_bound(corpus_state.alpha, gamma))
+        
+        flattened_logweight = log_dirichlet_expectation(gamma)[:,None] + np.nan_to_num(np.log(flattened_phi), nan=-np.inf)
         
         return np.sum(weighted_phi*flattened_logweight) + entropy_sstats
 
@@ -381,10 +387,11 @@ class LocusRegressor:
     def _fit(self,corpus, 
                   reinit = True, 
                   test_corpus = None, 
-                  subset_by_locus = False
+                  subset_by_loci = False
             ):
         
         self.batch_size = len(corpus) if self.batch_size is None else min(self.batch_size, len(corpus))
+        self.locus_subsample = self.locus_subsample or 1
         assert 0 < self.locus_subsample <= 1
 
         locus_svi, batch_svi = self.locus_subsample < 1, self.batch_size < len(corpus)
@@ -464,12 +471,11 @@ class LocusRegressor:
                                 corpus_states = self.corpus_states,
                                 gamma = self._gamma,
                             )
-                        
                     self.training_bounds_.append(self._perplexity(elbo, corpus))
 
                     if not test_corpus is None:
                         self.testing_bounds_.append(
-                            self.score(test_corpus, subset_by_loci = subset_by_locus)
+                            self.score(test_corpus, subset_by_loci = subset_by_loci)
                         )
 
                     if len(self.training_bounds_) > 1:
@@ -479,6 +485,11 @@ class LocusRegressor:
 
                     logger.info(f' [{epoch:>3}/{self.num_epochs+1}] | Time: {elapsed_time:<3.2f}s. '
                                 f'| Perplexity: { self.training_bounds_[-1]:<10.2f}, improvement: {-improvement:<10.2f} ')
+
+                    if test_corpus is None:
+                        yield (self.training_bounds_[-1], np.nan)
+                    else:
+                        yield (self.training_bounds_[-1], self.testing_bounds_[-1])
                         
                 elif not self.quiet:
                     logger.info(f' [{epoch:<3}/{self.num_epochs+1}] | Time: {elapsed_time:<3.2f}s. ')
@@ -487,7 +498,6 @@ class LocusRegressor:
                     logger.info('Time limit reached, stopping training.')
                     break
 
-        return self
 
 
     def fit(self, corpus, test_corpus = None, subset_by_loci = False):
@@ -506,12 +516,13 @@ class LocusRegressor:
         '''
 
         try:
-            self._fit(
+            for _ in self._fit(
                 corpus, 
                 reinit=True, 
                 test_corpus = test_corpus, 
-                subset_by_locus = subset_by_loci
-            )
+                subset_by_loci = subset_by_loci
+            ):
+                pass
         except KeyboardInterrupt:
             logger.info('Training interrupted by user.')
             pass
@@ -557,16 +568,17 @@ class LocusRegressor:
 
         if not self.is_trained:
             logger.warn('This model was not trained to completion, results may be innaccurate')
+
+        corpus_state_clones = self._init_new_corpusstates(corpus)
         
         if not subset_by_loci:
             gamma = np.array([
-                self._predict_sample(sample) for sample in corpus
+                self._predict_sample(sample, corpus_state_clones[sample.corpus_name]) for sample in corpus
             ])
         else:
             logger.warn('`subset_by_loci` was TRUE, so using the predicted gamma values for the corpus.')
             gamma = self._gamma
 
-        corpus_state_clones = self._init_new_corpusstates(corpus)
 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
@@ -591,7 +603,7 @@ class LocusRegressor:
         )
     
 
-    def _predict_sample(self, sample):
+    def _predict_sample(self, sample, corpus_state):
         '''
         For each sample in corpus, predicts the expectation of the signature compositions.
 
@@ -606,13 +618,6 @@ class LocusRegressor:
             Compositions over signatures for each sample
 
         '''
-
-        corpus_name = sample.corpus_name
-        try:
-            corpus_state = self.corpus_states[corpus_name]
-        except KeyError:
-            raise ValueError(f'Corpus {corpus_name} not found in model.')
-        
 
         gamma = self._sample_inference(
             gamma0=self._init_doc_variables(1)[0],
@@ -635,15 +640,19 @@ class LocusRegressor:
         Returns
         -------
         tuple: A tuple containing the sample names and their corresponding gamma values.
-        
-        """
-        
+        """        
         if not self.is_trained:
             logger.warn('This model was not trained to completion, results may be inaccurate')
+
+        corpus_state_clones = self._init_new_corpusstates(corpus)
         
         sample_names, gamma = [], []
         for sample in corpus:
-            gamma.append(self._predict_sample(sample))
+            gamma.append(self._predict_sample(
+                            sample, 
+                            corpus_state_clones[sample.corpus_name]
+                            )
+                        )
             sample_names.append(sample.name)
 
         return sample_names, gamma
@@ -792,7 +801,7 @@ class LocusRegressor:
         
         try:
             if normalization == 'local':
-                norm_frequencies = self._weighted_trinuc_dists[component][:,None]
+                norm_frequencies = self._weighted_trinuc_dists[component]
             elif normalization == 'global':
                 norm_frequencies = self._genome_trinuc_distribution.ravel()
             else:
@@ -866,7 +875,7 @@ class LocusRegressor:
 
         for i in range(self.n_components):
             self.plot_signature(i, ax=ax[i])
-            ax[i].title('')
+            ax[i].set_title('')
             ax[i].set_ylabel(self.component_names[i], fontsize=7)
 
         return ax
@@ -882,11 +891,7 @@ class LocusRegressor:
         Returns:
         numpy.ndarray: An array containing the empirical component mutation rate.
         """
-        try:
-            self.corpus_states[corpus.name]
-        except KeyError:
-            raise ValueError(f'Corpus {corpus.name} not found in model.')
-        
+        corpus_state_clones = self._init_new_corpusstates(corpus)
         
         sstats, _ = self._inference(
             locus_subsample_rate=1,
@@ -894,12 +899,13 @@ class LocusRegressor:
             learning_rate=1,
             corpus = corpus,
             model_state = self.model_state,
-            corpus_states = self.corpus_states,
+            corpus_states = corpus_state_clones,
             gamma = self._init_doc_variables(len(corpus))
         )
 
-        return np.array(
-            list(self.model_state._convert_beta_sstats_to_array(sstats.beta_sstats[0], self.n_loci))
-        )
+        return np.array([
+            self.model_state._convert_beta_sstats_to_array(k, sstats, corpus.shape[1])
+            for k in range(self.n_components)
+        ])
     
         

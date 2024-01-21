@@ -1,7 +1,7 @@
 import shap
 import logging
 from numpy.random import RandomState
-from numpy import vstack
+from numpy import vstack, squeeze
 from joblib import Parallel, delayed
 
 logger = logging.getLogger(__name__)
@@ -15,10 +15,12 @@ def explain(
 ):
     
     def _calculate_shap_values(tree_explainer, chunk):
-        return tree_explainer.shap_values(
-            chunk,
-            check_additivity=False,
-            approximate=False,
+        return squeeze(
+            tree_explainer.shap_values(
+                chunk,
+                check_additivity=False,
+                approximate=False,
+            )
         )
     
     component = model._get_signature_idx(signature)
@@ -28,7 +30,10 @@ def explain(
     
     tree_model = model.model_state.rate_models[component]
 
-    X_tild = corpus.X_matrix.T  
+    corpus_state = model.corpus_states[corpus.name].clone_corpusstate(corpus)
+    
+    X_tild = model.model_state.feature_transformer\
+        .transform({corpus.name : corpus_state})
 
     background_idx = RandomState(0)\
                         .choice(
@@ -43,13 +48,13 @@ def explain(
         check_additivity=False
     )
 
-    num_chunks = len(corpus.X_matrix.T) // chunk_size
+    num_chunks = corpus.shape[1] // chunk_size + 1
 
-    shap_values = vstack([
+    shap_values = vstack(
         Parallel(n_jobs=n_jobs, verbose=10)(
             delayed(_calculate_shap_values)(explainer, X_tild[i*chunk_size:(i+1)*chunk_size])
             for i in range(num_chunks)
         )
-    ])
+    )
 
     return shap_values

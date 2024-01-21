@@ -137,7 +137,7 @@ def run_trial(*,study_name, iters, storage = None):
         locus_subsample_rates = attrs['locus_subsample_rates'],
         model_type = attrs['model_type'],
         num_epochs = attrs['num_epochs'],
-        subset_by_locus=True,
+        subset_by_loci=True,
         train = train,
         test = test,
     )

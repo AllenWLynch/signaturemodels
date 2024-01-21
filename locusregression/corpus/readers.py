@@ -83,7 +83,7 @@ class CorpusReader:
                             required_columns=None
                          )
         
-        assert len(correlates_dict[next(correlates_dict.keys())]['values']) == len(windows), \
+        assert len(next(iter(correlates_dict.values()))['values']) == len(windows), \
                 'The number of correlates provided in {} does not match the number of specified windows.\n'\
                 'Each window must have correlates provided.'
 
@@ -167,7 +167,7 @@ class CorpusReader:
         type_map = {
                     'continuous' : float,
                     'discrete' : str,
-                    'distance' : int,
+                    'distance' : float,
                     }
         
         
@@ -206,7 +206,7 @@ class CorpusReader:
             feature_types= [col.removeprefix('#type=') for col in cols]
             
             if not all(t in ['continuous', 'discrete', 'distance'] for t in feature_types):
-                raise ValueError('Found invalid types. The feature type must be either "continuous", "discrete", or "distance".')
+                logger.warn('Found invalid types. The feature type must be either "continuous", "discrete", or "distance" for automatic normalization.')
             
             cols = next(f).strip().split(sep)
             if not all(col.removeprefix('#group=') for col in cols):
@@ -234,7 +234,7 @@ class CorpusReader:
                                     )
                 try:
                     correlates.append(
-                        [type_map[t](f) for f,t in zip(line, feature_types)]
+                        [type_map.setdefault(t, float)(f) for f,t in zip(line, feature_types)]
                     )
 
                 except ValueError as err:
@@ -248,7 +248,7 @@ class CorpusReader:
             correlates_dict[name] = {
                 'type' : _type,
                 'group' : group,
-                'values' : np.array(vals).astype(type_map[_type]),
+                'values' : np.array(vals).astype(type_map.setdefault(_type,float)),
             }
             
         return correlates_dict
