@@ -75,8 +75,14 @@ Next, bin the genome using `get-regions`:
 
 **Correlates**
 
-Next, we need to associate each of our windows with values for some interesting genomic correlates. Currently, only
-continous features from bigwig files are supported. For some bigwig with H3K27ac marks, use `ingest-bigwig` to
+Next, we need to associate each of our windows with values for some interesting genomic correlates. 
+Currently, there are three feature types supported:
+
+1. Continuous features from bigwig files
+2. Discrete features from bed files - the 4th column is the class name.
+3. Distance-based features from bed files.
+
+For some bigwig with H3K27ac marks, use `ingest-bigwig` to
 get the average value of the marks in each window. You must also provide a unique name:
 
 .. code-block:: bash
@@ -84,6 +90,7 @@ get the average value of the marks in each window. You must also provide a uniqu
     $ locusregression ingest-bigwig \
         H3K27ac.bigwig \
         -r tutorial/regions.bed \
+        --group epigenetics \
         -name H3K27ac \
         -o tutorial/H3K27ac.txt
 
@@ -92,14 +99,23 @@ Check the output of this method to see the output format:
 .. code-block:: bash
 
     $ head tutorial/H3K27ac.txt
-    #H3K27ac
+    #feature=H3K27ac
+    #type=continuous
+    #group=epigenetics
     0
     0.2577
     0.209125
     0.20075
 
-These features are unnormalized, so you can add a script which normalizes them however you like.
-For continous features, the log-transformation followed by standardization is reasonable.
+The "type" header tells the model how to normalize the feature internally. "type=continuous" features are 
+log-normalized and standardized, while "type=discrete" features are one-hot or label encoded depending on the 
+model being used. "type=distance" features are 0-1 normalized.
+
+If you change the "type" to anything other than "continuous, discrete, or distance", the model will assume
+you have already normalized the feature and will not adjust it.
+
+Next, the "group" header tells the model which features to use together. In the gradient boosting tree
+model, interactions between groups are prohibited. In the future, some features may belong to multiple groups.
 
 For the next step, one must assemble a matrix of these features as a tsv file. After ingesting
 any number of tracks, you can put together a combination of features into one tsv file using the `paste` command:
@@ -107,9 +123,6 @@ any number of tracks, you can put together a combination of features into one ts
 .. code-block:: bash
 
     $ paste tutorial/H3K27ac.txt tutorial/H3K36me3.txt > tutorial/correlates.tsv
-
-**The locusregression software will not adjust the features you provide, so
-be sure to normalize them beforehand.**
 
 
 **Exposures**
@@ -163,7 +176,7 @@ This will save the corpus to *tutorial/corpus.h5*.
 a weight for each mutation. This is useful if you want to weight mutations by their tumor cell fraction, for example.
 
 
-2. How many processes?
+1. How many processes?
 ----------------------
 
 Choosing the number of components to describe a dataset is a perenial problem in topic modeling,
