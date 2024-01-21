@@ -82,6 +82,8 @@ Currently, there are three feature types supported:
 2. Discrete features from bed files - the 4th column is the class name.
 3. Distance-based features from bed files.
 
+*Continuous features*
+
 For some bigwig with H3K27ac marks, use `ingest-bigwig` to
 get the average value of the marks in each window. You must also provide a unique name:
 
@@ -92,7 +94,7 @@ get the average value of the marks in each window. You must also provide a uniqu
         -r tutorial/regions.bed \
         --group epigenetics \
         -name H3K27ac \
-        -o tutorial/H3K27ac.txt
+        -o tutorial/H3K27ac.feature
 
 Check the output of this method to see the output format:
 
@@ -117,12 +119,82 @@ you have already normalized the feature and will not adjust it.
 Next, the "group" header tells the model which features to use together. In the gradient boosting tree
 model, interactions between groups are prohibited. In the future, some features may belong to multiple groups.
 
+*Discrete features*
+
+Discrete/categorical features associate some label with the genomic region. For example, one could
+associate each window with intron, exon, or intergenic classes. To do this, use `ingest-discrete`, and 
+provide a sorted bedfile with at least 4 columns. The fourth column should contain the class name for that bin.
+For example:
+
+.. code-block:: bash
+
+    $ head tutorial/genes.bed
+    chr1    11873	12509	exon
+    chr1    12509	14409	intron
+    ...
+
+To ingest the discrete feature:
+
+.. code-block:: bash
+
+    $ locusregression ingest-discrete \
+        tutorial/genes.bed \
+        -r tutorial/regions.bed \
+        --group genes \
+        -name genes \
+        -null intergenic \
+        -o tutorial/genes.feature
+
+Above, the `-null` flag tells the model what to do with regions which do not overlap any of the features.
+In this case, we will assign them to the "intergenic" class. 
+
+*Distance features*
+
+Distance features are similar to discrete features, but instead of assigning a class to each window,
+we assign a value based on the distance to both the nearest upstream and downstream feature. 
+For example, one could assign each window a value based on the distance to the nearest
+origin of replication. To do this, use `ingest-distance` and provide a sorted 
+bedfile with three or more columns:
+
+.. code-block:: bash
+
+    $ head tutorial/replication.bed
+    chr1    11873	12509
+    chr1    12509	14409
+    ...
+
+To ingest the distance feature:
+
+.. code-block:: bash
+
+    $ locusregression ingest-distance \
+        tutorial/replication.bed \
+        -r tutorial/regions.bed \
+        --group replication \
+        -name replication \
+        -o tutorial/replication.feature
+
+*Custom features*
+
+To add a feature which does not neatly fit into any of the above categories, you can make your 
+own `.feature` file. The format is:
+
+.. code-block:: bash
+
+    $ head tutorial/custom.feature
+    #feature=<feature_name>
+    #type=<continuous, discrete, distance, other>
+    #group=<group_name>
+    <window 1 value>
+    <window 2 value>
+    ...
+
 For the next step, one must assemble a matrix of these features as a tsv file. After ingesting
 any number of tracks, you can put together a combination of features into one tsv file using the `paste` command:
 
 .. code-block:: bash
 
-    $ paste tutorial/H3K27ac.txt tutorial/H3K36me3.txt > tutorial/correlates.tsv
+    $ paste tutorial/H3K27ac.feature tutorial/genes.feature tutorial/replication.feature> tutorial/correlates.tsv
 
 
 **Exposures**
