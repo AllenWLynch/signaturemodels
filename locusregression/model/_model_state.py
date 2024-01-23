@@ -62,11 +62,9 @@ class ModelState:
         else:
             self.fixed_signatures = [False]*n_components
         
-
-        #self.corpus_encoder = self._fit_corpus_encoder(corpus_states)
         self.feature_transformer = FeatureTransformer(
-            categorical_encoder=categorical_encoder,
-        ).fit(corpus_states)
+                                        categorical_encoder=categorical_encoder,
+                                    ).fit(corpus_states)
 
         self._fit_corpus_encoder(corpus_states)
 

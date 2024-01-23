@@ -29,7 +29,7 @@ def _make_fixed_size_windows(*,
         **process_kw,
     )
 
-    if sort_process is not None:
+    if blacklist_file is not None:
         subract_process = subprocess.Popen(
             ['bedtools', 'intersect', '-a', '-', '-b', blacklist_file, '-v'],
             stdin = sort_process.stdout,
@@ -40,7 +40,7 @@ def _make_fixed_size_windows(*,
         sort_process = subract_process
 
     add_id_process = subprocess.Popen(
-        ['awk', '{print $0"\t"NR-1}'],
+        ['awk','-v','OFS=\t', '{print $0,NR-1,"0","+",$2,$3,"0,0,0","1",$3-$2,"0"}'],
         stdin = sort_process.stdout,
         stdout = output,
         **process_kw,
@@ -49,13 +49,17 @@ def _make_fixed_size_windows(*,
     add_id_process.wait()
 
 
-def _get_endpoints(*bedfiles, output = sys.stdout):
+def _get_endpoints(*bedfiles):
 
     def _get_endpoints_bedfile(bedfile, track_id):
     
         with open(bedfile, 'r') as f:
 
             for line in f:
+
+                if line.startswith('#'):
+                    continue
+
                 cols = line.strip().split('\t')
 
                 if len(cols) < 3:
@@ -66,70 +70,52 @@ def _get_endpoints(*bedfiles, output = sys.stdout):
                 chrom, start, end = cols[:3]
                 start = int(start); end = int(end)
 
-                yield chrom, start, f'{track_id}:{feature};start'
-                yield chrom, end, f'{track_id}:{feature};end'
+                yield chrom, start, track_id, feature, True
+                yield chrom, end, track_id, feature, False
 
 
-    with tempfile.NamedTemporaryFile(mode = 'w') as temp:
-
-        for bedfile in bedfiles:
-
-            for _, row in enumerate(
-                _get_endpoints_bedfile(bedfile, os.path.basename(bedfile))
-            ):
-                print(*row, sep = '\t', file = temp)
+    endpoints = (
+        endpoint
+        for bedfile in bedfiles
+        for endpoint in _get_endpoints_bedfile(bedfile, os.path.basename(bedfile))
+    )
     
-        temp.flush()
-
-        sort_process = subprocess.Popen(
-            ['sort', '-k1,1', '-k2,2n', temp.name],
-            stdout = output,
-            universal_newlines=True,
-            bufsize=10000,
-        )
-
-        sort_process.wait()
+    return sorted(
+        endpoints,
+        key = lambda x : (x[0], x[1]),
+    )
 
 
-def _endpoints_to_bed(endpoints_file, output = sys.stdout):
+def _endpoints_to_regions(endpoints):
 
     active_features = set()
     feature_combination_ids = dict()
     prev_chrom = None; prev_pos = None
 
-    with open(endpoints_file, 'r') as endpoints:
+    for (chrom, pos, track_id, feature, is_start) in endpoints:
 
-        for endpoint in endpoints:
+        pos = int(pos)
 
-            chrom, pos, endpoint_feature = endpoint.strip().split('\t')
-            pos = int(pos)
+        if prev_chrom is None:
+            prev_chrom = chrom; prev_pos = pos
+        elif chrom != prev_chrom:
+            active_features = set()
+            prev_chrom = chrom; prev_pos = pos
+        elif pos != prev_pos and len(active_features) > 0:
 
-            feature, endpoint_type = endpoint_feature.split(';')
+            feature_combination = tuple(sorted(active_features))
 
-            if prev_chrom is None:
-                prev_chrom = chrom; prev_pos = pos
-            elif chrom != prev_chrom:
-                active_features = set()
-                prev_chrom = chrom; prev_pos = pos
-            elif pos != prev_pos and len(active_features) > 0:
+            if not feature_combination in feature_combination_ids:
+                feature_combination_ids[feature_combination] = len(feature_combination_ids)
+                
+            yield chrom, prev_pos, pos, feature_combination_ids[feature_combination]    
 
-                feature_combination = ';'.join(sorted(active_features))
+        if is_start:
+            active_features.add((track_id,feature))
+        else:
+            active_features.remove((track_id,feature))
 
-                if not feature_combination in feature_combination_ids:
-                    feature_combination_ids[feature_combination] = len(feature_combination_ids)
-                    
-                print(
-                    chrom, prev_pos, pos, feature_combination_ids[feature_combination],
-                    sep = '\t',
-                    file = output,
-                )
-
-            if endpoint_type == 'start':
-                active_features.add(feature)
-            elif endpoint_type == 'end':
-                active_features.remove(feature)
-
-            prev_pos = pos; prev_chrom = chrom
+        prev_pos = pos; prev_chrom = chrom
 
 
 def make_windows(
@@ -140,8 +126,7 @@ def make_windows(
     output=sys.stdout, 
 ):
     
-    with tempfile.NamedTemporaryFile('w') as endpoints_file,\
-        tempfile.NamedTemporaryFile('w') as windows_file, \
+    with tempfile.NamedTemporaryFile('w') as windows_file, \
         tempfile.NamedTemporaryFile('w') as pre_blacklist_file:
 
         _make_fixed_size_windows(
@@ -150,18 +135,14 @@ def make_windows(
             output=windows_file,
         )
         windows_file.flush()
-
-        _get_endpoints(
-            windows_file.name,
-            *bedfiles,
-            output=endpoints_file,
-        )
-        endpoints_file.flush()
-
-        _endpoints_to_bed(
-            endpoints_file.name,
-            output=pre_blacklist_file,
-        )
+        
+        for region in _endpoints_to_regions(
+            _get_endpoints(
+                windows_file.name,
+                *bedfiles,
+            )
+        ):
+            print(*region, sep='\t', file=pre_blacklist_file)
         pre_blacklist_file.flush()
 
         subract_process = subprocess.Popen(
@@ -172,30 +153,61 @@ def make_windows(
         )
 
         id_map = {}
+        regions_collection = defaultdict(list)
+
         for line in subract_process.stdout:
             chr, start, end, window_id = line.strip().split('\t')
             window_id = id_map.setdefault(window_id, len(id_map))
-            print(chr, start, end, window_id, sep='\t', file=output)
+            regions_collection[window_id].append((chr, int(start), int(end)))
 
         subract_process.wait()
+
+        for window_id, regions in regions_collection.items():
+            
+            chrs, starts, ends = list(zip(*regions))
+            
+            region_start=min(starts); region_end=max(ends)
+            region_chr = chrs[0]
+
+            num_blocks = len(regions)
+            
+            block_sizes = ','.join(map(lambda x : str(x[0] - x[1]), zip(ends, starts)))
+            block_starts = ','.join(map(lambda s : str(s - region_start), starts))
+
+            print(region_chr,    # chr
+                  region_start,  # start
+                  region_end,    # end
+                  window_id,     # name
+                  '0','+',       # value, strand
+                  region_start,  # thickStart
+                  region_start,  # thickEnd
+                  '0,0,0',       # itemRgb,
+                  num_blocks,    # blockCount
+                  block_sizes,   # blockSizes
+                  block_starts,  # blockStarts
+                  sep='\t', 
+                  file=output
+            )
 
 
 def check_regions_file(regions_file):
 
     encountered_idx = defaultdict(lambda : False)
+
     with open(regions_file, 'r') as f:
 
         for i, line in enumerate(f):
+            
             if line.startswith('#'):
                 continue
             
             cols = line.strip().split('\t')
-            assert len(cols) == 4, \
-                f'Expected 4 columns in {regions_file}, with the fourth column being an integer ID.\n' \
+            assert len(cols) >= 4, \
+                f'Expected 4 or more columns in {regions_file}, with the fourth column being an integer ID.\n' \
                 f'Add a column to the regions file using \'awk -v OFS="\\t" \'{{print $0,NR}}\' <filename>\''
             
             try:
-                chr, start, end, idx = cols
+                _, start, end, idx = cols[:4]
                 idx = int(idx); start = int(start); end = int(end)
             except TypeError:
                 raise TypeError(

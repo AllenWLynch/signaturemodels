@@ -165,11 +165,8 @@ class CorpusReader:
         logger.info('Reading genomic features ...')
 
         type_map = {
-                    'continuous' : float,
-                    'discrete' : str,
-                    'distance' : float,
-                    }
-        
+            'categorical' : str
+        }
         
         correlates = []
         with open(correlates_file, 'r') as f:
@@ -199,14 +196,14 @@ class CorpusReader:
             cols = next(f).strip().split(sep)
             if not all(col.startswith('#type=') for col in cols):
                 raise ValueError('The second line of the tsv file must be columns of "#type=" followed by the feature type.\n'
-                                    'e.g. #type=continuous\n'
+                                    'e.g. #type=power\n'
                                     'The second line of the file will be treated as column names.'
                                 )
             
             feature_types= [col.removeprefix('#type=') for col in cols]
             
-            if not all(t in ['continuous', 'discrete', 'distance'] for t in feature_types):
-                logger.warn('Found invalid types. The feature type must be either "continuous", "discrete", or "distance" for automatic normalization.')
+            #if not all(t in ['continuous', 'discrete', 'distance'] for t in feature_types):
+            #    logger.warn('Found invalid types. The feature type must be either "continuous", "discrete", or "distance" for automatic normalization.')
             
             cols = next(f).strip().split(sep)
             if not all(col.removeprefix('#group=') for col in cols):
@@ -225,16 +222,23 @@ class CorpusReader:
                         txt, lineno, numcols, len(line)
                     )
                     
-                if any([f == '.' and t in ('continuous','distance') for f,t in zip(line, feature_types)]):
-                    raise ValueError('A value was not recorded for window {}: {} for a continous feature.'
+                if any([f == '.' and not t=='categorical' for f,t in zip(line, feature_types)]):
+                    logger.warn('A value was not recorded for window {}: {} for a continous feature.'
                                         'If this entry was made by "bedtools map", this means that the genomic feature file did not cover all'
-                                        ' of the windows. Consider imputing a feature value or removing those windows.'.format(
+                                        ' of the windows.'.format(
                                             lineno, txt
                                         )
                                     )
                 try:
+                    # convert each feature in the line to the appropriate type
+                    # if the feature is categorical, it will be left as a string
+                    # otherwise, it will be converted to a float.
+                    # If "." is encountered, it will be converted to float(nan) for numerical features 
+                    # and left as a string for categorical features.
                     correlates.append(
-                        [type_map.setdefault(t, float)(f) for f,t in zip(line, feature_types)]
+                        [type_map.setdefault(_type, float)(_feature) if not _feature=='.' else type_map.setdefault(_type, float)('nan')
+                         for _feature,_type in zip(line, feature_types)
+                        ]
                     )
 
                 except ValueError as err:

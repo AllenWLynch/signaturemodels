@@ -4,8 +4,8 @@ import subprocess
 import tempfile
 import logging
 from .make_windows import check_regions_file
-import sys
 from numpy import array
+import numpy as np
 logger = logging.getLogger('Roadmap downloader')
 logger.setLevel(logging.INFO)
 
@@ -13,6 +13,7 @@ logger.setLevel(logging.INFO)
 def make_continous_features(*,
                 bigwig_file, 
                 regions_file,
+                extend=0,
             ):
 
     check_regions_file(regions_file)
@@ -20,7 +21,12 @@ def make_continous_features(*,
     with tempfile.NamedTemporaryFile() as bed:
 
         subprocess.check_output(
-                        ['bigWigAverageOverBed', bigwig_file, regions_file, bed.name],
+                        ['bigWigAverageOverBed', 
+                         f'-sampleAroundCenter={extend}',
+                         bigwig_file, 
+                         regions_file, 
+                         bed.name
+                        ],
                     )
 
         sort_process = subprocess.Popen(
@@ -44,9 +50,42 @@ def make_continous_features(*,
         )))
 
         return vals
+    
+
+def make_continous_features_bedgraph(*,
+                bedgraph_file,
+                regions_file,
+                extend=0,
+                null = 'nan',
+            ):
+    
+    check_regions_file(regions_file)
+
+    mapped_bedgraph = subprocess.check_output(
+                    ['bedtools','map',
+                        '-a', regions_file,
+                        '-b', bedgraph_file,
+                        '-c', '4',
+                        '-o', 'mean',
+                        '-null', null,
+                        '-delim', '\t',
+                        '-F', '0.5',
+                        '-split',
+                    ]
+                )
+    
+    vals = array(list(map(
+        lambda x : float(x.strip()),
+        vals.decode().strip().split('\n')
+    )))
+
+    return vals
 
 
-def make_distance_features(*,
+
+
+def make_distance_features(
+                        reverse=False,*,
                         genomic_features,
                         regions_file,
                     ):
@@ -56,7 +95,7 @@ def make_distance_features(*,
     def _find_stranded_closest_feature(strand):
 
         strand_process = subprocess.Popen(
-            ['awk','-v','OFS=\t',f'{{print $0,0,"{strand}"}}', regions_file],
+            ['awk','-v','OFS=\t',f'{{print $1,$2,$3,NR-1,0,"{strand}"}}', regions_file],
             stdout = subprocess.PIPE
         )
 
@@ -65,7 +104,7 @@ def make_distance_features(*,
              '-a','-',
              '-b', genomic_features, 
              '-d',
-             '-iu',
+             '-id',
              '-D', 'a','-t','first',
             ],
             stdin = strand_process.stdout,
@@ -73,15 +112,27 @@ def make_distance_features(*,
 
         strand_process.wait()
 
-        return list(map(
-            lambda x : x.split('\t')[-1], 
-            closest_out.decode().strip().split('\n')
-        ))
+        return -array(
+                list(map(
+                    lambda x : x.split('\t')[-1], 
+                    closest_out.decode().strip().split('\n')
+                    ))
+                ).astype(float)
     
     upstream = _find_stranded_closest_feature('+')
     downstream = _find_stranded_closest_feature('-')
+
+    nan_mask = (upstream < 0.) | (downstream < 0.) | (upstream + downstream <= 0.)
+
+    progress = upstream/(upstream + downstream) 
+    progress = 1. - progress if reverse else progress
+
+    total_distance = upstream + downstream
+
+    progress[nan_mask] = np.nan
+    total_distance[nan_mask] = np.nan
     
-    return array(upstream), array(downstream)
+    return progress, total_distance
 
 
 
@@ -109,21 +160,35 @@ def make_discrete_features(
                     return _class
             else:
                 raise RuntimeError(f'Could not resolve class priority for {vals} using {class_priority}')
+    
+    # check that the bedfile has 4 columns
+    with open(genomic_features, 'r') as f:
+        for line in f:
+            if line.startswith('#'):
+                continue
             
+            cols = line.strip().split('\t')
+            if len(cols) < column:
+                raise ValueError(
+                    f'Bedfile {genomic_features} must have at least {column} columns.'
+                    'The fourth column should be the name of the class for that region.'
+                )
+            break
 
     map_out = subprocess.check_output(
         ['bedtools','map',
          '-a',regions_file,
-         '-b',genomic_features,
+         '-b', genomic_features,
          '-F', '0.5',
          '-o','distinct',
          '-c',str(column),
          '-null', str(null),
-         '-delim','|'
+         '-delim','|',
+         '-split',
         ],
     )
 
-    mappings = list(map(lambda x : x.split('\t')[4], map_out.decode().strip().split('\n')))
+    mappings = list(map(lambda x : x.split('\t')[-1], map_out.decode().strip().split('\n')))
 
     vals = [m.split('|') for m in mappings]
     classes = set([_v for v in vals for _v in v]).difference({null})

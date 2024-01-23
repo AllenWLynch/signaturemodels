@@ -84,14 +84,19 @@ parser = argparse.ArgumentParser(
 subparsers = parser.add_subparsers(help = 'Commands')
 
 
+def make_windows_wrapper(*,categorical_features, **kw):
+    make_windows(*categorical_features, **kw)
+
 make_windows_parser = subparsers.add_parser('get-regions', help = 'Make windows from a genome file.',
                                             formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 make_windows_parser.add_argument('--genome-file','-g', type = file_exists, required = True, help = 'Also known as a "Chrom sizes" file.')    
-make_windows_parser.add_argument('--blacklist-file','-v', type = file_exists, default = None, help = 'Bed file of regions to exclude from windows.')
+make_windows_parser.add_argument('--blacklist-file','-v', type = file_exists, required=True, help = 'Bed file of regions to exclude from windows.')
 make_windows_parser.add_argument('--window-size','-w', type = posint, required = True, help = 'Size of windows to make.')
+make_windows_parser.add_argument('--categorical-features','-cf', nargs='+', type = str, default = [], 
+                                 help = 'List of categorical feature bedfiles to account for while making windows.')
 make_windows_parser.add_argument('--output','-o', type = argparse.FileType('w'), default=sys.stdout, 
                                  help = 'Where to save windows.')
-make_windows_parser.set_defaults(func = make_windows)
+make_windows_parser.set_defaults(func = make_windows_wrapper)
 
 
 trinuc_sub = subparsers.add_parser('get-trinucs', help = 'Write trinucleotide context file for a given genome.')
@@ -102,7 +107,9 @@ trinuc_sub.add_argument('--output','-o', type = valid_path, required = True, hel
 trinuc_sub.set_defaults(func = CorpusReader.create_trinuc_file)
 
 
-def process_bigwig(group='all',*,
+def process_bigwig(group='all',
+                   normalization='power',
+                   extend=0,*,
                    bigwig_file, 
                    regions_file, 
                    feature_name, 
@@ -111,10 +118,11 @@ def process_bigwig(group='all',*,
     feature_vals = make_continous_features(
         bigwig_file=bigwig_file,
         regions_file=regions_file,
+        extend=extend,
     )
 
     print('#feature=' + feature_name, file=output)
-    print('#type=continuous', file=output)
+    print(f'#type={normalization}', file=output)
     print('#group=' + group, file = output)
     print(*feature_vals, sep = '\n', file = output)
 
@@ -124,12 +132,19 @@ bigwig_sub.add_argument('bigwig-file', type = file_exists)
 bigwig_sub.add_argument('--regions-file','-r', type = file_exists, required=True,)
 bigwig_sub.add_argument('--feature-name','-name', type = str, required=True,)
 bigwig_sub.add_argument('--group','-g', type = str, default='all', help = 'Group name for feature.')
+bigwig_sub.add_argument('--extend','-e', type = posint, default=0, help = 'Extend each region by this many basepairs.')
+bigwig_sub.add_argument('--normalization','-norm', type = str, choices=['power','minmax','quantile','standardize'], 
+                        default='power', 
+                        help = 'Normalization to apply to feature.'
+                        )
 bigwig_sub.add_argument('--output','-o', type = argparse.FileType('w'), default=sys.stdout)
 bigwig_sub.set_defaults(func = process_bigwig)
 
 
 def process_distance_feature(
-        group='all',*,
+        group='all',
+        normalization='quantile',
+        reverse=False,*,
         bed_file,
         regions_file,
         feature_name,
@@ -138,19 +153,24 @@ def process_distance_feature(
     
     upstream, downstream = make_distance_features(
         genomic_features=bed_file,
+        reverse=reverse,
         regions_file=regions_file,
     )
 
-    print(f'#feature={feature_name}_upstream\t#feature={feature_name}_downstream', file=output)
-    print('#type=distance\t#type=distance', file=output)
+    print(f'#feature={feature_name}_progressBetween\t#feature={feature_name}_interFeatureDistance', file=output)
+    print(f'#type=none\t#type={normalization}', file=output)
     print(f'#group={group}\t#group={group}', file = output)
-    print(*map('\t'.join, zip(upstream, downstream)), sep = '\n', file = output)
+    print(*map(lambda x : '\t'.join(map(str, x)), zip(upstream, downstream)), sep = '\n', file = output)
 
 distance_sub = subparsers.add_parser('ingest-distance', help = 'Summarize distance to nearest feature upstream and downstream for some genomic elements.')
 distance_sub.add_argument('bed-file', type = file_exists, help = 'Bed file of genomic features. Only three columns are required, all other columns are ignored.')
 distance_sub.add_argument('--regions-file','-r', type = file_exists, required=True,)
 distance_sub.add_argument('--feature-name','-name', type = str, required=True,)
 distance_sub.add_argument('--group','-g', type = str, default='all', help = 'Group name for feature.')
+distance_sub.add_argument('--normalization','-norm', type = str, choices=['power','minmax','quantile','standardize'],
+                            default='quantile', help = 'Normalization to apply to feature.')
+distance_sub.add_argument('--reverse','-rev', action = 'store_true', default=False, 
+                            help = 'Reverse the direction of the distance feature, for instance, if featurizing distance to anti-sense features only.')
 distance_sub.add_argument('--output','-o', type = argparse.FileType('w'), default=sys.stdout)
 distance_sub.set_defaults(func = process_distance_feature)
 
@@ -175,12 +195,12 @@ def process_discrete(
     )
 
     print(f'#feature={feature_name}', file=output)
-    print('#type=discrete', file=output)
+    print('#type=categorical', file=output)
     print(f'#group={group}', file = output)
     print(*discrete_features, sep = '\n', file = output)
 
 
-discrete_sub = subparsers.add_parser('ingest-discrete', help = 'Summarize discrete genomic features for some genomic elements.')
+discrete_sub = subparsers.add_parser('ingest-categorical', help = 'Summarize discrete genomic features for some genomic elements.')
 discrete_sub.add_argument('bed-file', type = file_exists, help = 'Bed file of genomic features. Only three columns are required, all other columns are ignored.')
 discrete_sub.add_argument('--regions-file','-r', type = file_exists, required=True,)
 discrete_sub.add_argument('--feature-name','-name', type = str, required=True,)
