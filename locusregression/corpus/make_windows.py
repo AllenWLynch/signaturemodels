@@ -202,9 +202,8 @@ def check_regions_file(regions_file):
                 continue
             
             cols = line.strip().split('\t')
-            assert len(cols) >= 4, \
-                f'Expected 4 or more columns in {regions_file}, with the fourth column being an integer ID.\n' \
-                f'Add a column to the regions file using \'awk -v OFS="\\t" \'{{print $0,NR}}\' <filename>\''
+            assert len(cols) >= 12, \
+                f'Expected 12 or more columns (in BED12 format) in {regions_file}, with the fourth column being an integer ID.\n'
             
             try:
                 _, start, end, idx = cols[:4]

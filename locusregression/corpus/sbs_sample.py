@@ -83,37 +83,6 @@ def code_SBS_mutation(*,query_file, fasta_file,
             )
 
 
-def _process_mapped_sbs_codes(input):
-    data = {
-        'mutation': [],
-        'context': [],
-        'locus': [],
-        'weight' : [],
-    }
-
-    for _, line in enumerate(input):
-
-        chrom, pos, _, locus_idx, mutation_codes = line.strip().split('\t')
-        if mutation_codes == '.':
-            continue
-        
-        locus_idx = int(locus_idx)
-        mutation_codes = [code.split(':') for code in mutation_codes.split(',')]
-
-        for code in mutation_codes:
-            data['mutation'].append(int(code[1]))
-            data['context'].append(int(code[2]))
-            data['weight'].append(float(code[3]))
-            data['locus'].append(locus_idx)
-
-    data = {
-            key: np.array(value)
-            for key, value in data.items()
-           }  # Convert lists to numpy arrays
-
-    return data
-
-
 @dataclass
 class SBSSample:
 
@@ -122,10 +91,59 @@ class SBSSample:
     locus : np.ndarray
     exposures : np.ndarray
     name : str
+    chrom : np.ndarray = None
+    pos : np.ndarray = None
     weight : np.ndarray = None
+    
+    type_map = {
+        'mutation' : np.uint8,
+        'context' : np.uint8,
+        'locus' : np.uint32,
+        'exposures' : np.float32,
+        'chrom' : 'S',
+        'pos' : np.uint32,
+        'weight' : np.float32,
+        'name' : 'S',
+    }
 
-    data_attrs = ['mutation','context','locus','exposures','weight']
+    data_attrs = ['mutation','context','locus','exposures','weight','chrom','pos']
     required = ['mutation','context','locus','exposures']
+
+    @classmethod
+    def process_mapped_sbs_codes(cls, input):
+    
+        data = {
+            'mutation': [],
+            'context': [],
+            'locus': [],
+            'weight' : [],
+            'chrom' : [],
+            'pos' : [],
+        }
+
+        for _, line in enumerate(input):
+
+            chrom, pos, _, locus_idx, mutation_codes = line.strip().split('\t')
+            if mutation_codes == '.':
+                continue
+            
+            locus_idx = int(locus_idx)
+            mutation_codes = [code.split(':') for code in mutation_codes.split(',')]
+
+            for code in mutation_codes:
+                data['mutation'].append(int(code[1]))
+                data['context'].append(int(code[2]))
+                data['weight'].append(float(code[3]))
+                data['locus'].append(locus_idx)
+                data['chrom'].append(chrom)
+                data['pos'].append(int(pos))
+
+        data = {
+                key: np.array(value).astype(cls.type_map[key])
+                for key, value in data.items()
+            }  # Convert lists to numpy arrays
+
+        return data
 
     @classmethod
     def featurize_mutations(cls, vcf_file, regions_file, fasta_file, exposures,
@@ -177,6 +195,7 @@ class SBSSample:
                 '-b', '-', 
                 '-sorted',
                 '-c','4','-o','collapse', 
+                '-split',
                 '-delim',','],
                 stdin=code_process.stdout,
                 stdout=tmp,
@@ -192,7 +211,7 @@ class SBSSample:
 
             with open(tmp.name, 'r') as f:
                 return cls(
-                    **_process_mapped_sbs_codes(f),
+                    **cls.process_mapped_sbs_codes(f),
                     name = os.path.abspath(vcf_file),
                     exposures = np.array(exposures),
                 )

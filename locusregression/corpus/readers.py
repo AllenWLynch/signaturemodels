@@ -12,18 +12,33 @@ import os
 from joblib import Parallel, delayed
 from functools import partial
 from dataclasses import dataclass
+from dataclasses import dataclass
 logger = logging.getLogger('DataReader')
 logger.setLevel(logging.INFO)
 
+   
 @dataclass
-class Region:
+class BED12Record:
     chromosome: str
     start: int
     end: int
-    id: int
+    name: str
+    score: int
+    strand: str
+    thick_start: int
+    thick_end: int
+    item_rgb: str
+    block_count: int
+    block_sizes: list[int]
+    block_starts: list[int]
 
+    def segments(self):
+        for start, size in zip(self.block_starts, self.block_sizes):
+            yield self.chromosome, self.start + start, self.start + start + size
+        
     def __len__(self):
-        return self.end - self.start
+        return sum(self.block_sizes)
+
 
 
 class CorpusReader:
@@ -40,10 +55,9 @@ class CorpusReader:
 
         windows = cls.read_windows(regions_file, None, sep = '\t')
 
-        with Fasta(fasta_file) as fa:
-            trinuc_distributions = cls.get_trinucleotide_distributions(
-                        windows, fa, n_jobs=n_jobs
-                    )
+        trinuc_distributions = cls.get_trinucleotide_distributions(
+                    windows, fasta_file, n_jobs=n_jobs
+                )
             
         np.savez(output, x = trinuc_distributions)
 
@@ -99,10 +113,9 @@ class CorpusReader:
 
         trinuc_distributions = None
         if trinuc_file is None:
-            with Fasta(fasta_file) as fa:
-                trinuc_distributions = cls.get_trinucleotide_distributions(
-                            windows, fa, n_jobs=n_jobs
-                        )    
+            trinuc_distributions = cls.get_trinucleotide_distributions(
+                        windows, fasta_file, n_jobs=n_jobs
+                    )    
         else:
             trinuc_distributions = cls.read_trinuc_distribution(trinuc_file)
 
@@ -261,6 +274,26 @@ class CorpusReader:
     @staticmethod
     def read_windows(regions_file, genome_object, sep = '\t'):
 
+        def parse_bed12_line(line):
+            chromosome, start, end, name, score, strand, thick_start, thick_end, item_rgb, block_count, block_sizes, block_starts = line.strip().split('\t')
+            block_sizes = list(map(int, block_sizes.split(',')))
+            block_starts = list(map(int, block_starts.split(',')))
+            
+            return BED12Record(
+                chromosome=chromosome,
+                start=int(start),
+                end=int(end),
+                name=name,
+                score=int(score),
+                strand=strand,
+                thick_start=int(thick_start),
+                thick_end=int(thick_end),
+                item_rgb=item_rgb,
+                block_count=int(block_count),
+                block_sizes=block_sizes,
+                block_starts=block_starts
+            )
+
         check_regions_file(regions_file)
         
         logger.info('Reading windows ...')
@@ -271,18 +304,14 @@ class CorpusReader:
             for lineno, txt in enumerate(f):
                 if not txt[0] == '#':
                     line = txt.strip().split(sep)
-                    assert len(line) >= 3, 'Bed files have three or more columns: chr, start, end, ...'
+                    assert len(line) >= 12, 'Expected BED12 file type with at least 12 columns'
 
-                    if len(line) > 4:
-                        logger.warn(
-                            'The only information ingested from the "regions_file" is the chr, start, end, and name of genomic bins. All other fields are ignored.'
-                        )
-                    try:
-                        windows.append(
-                            Region(chromosome=line[0], start=int(line[1]), end=int(line[2]), id=int(line[3]))
-                        )
-                    except ValueError as err:
-                        raise ValueError('Could not ingest line {}: {}'.format(lineno, txt)) from err
+                try:
+                    windows.append(
+                        parse_bed12_line(txt)
+                    )
+                except ValueError as err:
+                    raise ValueError('Could not ingest line {}: {}'.format(lineno, txt)) from err
 
         return windows
 
@@ -349,26 +378,31 @@ class CorpusReader:
 
 
     @staticmethod
-    def get_trinucleotide_distributions(window_set, fasta_object, n_jobs = 1):
+    def get_trinucleotide_distributions(window_set, fasta_file, n_jobs = 1):
         
-        def count_trinucs(chrom, start, end, fasta_object):
+        def count_trinucs(bed12_region, fasta_object):
 
             def rolling(seq, w = 3):
                 for i in range(len(seq) - w + 1):
                     yield seq[ i : i+w]
 
-            window_sequence = fasta_object[chrom][start : end].seq.upper()
-                
-            trinuc_counts = Counter([
-                trinuc for trinuc in rolling(window_sequence) if not 'N' in trinuc
-            ])
+            trinuc_counts = Counter()
+
+            for chrom, start, end in bed12_region.segments():
+
+                window_sequence = fasta_object[chrom][start : end].seq.upper()
+                    
+                trinuc_counts += Counter([
+                    trinuc for trinuc in rolling(window_sequence) if not 'N' in trinuc
+                ])
 
             return [trinuc_counts[context] + trinuc_counts[revcomp(context)] for context in CONTEXT_IDX.keys()]
         
-        trinuc_matrix = [
-            count_trinucs(w.chromosome, w.start, w.end, fasta_object) 
-            for w in tqdm.tqdm(window_set, nrows=30, desc = 'Aggregating trinucleotide content')
-        ]
+        with Fasta(fasta_file) as fasta_object:
+            trinuc_matrix = [
+                count_trinucs(w, fasta_object) 
+                for w in tqdm.tqdm(window_set, nrows=30, desc = 'Aggregating trinucleotide content')
+            ]
 
         trinuc_matrix = np.array(trinuc_matrix) # DON'T (!) add a pseudocount
 

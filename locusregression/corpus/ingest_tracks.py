@@ -13,7 +13,7 @@ logger.setLevel(logging.INFO)
 def make_continous_features(*,
                 bigwig_file, 
                 regions_file,
-                extend=0,
+                extend=None,
             ):
 
     check_regions_file(regions_file)
@@ -21,8 +21,8 @@ def make_continous_features(*,
     with tempfile.NamedTemporaryFile() as bed:
 
         subprocess.check_output(
-                        ['bigWigAverageOverBed', 
-                         f'-sampleAroundCenter={extend}',
+                        ['bigWigAverageOverBed',
+                         f'-sampleAroundCenter={extend}' if extend is not None else '',
                          bigwig_file, 
                          regions_file, 
                          bed.name
@@ -55,32 +55,46 @@ def make_continous_features(*,
 def make_continous_features_bedgraph(*,
                 bedgraph_file,
                 regions_file,
-                extend=0,
+                extend=None,
                 null = 'nan',
             ):
     
     check_regions_file(regions_file)
 
+    if extend is not None:
+        #raise NotImplementedError('Extend not implemented for bedgraph files')
+        extend_process = subprocess.Popen(
+            ['awk','-v','OFS=\t',
+            f'{{ center=$2+($3-$2)/2; {{print $1,center-{extend},center+{extend},$4 }} }}', 
+            bedgraph_file],
+            stdout = subprocess.PIPE,
+        )
+
+        input_process = subprocess.Popen(
+            ['sort', '-k1,1n', '-k2,2n'],
+            stdin = extend_process.stdout,
+            stdout = subprocess.PIPE,
+        )
+    else:
+        input_process = subprocess.Popen(
+            ['sort', '-k1,1n', '-k2,2n', bedgraph_file],
+            stdout = subprocess.PIPE,
+        )
+
     mapped_bedgraph = subprocess.check_output(
                     ['bedtools','map',
                         '-a', regions_file,
-                        '-b', bedgraph_file,
+                        '-b', '-',
                         '-c', '4',
                         '-o', 'mean',
                         '-null', null,
                         '-delim', '\t',
                         '-F', '0.5',
                         '-split',
-                    ]
+                    ],
+                    stdin=input_process.stdout,
                 )
-    
-    vals = array(list(map(
-        lambda x : float(x.strip()),
-        vals.decode().strip().split('\n')
-    )))
-
-    return vals
-
+    input_process.wait()
 
 
 
