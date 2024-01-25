@@ -760,7 +760,9 @@ class LocusRegressor:
         empirical_mr = corpus.get_empirical_mutation_rate()
         predicted_mr = np.exp(self.get_log_marginal_mutation_rate(corpus))
 
-        return feldmans_r2(empirical_mr, predicted_mr)
+        y_null = corpus.trinuc_distributions.sum(0)
+
+        return feldmans_r2(empirical_mr, predicted_mr, y_null)
     
 
     def _get_signature_idx(self, component):

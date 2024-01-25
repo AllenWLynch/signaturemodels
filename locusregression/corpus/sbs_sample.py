@@ -62,22 +62,21 @@ def code_SBS_mutation(*,query_file, fasta_file,
             
             line = line.strip().split('\t')
 
-            feature_attr = {
-                'chromosome' : chr_prefix + line[QUERY.CHROM],
-                'pos' : int(line[QUERY.POS]),
-                'ref' : line[QUERY.REF],
-                'alt' : line[QUERY.ALT],
-            }
+            
+            chromosome = chr_prefix + line[QUERY.CHROM]
+            pos = int(line[QUERY.POS])
+            ref = line[QUERY.REF]
+            alt = line[QUERY.ALT]
             
             mut, context, cosmic_str = _get_context_mutation_idx(
-                                            fa, **feature_attr
-                                        )
+                   fa, chromosome=chromosome, ref = ref, alt = alt, pos = pos
+            )
             
             print(
-                    feature_attr['chromosome'],
-                    feature_attr['pos'],
-                    int(feature_attr['pos']) + 1,
-                    f'{cosmic_str}:{mut}:{context}:{line[QUERY.WEIGHT]}',
+                    chromosome,
+                    pos,
+                    pos+1,
+                    f'{pos}:{mut}:{context}:{line[QUERY.WEIGHT]}',
                 sep = '\t',
                 file = output,
             )
@@ -122,21 +121,25 @@ class SBSSample:
         }
 
         for _, line in enumerate(input):
+            
+            fields = line.strip().split('\t')
+            chrom=fields[0]
+            locus_idx=int(fields[3])
+            mutation_codes=fields[-1]
 
-            chrom, pos, _, locus_idx, mutation_codes = line.strip().split('\t')
             if mutation_codes == '.':
                 continue
             
-            locus_idx = int(locus_idx)
             mutation_codes = [code.split(':') for code in mutation_codes.split(',')]
 
             for code in mutation_codes:
-                data['mutation'].append(int(code[1]))
-                data['context'].append(int(code[2]))
-                data['weight'].append(float(code[3]))
+                pos, mutation, context, weight = code
+                data['pos'].append(pos)
+                data['mutation'].append(mutation)
+                data['context'].append(context)
+                data['weight'].append(weight)
                 data['locus'].append(locus_idx)
                 data['chrom'].append(chrom)
-                data['pos'].append(int(pos))
 
         data = {
                 key: np.array(value).astype(cls.type_map[key])

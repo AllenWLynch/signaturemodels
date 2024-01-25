@@ -314,6 +314,8 @@ class Corpus(CorpusMixin):
                 'context' : sample.context[mask],
                 'weight' : sample.weight[mask],
                 'locus' : np.array([subsample_lookup[locus] for locus in sample.locus[mask]]).astype(int), 
+                'chrom' : sample.chrom[mask],
+                'pos' : sample.pos[mask],
                 'exposures' : sample.exposures[:,loci],   
                 'name' : sample.name,
             })

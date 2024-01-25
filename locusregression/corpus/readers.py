@@ -390,7 +390,7 @@ class CorpusReader:
 
             for chrom, start, end in bed12_region.segments():
 
-                window_sequence = fasta_object[chrom][start : end].seq.upper()
+                window_sequence = fasta_object[chrom][max(start-1,0) : end+1].seq.upper()
                     
                 trinuc_counts += Counter([
                     trinuc for trinuc in rolling(window_sequence) if not 'N' in trinuc

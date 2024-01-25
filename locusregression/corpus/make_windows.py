@@ -3,6 +3,9 @@ import subprocess
 import tempfile
 import sys
 from collections import defaultdict
+import logging
+logger = logging.getLogger('Windows')
+logger.setLevel(logging.INFO)
 
 
 def _make_fixed_size_windows(*, 
@@ -49,7 +52,7 @@ def _make_fixed_size_windows(*,
     add_id_process.wait()
 
 
-def _get_endpoints(*bedfiles):
+def _get_endpoints(allowed_chroms, *bedfiles):
 
     def _get_endpoints_bedfile(bedfile, track_id):
     
@@ -69,10 +72,10 @@ def _get_endpoints(*bedfiles):
 
                 chrom, start, end = cols[:3]
                 start = int(start); end = int(end)
-
-                yield chrom, start, track_id, feature, True
-                yield chrom, end, track_id, feature, False
-
+                
+                if chrom in allowed_chroms:
+                    yield chrom, start, track_id, feature, True
+                    yield chrom, end, track_id, feature, False
 
     endpoints = (
         endpoint
@@ -86,7 +89,7 @@ def _get_endpoints(*bedfiles):
     )
 
 
-def _endpoints_to_regions(endpoints):
+def _endpoints_to_regions(endpoints, min_windowsize = 5):
 
     active_features = set()
     feature_combination_ids = dict()
@@ -101,12 +104,14 @@ def _endpoints_to_regions(endpoints):
         elif chrom != prev_chrom:
             active_features = set()
             prev_chrom = chrom; prev_pos = pos
-        elif pos != prev_pos and len(active_features) > 0:
+        elif pos > (prev_pos + min_windowsize) and len(active_features) > 0:
 
             feature_combination = tuple(sorted(active_features))
 
             if not feature_combination in feature_combination_ids:
                 feature_combination_ids[feature_combination] = len(feature_combination_ids)
+
+            
                 
             yield chrom, prev_pos, pos, feature_combination_ids[feature_combination]    
 
@@ -125,6 +130,16 @@ def make_windows(
     blacklist_file, 
     output=sys.stdout, 
 ):
+
+    allowed_chroms=[]
+    with open(genome_file,'r') as f:
+
+        for line in f:
+            if line.startswith('#'):
+                continue
+            allowed_chroms.append(line.strip().split('\t')[0].strip())
+
+    logger.info(f'Using chromosomes: {", ".join(allowed_chroms)}')
     
     with tempfile.NamedTemporaryFile('w') as windows_file, \
         tempfile.NamedTemporaryFile('w') as pre_blacklist_file:
@@ -138,6 +153,7 @@ def make_windows(
         
         for region in _endpoints_to_regions(
             _get_endpoints(
+                allowed_chroms,
                 windows_file.name,
                 *bedfiles,
             )

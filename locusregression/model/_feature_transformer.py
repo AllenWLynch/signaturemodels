@@ -4,9 +4,11 @@ from sklearn.preprocessing import OneHotEncoder, PowerTransformer, MinMaxScaler,
     QuantileTransformer, StandardScaler, RobustScaler
 from sklearn.compose import ColumnTransformer
 from sklearn.base import clone, BaseEstimator
+from sklearn import set_config
 import logging
 from numpy import array
 logger = logging.getLogger(' LocusRegressor')
+set_config(enable_metadata_routing=True)
 
 class ClassStratifiedTransformer(BaseEstimator):
 
@@ -66,7 +68,7 @@ class FeatureTransformer:
                         [idx for idx, name in enumerate(self.feature_names_out) if name.startswith(feature_name + '_')]
                     )
 
-        return list(feature_groups_dict_.values())
+        return list(set(map(tuple,feature_groups_dict_.values())))
 
 
     @property
@@ -75,9 +77,8 @@ class FeatureTransformer:
     
 
     def list_categorical_features(self):
-
-        encoder_name = type(self.categorical_encoder).__name__.lower()
-        _slice = self.transformer_.output_indices_[encoder_name]
+        #encoder_name = type(self.categorical_encoder).__name__.lower()
+        _slice = self.transformer_.output_indices_['categorical']
         
         return list(range(_slice.start, _slice.stop))
 
@@ -94,13 +95,13 @@ class FeatureTransformer:
         for idx, feature_type in enumerate(self.feature_types_):
             feature_type_dict_[feature_type].append(idx)
 
-        self.transformer_ = ColumnTransformer(
-            ('power', ClassStratifiedTransformer(PowerTransformer()), feature_type_dict_['power']),
-            ('minmax', ClassStratifiedTransformer(MinMaxScaler()), feature_type_dict_['minmax']),
-            ('quantile', ClassStratifiedTransformer(QuantileTransformer(output_distribution='uniform')), feature_type_dict_['quantile']),
-            ('standardize', ClassStratifiedTransformer(StandardScaler()), feature_type_dict_['standardize']),
-            ('robust', ClassStratifiedTransformer(RobustScaler()), feature_type_dict_['robust']),
-            ('categorical', self.categorical_encoder, feature_type_dict_['categorical']),
+        self.transformer_ = ColumnTransformer([
+            ('power', PowerTransformer(), feature_type_dict_['power']),
+            ('minmax', MinMaxScaler(), feature_type_dict_['minmax']),
+            ('quantile', QuantileTransformer(output_distribution='uniform'), feature_type_dict_['quantile']),
+            ('standardize', StandardScaler(), feature_type_dict_['standardize']),
+            ('robust', RobustScaler(), feature_type_dict_['robust']),
+            ('categorical', self.categorical_encoder, feature_type_dict_['categorical']),],
             remainder='passthrough',
             verbose_feature_names_out=False,
         )
@@ -128,7 +129,7 @@ class FeatureTransformer:
             assert corpus_state.feature_names == self.feature_names_
 
         matrix, labels = self._assemble_matrix(corpus_states)
-        transformed_matrix = self.transformer_.transform(matrix, y=labels)
+        transformed_matrix = self.transformer_.transform(matrix)#, y=labels)
 
         return transformed_matrix
     
