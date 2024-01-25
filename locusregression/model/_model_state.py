@@ -36,7 +36,7 @@ class ModelState:
                 **kw,
             ):
         
-        assert isinstance(n_components, int) and n_components > 1
+        assert isinstance(n_components, int) and n_components >= 1
         self.n_components = n_components
         self.n_features = n_features
         self.n_loci = n_loci

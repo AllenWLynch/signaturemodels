@@ -193,7 +193,6 @@ def make_discrete_features(
         ['bedtools','map',
          '-a',regions_file,
          '-b', genomic_features,
-         '-F', '0.5',
          '-o','distinct',
          '-c',str(column),
          '-null', str(null),
