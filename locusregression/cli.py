@@ -12,6 +12,7 @@ import pickle
 import logging
 import warnings
 from matplotlib.pyplot import savefig
+from .explanation.explanation import explain
 
 from optuna.exceptions import ExperimentalWarning
 warnings.filterwarnings("ignore", category=ExperimentalWarning)
@@ -675,6 +676,32 @@ mutrate_r2_parser.add_argument('model', type = file_exists)
 mutrate_r2_parser.add_argument('--corpuses', '-d', type = file_exists, nargs = '+', required=True,
     help = 'Path to compiled corpus file/files.')
 mutrate_r2_parser.set_defaults(func = get_mutation_rate_r2)
+
+
+def explain_wrapper(n_jobs=1,*,signature, model, corpuses, output):
+    
+    model = load_model(model)
+    dataset = _load_dataset(corpuses)
+
+    results = explain(signature,
+            model = model,
+            corpus = dataset,
+            n_jobs = n_jobs
+            )
+    
+    print(*results['feature_names'], sep=',', file = output)
+    for row in results['shap_values']:
+        print(*row, sep = ',', file = output)
+
+explain_parser = subparsers.add_parser('model-explain',
+                                        help = 'Explain the contribution of each feature to a signature.')
+explain_parser.add_argument('model', type = file_exists)
+explain_parser.add_argument('--signature','-sig', type = str, required=True)
+explain_parser.add_argument('--corpuses', '-d', type = file_exists, nargs = '+', required=True,
+    help = 'Path to compiled corpus file/files.')
+explain_parser.add_argument('--n-jobs','-j', type = posint, default = 1)
+explain_parser.add_argument('--output','-o', type =  argparse.FileType('w'), default=sys.stdout)
+explain_parser.set_defaults(func = explain_wrapper)
 
 
 '''

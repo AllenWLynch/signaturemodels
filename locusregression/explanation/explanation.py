@@ -57,4 +57,8 @@ def explain(
         )
     )
 
-    return shap_values
+    return {
+        'shap_values' : shap_values,
+        'feature_names' : model.model_state.feature_transformer.feature_names_out,
+        'component_name' : model.component_names[component],
+    }
