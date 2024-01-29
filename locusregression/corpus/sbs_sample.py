@@ -6,6 +6,7 @@ import sys
 from pyfaidx import Fasta
 from dataclasses import dataclass
 import numpy as np
+from scipy.sparse import coo_matrix
 
 complement = {'A' : 'T','T' : 'A','G' : 'C','C' : 'G'}
 
@@ -258,13 +259,16 @@ class SBSSample:
         
     
     def get_empirical_mutation_rate(self, use_weight = True):
-        
-        mutation_rate = np.ravel( np.zeros_like(self.exposures, dtype = float) )
-        
-        for locus, weight in zip(self.locus, self.weight):
-            mutation_rate[locus] += weight if use_weight else 1.
 
-        mutation_rate = mutation_rate/np.ravel( self.exposures )
+        n_loci = self.exposures.shape[1]
+        
+        mutations = coo_matrix(
+            (self.weight, (self.context, self.locus)),
+            shape = (32, n_loci),
+            dtype = np.uint8
+        )
+        
+        mutations = mutations.multiply(1/self.exposures)
 
-        return mutation_rate
+        return mutations.todok()
 

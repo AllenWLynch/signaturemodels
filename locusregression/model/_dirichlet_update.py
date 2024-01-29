@@ -9,7 +9,7 @@ def multinomial_deviance(y, y_hat):
     return 2*( xlogy(y, y/y.sum()).sum() - xlogy(y, y_hat/y_hat.sum()).sum() )
 
 
-def feldmans_r2(y, y_hat, y_null):
+def pseudo_r2(y, y_hat, y_null):
     return 1 - multinomial_deviance(y, y_hat)/multinomial_deviance(y, y_null)
 
 

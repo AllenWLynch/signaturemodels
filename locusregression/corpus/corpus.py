@@ -292,7 +292,6 @@ class Corpus(CorpusMixin):
             trinuc_distributions = self.trinuc_distributions,
             shared_exposures = self.shared_exposures,
             name = self.name,
-            metadata = self.metadata,
         )
 
 
@@ -342,38 +341,6 @@ class Corpus(CorpusMixin):
         return self
     
 
-    def collapse_mutations(self):
-        
-        all_mutations = defaultdict(lambda : 0)
-
-        for sample in self.samples:
-
-            for (mut, context, locus, weight) in \
-                zip(sample.mutation, sample.context, sample.locus, sample.weight):
-                
-                all_mutations[(mut, context, locus)] += weight
-
-        mutation, context, locus = list(zip(*all_mutations.keys()))
-                                        
-        new_sample = SBSSample(**dict(
-            mutation = np.array(mutation),
-            context = np.array(context),
-            locus = np.array(locus),
-            weight = np.array(list(all_mutations.values())),
-            exposures = self.exposures,
-            name = self.name,
-        ))
-
-        return Corpus(
-            samples = InMemorySamples([new_sample]),
-            X_matrix=self.X_matrix,
-            trinuc_distributions = self.trinuc_distributions,
-            feature_names = self.feature_names,
-            shared_exposures = self.shared_exposures,
-            name = self.name,
-        )
-
-
     def get_empirical_mutation_rate(self, use_weight=True):
 
         # returns the ln mutation rate for each locus in the first sample
@@ -383,7 +350,7 @@ class Corpus(CorpusMixin):
         for i in range(1, len(self)):
             mutation_rate = mutation_rate + self.samples[i].get_empirical_mutation_rate(use_weight = use_weight)
 
-        return mutation_rate
+        return mutation_rate.tocsr()
 
 
 
