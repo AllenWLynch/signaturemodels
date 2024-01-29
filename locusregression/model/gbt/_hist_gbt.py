@@ -19,35 +19,6 @@ from sklearn.ensemble._hist_gradient_boosting.grower import TreeGrower
 from sklearn.ensemble._hist_gradient_boosting.gradient_boosting import BaseHistGradientBoosting, _update_leaves_values
 from sklearn.ensemble import HistGradientBoostingRegressor
 
-def _multinomial_loss(*,
-                y_true,
-                raw_prediction,
-                design_matrix,
-                sample_weight = None,
-                n_threads = 1,
-        ):
-
-    if sample_weight is None:
-        sample_weight = 1.
-
-    log_normalizer = np.array(
-        np.log( 
-            design_matrix.multiply(np.exp(raw_prediction[:,None]))\
-            .sum(axis = 0)
-        )
-    ).ravel()
-    
-    log_normalizer_col = (design_matrix @ np.diag(log_normalizer)).sum(axis = 1)
-    
-    theta_norm = raw_prediction - log_normalizer_col
-
-    effective_y_true = y_true * sample_weight
-
-    # gaurd against 0s
-    # np.where(effective_y_true == 0, 0, theta_norm, out = theta_norm)
-
-    return (effective_y_true @ theta_norm) * 1/len(y_true)
-
 
 class ShrunkTreePredictor:
 
@@ -77,6 +48,25 @@ class ShrunkTreePredictor:
 
 class BaseCustomBinnedGradientBooster(BaseHistGradientBoosting):
     """Base class for histogram-based gradient boosting estimators."""
+
+    @staticmethod
+    def get_log_weight(*, 
+                       y_train, 
+                       raw_predictions, 
+                       design_matrix_train, 
+                       design_matrix_val
+                    ):
+
+        log_mean_y = np.log(y_train[None,:] @ design_matrix_train)
+        log_mean_predictions = np.log(np.exp(raw_predictions.ravel()) @ design_matrix_train)
+
+        log_w_t = log_mean_y - log_mean_predictions
+
+        bias_t_train = design_matrix_train.multiply(log_w_t).sum(1)
+        bias_t_val = design_matrix_val.multiply(log_w_t).sum(1)
+
+        return bias_t_train, bias_t_val
+
 
     #@_fit_context(prefer_skip_nested_validation=True)
     def fit(self, X, y,*,
@@ -359,25 +349,21 @@ class BaseCustomBinnedGradientBooster(BaseHistGradientBoosting):
                     "[{}/{}] ".format(iteration + 1, self.max_iter), end="", flush=True
                 )
 
-            # TODO: fit the bias term here
-                
+            # 1: fit the bias term here 
             # this code finds the mean y and prediction for each distribution according to the design matrix. 
             # without de-sparsifying the design matrix
             
-            # (1,n_samples) x (n_samples, n_distributions) = (1, n_distributions)
-            log_mean_y = np.log(y_train[None,:] @ design_matrix_train)
-            log_mean_predictions = np.log(np.exp(raw_predictions.ravel()) @ design_matrix_train)
-
-            b_hat_t = log_mean_y - log_mean_predictions
-
+            bias_t_train, bias_t_val = self.get_log_weight(
+                y_train=y_train,
+                raw_predictions=raw_predictions,
+                design_matrix_train=design_matrix_train,
+                design_matrix_val=design_matrix_val,
+            )
             # TODO: update the raw predictions using the bias term
             # There is no need to save the bias term, since it cancels out in the multinomial ll
             # The bias is only needed to ensure that poisson regression produces the same parameter estimates.
 
             # get bias term for each observation
-            bias_t_train = design_matrix_train.multiply(b_hat_t).sum(1)
-            bias_t_val = design_matrix_val.multiply(b_hat_t).sum(1)
-
             raw_predictions += bias_t_train
             raw_predictions_val += bias_t_val
             #

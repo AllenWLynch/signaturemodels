@@ -32,7 +32,7 @@ class ModelState:
                 genome_trinuc_distribution,
                 dtype,
                 get_model_fn = _get_linear_model,
-                categorical_encoder = OneHotEncoder(sparse=False, drop='first'),
+                categorical_encoder = OneHotEncoder(sparse_output=False, drop='first'),
                 **kw,
             ):
         
@@ -232,23 +232,30 @@ class ModelState:
                 num_corpuses, axis = 0
             )
 
-            target = self._convert_beta_sstats_to_array(k, sstats, n_bins)
+            target = self._convert_beta_sstats_to_array(k, sstats, n_bins).ravel()
+            eta = (exposures * context_effect).ravel()
 
-            # need to fit an intercept term here to rescale the targets to mean 1.
-            # otherwise, the targets could be so small that the model doesn't learn
-            # because the change in likelihood is so small
-            intercept = target.sum(axis=1, keepdims=True)/(
-                            exposures*context_effect*np.exp(current_lograte_prediction)
-                        ).sum(axis=1, keepdims=True)
+            # rescale the targets to mean 1 so that the learning rate is comparable across components and over epochs
+            m = (target/eta).mean()
+            sample_weights = eta * m
 
-            y = target.ravel()
-            sample_weights = (exposures * context_effect * intercept).ravel()
+            # remove any samples with zero weight to avoid divide-by-zero errors
+            zero_mask = sample_weights == 0
+
+            if (target[zero_mask] > 0).any():
+                raise ValueError('A sample weight is zero but the target is positive')
+            else:
+                target = target[~zero_mask]
+                sample_weights = sample_weights[~zero_mask]
+                current_lograte_prediction = current_lograte_prediction[~zero_mask]
+
+            y_tild = target/sample_weights
 
             yield (
-                y/sample_weights,
+                y_tild,
                 sample_weights/sample_weights.mean(), # rescale the weights to mean 1 so that the learning rate is comparable across components and over epochs
                 current_lograte_prediction
-            )        
+            )
 
 
     def update_rate_model(self, sstats, corpus_states, learning_rate):
