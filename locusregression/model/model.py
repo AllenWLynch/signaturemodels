@@ -731,9 +731,9 @@ class LocusRegressor:
         corpus_state = self.corpus_states[corpus.name]
         gamma = corpus_state.alpha/corpus_state.alpha.sum() # use expectation of the prior over components
         
-        psi_matrix = np.exp(self.get_log_component_mutation_rate(corpus))
+        psi_tensor = np.exp(self.get_log_component_mutation_rate(corpus)) # n_components x n_contexts x n_loci
         
-        marginalized = np.squeeze(gamma @ psi_matrix)
+        marginalized = np.squeeze(gamma @ psi_tensor)
 
         return np.log(marginalized)
     

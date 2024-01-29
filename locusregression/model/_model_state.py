@@ -225,7 +225,7 @@ class ModelState:
 
             current_lograte_prediction = np.array(
                 [corpus_states[name].logmu[k] for name in sstats.corpus_names]
-            )
+            ).ravel()
 
             context_effect = np.repeat(
                 self._get_nucleotide_effect(k, trinuc_matrix)[None,:],
@@ -372,8 +372,16 @@ class CorpusState(ModelState):
 
     
     def get_log_component_effect_rate(self, model_state, exposures):
-        logits = self._get_mutation_rate_logits(model_state, exposures)
-        return logits - self._log_denom
+        '''
+        Returns a (Z x C x L) tensor of the log of the component-wise mutation rate effects
+        '''
+        locus_effects = (self._logmu + np.log(exposures))[:,None,:]
+        signature_effects = np.log(model_state.delta)[:,:,None] + np.log(self.trinuc_distributions)[None,:,:]
+
+        return np.nan_to_num(
+            locus_effects + signature_effects - self._log_denom[:,None,:],
+            nan = -np.inf
+        )
     
 
     def _calc_log_denom(self, model_state, exposures):

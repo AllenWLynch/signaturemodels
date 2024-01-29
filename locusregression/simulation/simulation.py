@@ -251,13 +251,22 @@ class SimulatedCorpus:
             contexts.append(context)
             mutations.append(mutation)
 
+        elements = dict(
+            mutation=np.array(mutations), 
+            context=np.array(contexts), 
+            locus=np.array(loci), 
+            weight=np.ones_like(loci).astype(float),
+            pos = np.array(loci),
+            chrom = np.array(['chr1']*len(loci)),
+            exposures = exposures,
+        )
+
+        for k, v in elements.items():
+            elements[k] = v.astype(SBSSample.type_map[k])
+
         return SBSSample(
-                        mutation=np.array(mutations), 
-                        context=np.array(contexts), 
-                        locus=np.array(loci), 
-                        weight=np.ones_like(loci).astype(float),
-                        name = name,
-                        exposures = exposures,
+                        **elements,
+                        name = str(name),
                     )
 
 
