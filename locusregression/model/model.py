@@ -1,10 +1,11 @@
 
-from ._dirichlet_update import log_dirichlet_expectation, feldmans_r2, dirichlet_bound
+from ._dirichlet_update import log_dirichlet_expectation, pseudo_r2, dirichlet_bound
 from locusregression.corpus import COSMIC_SORT_ORDER, SIGNATURE_STRINGS, MUTATION_PALETTE
 from locusregression.corpus.sbs_sample import SBSSample
 import locusregression.model._sstats as _sstats
 from ._model_state import ModelState, CorpusState
-
+from ._importance_sampling import _get_z_posterior
+from pandas import DataFrame
 # external imports
 import numpy as np
 import time
@@ -655,7 +656,11 @@ class LocusRegressor:
                         )
             sample_names.append(sample.name)
 
-        return sample_names, gamma
+        return DataFrame(
+            np.vstack(gamma),
+            index = sample_names,
+            columns = self.component_names
+        )
 
 
     def _calc_signature_sstats(self, corpus):
@@ -733,7 +738,7 @@ class LocusRegressor:
         
         psi_tensor = np.exp(self.get_log_component_mutation_rate(corpus)) # n_components x n_contexts x n_loci
         
-        marginalized = np.squeeze(gamma @ psi_tensor)
+        marginalized = np.squeeze(np.tensordot(gamma, psi_tensor, axes=([0], [0])))
 
         return np.log(marginalized)
     
@@ -757,13 +762,13 @@ class LocusRegressor:
         except KeyError:
             raise ValueError(f'Corpus {corpus.name} not found in model.')
         
-        empirical_mr = corpus.get_empirical_mutation_rate()
+        empirical_mr = corpus.get_empirical_mutation_rate().toarray()
         predicted_mr = np.exp(self.get_log_marginal_mutation_rate(corpus))
+        y_null = corpus.trinuc_distributions
 
-        y_null = corpus.trinuc_distributions.sum(0)
-
-        return feldmans_r2(empirical_mr, predicted_mr, y_null)
+        return pseudo_r2(empirical_mr, predicted_mr, y_null)
     
+
 
     def _get_signature_idx(self, component):
 
@@ -906,8 +911,51 @@ class LocusRegressor:
         )
 
         return np.array([
-            self.model_state._convert_beta_sstats_to_array(k, sstats, corpus.shape[1])
+            self.model_state._convert_beta_sstats_to_array(k, sstats, corpus.shape[1]).ravel()
             for k in range(self.n_components)
         ])
     
+
+
+    def get_posterior_assignments(self, sample, corpus, n_iters = 1000):
+        
+        try:
+            corpus_state = self.corpus_states[corpus.name]
+        except KeyError:
+            raise ValueError(f'Corpus {corpus.name} not found in model.')
+        
+        new_corpus_state = corpus_state.clone_corpusstate(corpus)
+        new_corpus_state.update_mutation_rate(self.model_state, from_scratch = True)
+
+        observation_ll = np.log(
+            _get_observation_likelihood(
+                model_state=self.model_state,
+                sample=sample,
+                corpus_state=new_corpus_state
+            )
+        )
+
+        z_posterior = np.log(
+            _get_z_posterior(
+                observation_ll,
+                alpha = new_corpus_state.alpha,
+                randomstate = self.random_state,
+                n_iters = n_iters
+            )
+        )
+
+        df_cols = {
+            'CHROM' : sample.chrom.astype(str),
+            'POS' : sample.pos
+        }
+
+        df_cols.update({
+            f"INFO/logp-{component_name.replace(' ','_')}" : _posterior
+            for component_name, _posterior in zip(self.component_names, z_posterior)
+        })
+
+        return DataFrame(df_cols)
+        
+
+
         

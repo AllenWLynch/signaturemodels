@@ -6,28 +6,6 @@ from ._dirichlet_update import log_dirichlet_expectation
 from scipy.stats import dirichlet_multinomial
 
 
-def _conditional_logp_mutation_locus(*, model_state, sample, corpus_state):
-        '''
-        Calculates an array of log \Tilde{P}_{z|m,l}(z|m,l) for each z in {1,...,K}
-        These probabilities are unnormalized, and are used in the gibbs sampling step
-        '''
-
-        _lambda = model_state.delta/np.sum(model_state.delta, axis = -1, keepdims = True)
-        rho = model_state.omega/np.sum(model_state.omega, axis = -1, keepdims = True)
-
-        mutation_matrix = _lambda[:,:,None] * rho
-
-        log_p_m_l = np.log(corpus_state.trinuc_distributions[sample.context, sample.locus]) \
-                    + np.log(mutation_matrix[:, sample.context, sample.mutation]) \
-                    - np.log( np.dot(_lambda, corpus_state.trinuc_distributions[:,sample.locus]) ) # K,C x C,L -> K,I
-        
-        #log_mutrates = np.log(sample.exposures) + beta @ corpus_state.X_matrix
-        log_p_l = np.log(sample.exposures[:, sample.locus]) + corpus_state.logmu[:, sample.locus] - corpus_state.log_denom(sample.exposures)
-
-        return log_p_l + log_p_m_l # K,I
-
-
-
 def _model_logp_given_z(log_p_ml_z, z, alpha):
     
     K, N = log_p_ml_z.shape
@@ -125,7 +103,6 @@ def _get_z_posterior(log_p_ml_z,*,alpha,
     for step in tqdm.tqdm(range(1,n_iters), ncols=100, desc = 'Sampling mutation assignments'):
 
         z_tild = gibbs_sampler(z_tild, temperature= 1.)
-        
         z_posterior[z_tild, np.arange(N)] += 1
 
     return z_posterior / np.sum(z_posterior, axis = 0, keepdims = True)

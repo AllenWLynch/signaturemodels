@@ -1,6 +1,6 @@
 from .._model_state import ModelState, CorpusState
 from ._hist_gbt import CustomHistGradientBooster
-from numpy import array
+from numpy import array, log
 from functools import partial
 from sklearn.preprocessing import OrdinalEncoder
 
@@ -115,7 +115,7 @@ class GBTCorpusState(CorpusState):
 
         else:
             self._logmu = array([
-                model_state.rate_models[k]._raw_predict(X).ravel()
+                log(model_state.rate_models[k].predict(X).ravel())
                 for k in range(self.n_components)
             ])
 

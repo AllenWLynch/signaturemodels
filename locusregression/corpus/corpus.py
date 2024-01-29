@@ -292,7 +292,6 @@ class Corpus(CorpusMixin):
             trinuc_distributions = self.trinuc_distributions,
             shared_exposures = self.shared_exposures,
             name = self.name,
-            metadata = self.metadata,
         )
 
 

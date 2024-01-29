@@ -609,17 +609,15 @@ def predict(*,model, corpuses, output):
 
     model = load_model(model)
 
-    sample_names, predictions = model.predict(dataset)
+    exposures_matrix = model.predict(dataset)
 
-    print('',*model.component_names, sep = ',', file = output)
-    for sample_name, prediction in zip(sample_names, predictions):
-        print(sample_name, *prediction, sep = ',', file = output)
+    exposures_matrix.to_csv(output)
 
 predict_sub = subparsers.add_parser('model-predict', help = 'Predict exposures for each sample in a corpus.')
 predict_sub.add_argument('model', type = file_exists)
 predict_sub.add_argument('--corpuses', '-d', type = file_exists, nargs = '+', required=True,
                          help = 'Path to compiled corpus file/files.')
-predict_sub.add_argument('--output','-o', type =  argparse.FileType('w'), default=sys.stdout)
+predict_sub.add_argument('--output','-o', type =  valid_path, required=True)
 predict_sub.set_defaults(func = predict)
 
 
@@ -702,6 +700,52 @@ explain_parser.add_argument('--corpuses', '-d', type = file_exists, nargs = '+',
 explain_parser.add_argument('--n-jobs','-j', type = posint, default = 1)
 explain_parser.add_argument('--output','-o', type =  argparse.FileType('w'), default=sys.stdout)
 explain_parser.set_defaults(func = explain_wrapper)
+
+
+
+def assign_components_wrapper(*,
+        model, 
+        vcf_file, 
+        corpus, 
+        output, 
+        exposure_file = None, 
+        chr_prefix = ''
+    ):
+    
+    model = load_model(model)
+    corpus = stream_corpus(corpus)
+
+    try:
+        corpus.metadata['regions_file']
+    except KeyError as err:
+        raise ValueError('Corpus must have a "regions_file" metadata attribute.\n'
+                         'This one doesn\'t, which means it must be a partition of some corpus, or a simluted corpus.\n'
+                         'This function must use the originally-created corpus.') from err
+
+    sample = CorpusReader.ingest_sample(
+                    vcf_file, 
+                    exposure_file = exposure_file,
+                    regions_file = corpus.metadata['regions_file'], 
+                    fasta_file = corpus.metadata['fasta_file'],
+                    chr_prefix = chr_prefix,
+                )
+    
+    posterior_df = model.get_posterior_assignments(
+        sample, corpus
+    )
+    posterior_df.to_csv(output, index = False)
+
+
+
+assign_components_parser = subparsers.add_parser('model-posterior-assign',
+    help = 'Assign each mutation in a VCF file to a component of the model.')
+assign_components_parser.add_argument('model', type = file_exists)
+assign_components_parser.add_argument('--vcf-file','-vcf', type = file_exists, required=True)
+assign_components_parser.add_argument('--corpus','-d', type = file_exists, required=True)
+assign_components_parser.add_argument('--output','-o', type = file_exists, required=True)
+assign_components_parser.add_argument('--exposure-file','-e', type = file_exists, default=None)
+assign_components_parser.add_argument('--chr-prefix', type = str, default = '')
+assign_components_parser.set_defaults(func = assign_components_wrapper)
 
 
 '''

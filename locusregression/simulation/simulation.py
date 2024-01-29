@@ -98,8 +98,10 @@ class SimulatedCorpus:
         if exposures is None:
             exposures = np.ones((n_cells, n_loci))
         else:
-            shared_exposures = False
-            assert exposures.shape == (n_cells, n_loci)
+            #shared_exposures = False
+            #assert exposures.shape == (n_cells, n_loci)
+            shared_exposures = True
+            exposures = np.ones((1, n_loci))
 
         randomstate = np.random.RandomState(seed)
 
@@ -118,12 +120,12 @@ class SimulatedCorpus:
         cell_n_mutations = randomstate.lognormal(log_mean_mutations, log_std_mutations, size = n_cells).astype(int)
 
         samples = []
-        for i, (pi, n_mutations, exposure) in tqdm.tqdm(enumerate(zip(cell_pi, cell_n_mutations, exposures)),
+        for i, (pi, n_mutations) in tqdm.tqdm(enumerate(zip(cell_pi, cell_n_mutations)),
             total = len(cell_pi), ncols = 100, desc = 'Generating samples'):
 
             if i == 0 or not shared_exposures:
                 psi_matrix = SimulatedCorpus.get_psi_matrix(
-                        signals, exposure, 
+                        signals, exposures, 
                         beta_matrix = beta_matrix, 
                         rate_function = rate_function,
                         mutation_rate_noise = mutation_rate_noise,
@@ -138,7 +140,7 @@ class SimulatedCorpus:
                     signatures=signatures,
                     pi = pi, 
                     n_mutations= n_mutations,
-                    exposures = exposure[None,:],
+                    exposures = exposures,
                     name = str(i),
                 )
             )
