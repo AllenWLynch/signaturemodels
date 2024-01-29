@@ -767,6 +767,11 @@ class LocusRegressor:
 
     def _get_signature_idx(self, component):
 
+        try:
+            component = int(component)
+        except ValueError:
+            pass
+
         if isinstance(component, int):
             assert 0 <= component < self.n_components
         elif isinstance(component, str):
