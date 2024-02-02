@@ -139,6 +139,7 @@ class CorpusReader:
                 'correlates_file' : os.path.abspath(correlates_file),
                 'trinuc_file' : os.path.abspath(trinuc_file) if not trinuc_file is None else None,
                 'chr_prefix' : str(chr_prefix),
+                'weight_col' : str(weight_col),
             }
         )
 
@@ -416,7 +417,7 @@ class CorpusReader:
                     chr_prefix = '',
                     weight_col = None,
                     ):
-            
+        
         windows = cls.read_windows(regions_file, None, sep = '\t')
 
         if not exposure_file is None:
@@ -424,7 +425,7 @@ class CorpusReader:
         else:
             exposures = np.ones((1, len(windows)))
 
-
+        logger.info('Ingesting mutations ...')
         return SBSSample.featurize_mutations(
             vcf_file, 
             regions_file,
