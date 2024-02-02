@@ -304,23 +304,26 @@ class SimulatedCorpus:
 
     @staticmethod
     def from_model(
-        model_state, 
+        model, 
         corpus_state,
         corpus,
         seed = 0,
         ):
 
         randomstate = np.random.RandomState(seed)
-        pi_prior = corpus_state.alpha
-        n_cells = len(corpus)
         _, n_loci = corpus.shape
 
-        cell_pi = randomstate.dirichlet(pi_prior, size = n_cells)
+        #cell_pi = randomstate.dirichlet(pi_prior, size = n_cells)
+        cell_pi = np.array([
+            model._predict_sample(sample, corpus_state)
+            for sample in tqdm.tqdm(corpus, ncols = 100)
+        ])
+
         cell_n_mutations = [int(sum(sample['weight'])) for sample in corpus]
 
         exposures = np.ones((1, n_loci))
 
-        psi_matrix = np.exp(corpus_state.get_log_component_effect_rate(model_state, exposures))
+        psi_matrix = np.exp(corpus_state.get_log_component_effect_rate(model.model_state, exposures))
 
         samples = []
         for sample_num, (pi, n_mutations) in tqdm.tqdm(enumerate(zip(cell_pi, cell_n_mutations)),
@@ -329,7 +332,7 @@ class SimulatedCorpus:
             samples.append(
                 SimulatedCorpus.simulate_sample(
                     randomstate,
-                    omega = model_state.omega,
+                    omega = model.model_state.omega,
                     pi = pi,
                     n_mutations = n_mutations,
                     exposures = exposures,
