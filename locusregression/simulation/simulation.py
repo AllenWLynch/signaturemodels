@@ -307,23 +307,34 @@ class SimulatedCorpus:
         model, 
         corpus_state,
         corpus,
+        use_signatures = None,
         seed = 0,
         ):
 
         randomstate = np.random.RandomState(seed)
         _, n_loci = corpus.shape
 
+        if not use_signatures is None:
+            use_signatures = np.array([model.component_names.index(sig) for sig in use_signatures])
+        else:
+            use_signatures = np.arange(model.n_signatures)
+
         #cell_pi = randomstate.dirichlet(pi_prior, size = n_cells)
-        cell_pi = np.array([
+            
+        psi_matrix = np.exp(corpus_state.get_log_component_effect_rate(model.model_state, exposures))
+        psi_matrix = psi_matrix[use_signatures]
+
+        cell_gamma = np.array([
             model._predict_sample(sample, corpus_state)
             for sample in tqdm.tqdm(corpus, ncols = 100)
         ])
 
-        cell_n_mutations = [int(sum(sample['weight'])) for sample in corpus]
+        cell_gamma = cell_gamma[:,use_signatures]
+        cell_pi = cell_gamma / cell_gamma.sum(axis = 1)[:,None]
+
+        cell_n_mutations = cell_gamma.sum(axis = 1).astype(int)
 
         exposures = np.ones((1, n_loci))
-
-        psi_matrix = np.exp(corpus_state.get_log_component_effect_rate(model.model_state, exposures))
 
         samples = []
         for sample_num, (pi, n_mutations) in tqdm.tqdm(enumerate(zip(cell_pi, cell_n_mutations)),
@@ -332,7 +343,7 @@ class SimulatedCorpus:
             samples.append(
                 SimulatedCorpus.simulate_sample(
                     randomstate,
-                    omega = model.model_state.omega,
+                    omega = model.model_state.omega[use_signatures],
                     pi = pi,
                     n_mutations = n_mutations,
                     exposures = exposures,

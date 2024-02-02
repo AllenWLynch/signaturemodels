@@ -915,7 +915,7 @@ def run_simulation(*,config, prefix):
         pickle.dump(generative_parameters, f)
     
 
-def simulate_from_model(*, model, corpus, output):
+def simulate_from_model(*, model, corpus, output, use_signatures=None):
     
     model = load_model(model)
     corpus = stream_corpus(corpus)
@@ -926,6 +926,7 @@ def simulate_from_model(*, model, corpus, output):
         model_state = model.model_state,
         corpus_state = corpus_state,
         corpus = corpus,
+        use_signatures = use_signatures,
     )
 
     save_corpus(resampled_corpus, output)
@@ -935,6 +936,7 @@ simulate_from_model_parser = subparsers.add_parser('simulate-from-model',
 simulate_from_model_parser.add_argument('model', type = file_exists)
 simulate_from_model_parser.add_argument('--corpus','-d', type = file_exists, required=True)
 simulate_from_model_parser.add_argument('--output','-o', type = valid_path, required=True)
+simulate_from_model_parser.add_argument('--use-signatures','-sigs', nargs='+', type = str, default=None)
 simulate_from_model_parser.set_defaults(func = simulate_from_model)
 
 
