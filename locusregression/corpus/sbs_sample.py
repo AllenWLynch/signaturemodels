@@ -5,6 +5,7 @@ import tempfile
 import sys
 from pyfaidx import Fasta
 from dataclasses import dataclass
+from collections import defaultdict
 import numpy as np
 from scipy.sparse import coo_matrix
 
@@ -13,74 +14,13 @@ complement = {'A' : 'T','T' : 'A','G' : 'C','C' : 'G'}
 def revcomp(seq):
     return ''.join(reversed([complement[nuc] for nuc in seq]))
 
+
 def convert_to_mutation(context, alt):
     
     if not context[1] in 'CT': 
         context, alt = revcomp(context), complement[alt]
 
     return context, alt
-
-
-def code_SBS_mutation(*,query_file, fasta_file,
-                      chr_prefix = '', output = sys.stdout):
-
-    def _get_context_mutation_idx(fasta_object,*,
-                                  chromosome, pos, ref, alt):
-
-        start = pos - 1; end = pos + 2
-
-        try:
-            context = fasta_object[chromosome][start : end].seq.upper()
-        except KeyError as err:
-            raise KeyError('\tChromosome {} found in VCF file is not in the FASTA reference file'\
-                .format(chromosome)) from err
-
-        oldnuc = context[1]
-
-        assert oldnuc == ref, '\tLooks like the vcf file was constructed with a different reference genome, different ref allele found at {}:{}, found {} instead of {}'.format(
-            chromosome, str(pos), oldnuc, ref 
-        )
-
-        context, alt = convert_to_mutation(context, alt)
-
-        return MUTATIONS_IDX[context][alt], CONTEXT_IDX[context], '{c1}[{c2}>{alt}]{c3}'.format(c1 = context[0], c2 = context[1], alt = alt, c3 = context[2])
-    
-
-    class QUERY(object):
-        CHROM = 0	
-        POS = 1
-        REF = 2
-        ALT = 3
-        WEIGHT = 4
-
-
-    with Fasta(fasta_file) as fa:
-    
-        for line in query_file:
-
-            if line.startswith('#'):
-                continue
-            
-            line = line.strip().split('\t')
-
-            
-            chromosome = chr_prefix + line[QUERY.CHROM]
-            pos = int(line[QUERY.POS])
-            ref = line[QUERY.REF]
-            alt = line[QUERY.ALT]
-            
-            mut, context, cosmic_str = _get_context_mutation_idx(
-                   fa, chromosome=chromosome, ref = ref, alt = alt, pos = pos
-            )
-            
-            print(
-                    chromosome,
-                    pos,
-                    pos+1,
-                    f'{pos}:{mut}:{context}:{line[QUERY.WEIGHT]}',
-                sep = '\t',
-                file = output,
-            )
 
 
 @dataclass
@@ -109,49 +49,44 @@ class SBSSample:
     data_attrs = ['mutation','context','locus','exposures','weight','chrom','pos']
     required = ['mutation','context','locus','exposures']
 
-    @classmethod
-    def process_mapped_sbs_codes(cls, input):
-    
-        data = {
-            'mutation': [],
-            'context': [],
-            'locus': [],
-            'weight' : [],
-            'chrom' : [],
-            'pos' : [],
-        }
-
-        for _, line in enumerate(input):
-            
-            fields = line.strip().split('\t')
-            chrom=fields[0]
-            locus_idx=int(fields[3])
-            mutation_codes=fields[-1]
-
-            if mutation_codes == '.':
-                continue
-            
-            mutation_codes = [code.split(':') for code in mutation_codes.split(',')]
-
-            for code in mutation_codes:
-                pos, mutation, context, weight = code
-                data['pos'].append(pos)
-                data['mutation'].append(mutation)
-                data['context'].append(context)
-                data['weight'].append(weight)
-                data['locus'].append(locus_idx)
-                data['chrom'].append(chrom)
-
-        data = {
-                key: np.array(value).astype(cls.type_map[key])
-                for key, value in data.items()
-            }  # Convert lists to numpy arrays
-
-        return data
-
+         
     @classmethod
     def featurize_mutations(cls, vcf_file, regions_file, fasta_file, exposures,
                         chr_prefix = '', weight_col = None):
+        
+
+        def process_line(line, fasta_object):
+
+            fields = line.strip().split('\t')
+            chrom=fields[0]; locus_idx=int(fields[3]); mutation_code=fields[-1]
+
+            pos, ref, alt, weight = mutation_code.split('|')
+            pos = int(pos)
+
+            start = pos - 1; end = pos + 2
+            try:
+                context = fasta_object[chrom][start : end].seq.upper()
+            except KeyError as err:
+                raise KeyError('\tChromosome {} found in VCF file is not in the FASTA reference file'\
+                    .format(chrom)) from err
+
+            oldnuc = context[1]
+
+            assert oldnuc == ref, '\tLooks like the vcf file was constructed with a different reference genome, different ref allele found at {}:{}, found {} instead of {}'.format(
+                chrom, str(pos), oldnuc, ref 
+            )
+
+            context, alt = convert_to_mutation(context, alt)
+
+            {
+                'chrom' : chrom,
+                'locus' : locus_idx,
+                'mutation' : MUTATIONS_IDX[context][alt],
+                'context' : CONTEXT_IDX[context],
+                'weight' : float(weight),
+                'pos' : int(pos),
+            }
+
 
 
         with tempfile.NamedTemporaryFile() as tmp:
@@ -166,7 +101,8 @@ class SBSSample:
             
             with open(os.devnull, "w") as nullout:
                 query_process = subprocess.Popen(
-                    ['bcftools','query','-f','%CHROM\t%POS0\t%REF\t%ALT{0}' + ('\t1\n' if weight_col is None else f'\t%INFO/{weight_col}\n')],
+                    ['bcftools','query','-f','%CHROM\t%POS0\t%POS0\t%CHROM|%POS0|%REF|%ALT{0}|' \
+                        + ('1' if weight_col is None else f'%INFO/{weight_col}') + '\n'],
                     stdin = filter_process.stdout,
                     stdout = subprocess.PIPE,
                     stderr = nullout,
@@ -174,51 +110,44 @@ class SBSSample:
                     bufsize=10000,
                 )
 
-            '''
-            Code mutation converts a line of a vcf file into a mutational code.
-            For SBS mutations, the code is a context-mutation-weight tuple, so a line of the ouput would look like:
-            
-            chr1    1000    1001    12:3:1
 
-            Where 12 is the context code and 3 is the mutation code.
-            '''
-            code_process = subprocess.Popen(
-                ['locusregression','code-sbs',
-                    '-fa',fasta_file,
-                    '--chr-prefix',chr_prefix
-                ],
-                stdin=query_process.stdout,
-                stdout = subprocess.PIPE,
-                universal_newlines=True,
-                bufsize=10000,
-            )
-
-            map_process = subprocess.Popen(
-                ['bedtools','map',
+            subprocess.check_output(
+                ['bedtools',
+                 'intersect',
                 '-a', regions_file, 
                 '-b', '-', 
                 '-sorted',
-                '-c','4','-o','collapse', 
-                '-split',
-                '-delim',','],
-                stdin=code_process.stdout,
+                '-wa','-wb',
+                '-split'],
+                stdin=query_process.stdout,
                 stdout=tmp,
                 universal_newlines=True,
                 bufsize=10000,
             )
             
-            map_process.communicate(); code_process.communicate(); filter_process.communicate()
+            query_process.communicate(); filter_process.communicate()
             tmp.flush()
             
-            if not all([p.returncode == 0 for p in [map_process, code_process, filter_process]]):
-                raise RuntimeError('Sample processing failed. See error message above.')
+            #if not all([p.returncode == 0 for p in [query_process, filter_process]]):
+            #    raise RuntimeError('Sample processing failed. See error message above.')
 
-            with open(tmp.name, 'r') as f:
-                return cls(
-                    **cls.process_mapped_sbs_codes(f),
-                    name = os.path.abspath(vcf_file),
-                    exposures = np.array(exposures),
-                )
+            mutations = defaultdict(list)
+
+            with open(tmp.name, 'r') as f, \
+                Fasta(fasta_file) as fa:
+                
+                for line in f:
+                    for k, v in process_line(line, fa):
+                        mutations[k].append(v)
+
+            
+
+
+            return cls(
+                **cls.process_mutations(f),
+                name = os.path.abspath(vcf_file),
+                exposures = np.array(exposures),
+            )
             
     def __len__(self):
         return len(self.locus)
