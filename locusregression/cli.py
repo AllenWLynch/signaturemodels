@@ -1,6 +1,7 @@
 from .corpus import *
 from .corpus import logger as reader_logger
 from .model import LocusRegressor, load_model, logger, GBTRegressor
+from .model._importance_sampling import get_posterior_sample
 from .tuning import run_trial, create_study, load_study
 from .simulation import SimulatedCorpus, coef_l1_distance, signature_cosine_distance
 import argparse
@@ -8,14 +9,95 @@ from argparse import ArgumentTypeError
 import os
 import sys
 import logging
+logging.basicConfig(level=logging.INFO)
+logger.setLevel(logging.INFO)
 import pickle
 import logging
 import warnings
 from matplotlib.pyplot import savefig
 from .explanation.explanation import explain
+from tempfile import NamedTemporaryFile
+from functools import partial
+import subprocess
+from joblib import Parallel, delayed
+import joblib
 
 from optuna.exceptions import ExperimentalWarning
 warnings.filterwarnings("ignore", category=ExperimentalWarning)
+
+
+def get_corpusstate_cache_path(model_path, corpus_path):
+    return os.path.join(
+        os.path.dirname(corpus_path),
+        '.' + os.path.basename(corpus_path) + os.path.relpath(model_path, corpus_path)\
+            .replace('/','.')\
+            .replace(' ','') \
+        + '.corpusstate'
+    )
+
+
+def load_corpusstate_cache(model_path, corpus_path):
+    
+    cache_path = get_corpusstate_cache_path(model_path, corpus_path)
+
+    model_mtime = os.path.getmtime(model_path)
+    corpus_mtime = os.path.getmtime(corpus_path)
+    cache_mtime = os.path.getmtime(cache_path)
+
+    assert model_mtime > corpus_mtime, 'Model must have been trained after corpus was last modified.'
+    assert cache_mtime > model_mtime, 'Cache must have been created after model was trained'
+
+    # check if model was saved after corpus, and if path was saved after model
+    return joblib.load(cache_path)
+
+
+
+def transfer_annotations_vcf(
+        annotations_df,*,
+        vcf_file,
+        description, 
+        output, 
+        chr_prefix=''
+    ):
+
+    annotations_df = annotations_df.copy()
+
+    annotations_df['CHROM'] = annotations_df.CHROM.str.removeprefix(chr_prefix)
+    annotations_df['POS'] = annotations_df.POS + 1 #switch to 1-based from 0-based indexing
+    annotations_df = annotations_df.sort_values(['CHROM','POS'])
+
+    transfer_columns = ','.join(['CHROM','POS'] + list(map(lambda c : 'INFO/' + c, annotations_df.columns[2:])))
+
+    with NamedTemporaryFile() as header, \
+        NamedTemporaryFile(delete=False) as dataframe:
+
+        with open(header.name, 'w') as f:
+            for col in annotations_df.columns[2:]:
+                print(
+                    f'##INFO=<ID={col},Number=1,Type=Float,Description="{description}">',
+                    file = f,
+                    sep = '\n',
+                )
+
+            annotations_df.to_csv(dataframe.name, index = None, sep = '\t', header = None)
+
+        try:    
+            subprocess.check_output(['bgzip','-f',dataframe.name])
+            subprocess.check_output(['tabix','-s1','-b2','-e2', '-f', dataframe.name + '.gz'])
+
+            subprocess.check_output(
+                ['bcftools','annotate',
+                '-a',  dataframe.name + '.gz',
+                '-h', header.name,
+                '-c', transfer_columns,
+                '-o', output,
+                vcf_file,
+                ]
+            )
+        
+        finally:
+            os.remove(dataframe.name + '.gz')
+            os.remove(dataframe.name + '.gz.tbi')
 
 
 def posint(x):
@@ -68,7 +150,7 @@ def _load_dataset(corpuses):
 
 def _get_basemodel(model_type):
 
-    if model_type == 'regression':
+    if model_type == 'linear':
         basemodel = LocusRegressor
     elif model_type == 'gbt':
         basemodel = GBTRegressor
@@ -391,7 +473,7 @@ model_options.add_argument('--fix-signatures','-sigs', nargs='+', type = str, de
 model_options.add_argument('--num-epochs', '-e', type = posint, default=500,
     help = 'Maximum number of epochs to allow training during'
             ' successive halving/Hyperband. This should be set high enough such that the model converges to a solution.')
-model_options.add_argument('--model-type','-model', choices=['regression','gbt'], default='regression')
+model_options.add_argument('--model-type','-model', choices=['linear','gbt'], default='linear')
 model_options.add_argument('--locus-subsample','-sub', type = posfloat, default = 0.125,
     help = 'Whether to use locus subsampling to speed up training via stochastic variational inference.')
 model_options.add_argument('--batch-size','-batch', type = posint, default = 128,
@@ -499,7 +581,7 @@ def train_model(
         verbose = False,
         n_jobs = 1,
         empirical_bayes = True,
-        model_type = 'regression',
+        model_type = 'linear',
         begin_prior_updates = 10,
         fix_signatures = None,*,
         n_components,
@@ -555,7 +637,7 @@ trainer_required .add_argument('--output','-o', type = valid_path, required=True
 
 trainer_optional = trainer_sub.add_argument_group('Optional arguments')
 
-trainer_optional.add_argument('--model-type','-model', choices=['regression','gbt'], default='regression')
+trainer_optional.add_argument('--model-type','-model', choices=['linear','gbt'], default='linear')
 trainer_optional.add_argument('--locus-subsample','-sub', type = posfloat, default = None,
     help = 'Whether to use locus subsampling to speed up training via stochastic variational inference.')
 trainer_optional.add_argument('--batch-size','-batch', type = posint, default = 100000,
@@ -703,14 +785,72 @@ explain_parser.set_defaults(func = explain_wrapper)
 
 
 
+def _make_corpusstate_cache(*,model, corpus):
+
+    cache_path = get_corpusstate_cache_path(model, corpus)
+
+    model = load_model(model)
+    corpus = stream_corpus(corpus)
+
+    corpus_state = model._init_new_corpusstates(corpus)[corpus.name]
+
+    joblib.dump(corpus_state, cache_path)
+
+corpusstate_cache_parser = subparsers.add_parser('model-cache-sstats')
+corpusstate_cache_parser.add_argument('model', type = file_exists)
+corpusstate_cache_parser.add_argument('--corpus','-d', type = file_exists, required=True)
+corpusstate_cache_parser.set_defaults(func = _make_corpusstate_cache)
+
+
+
+def _write_posterior_annotated_vcf(
+    input_vcf, output,*,
+    model_state, 
+    weight_col, 
+    corpus_state,
+    regions_file,
+    fasta_file,
+    chr_prefix,
+    component_names,
+    ):
+
+    sample = CorpusReader.ingest_sample(
+                    input_vcf, 
+                    regions_file=regions_file,
+                    fasta_file=fasta_file,
+                    chr_prefix=chr_prefix,
+                    weight_col=weight_col,
+                )
+    
+    posterior_df = get_posterior_sample(
+                        sample=sample,
+                        model_state=model_state,
+                        corpus_state=corpus_state,
+                        component_names=component_names,
+                        n_iters=5000,
+                    )
+
+    transfer_annotations_vcf(
+        posterior_df,
+        vcf_file=input_vcf,
+        description='Log-probability under the posterior that the mutation was generated by this process.', 
+        output=output, 
+        chr_prefix=chr_prefix,
+    )
+
+
 def assign_components_wrapper(*,
         model, 
-        vcf_file, 
+        vcf_files, 
         corpus, 
-        output, 
-        exposure_file = None, 
-        chr_prefix = ''
+        output_prefix, 
+        exposure_file=None, 
+        weight_col=None,
+        chr_prefix = '',
+        n_jobs=1,
     ):
+
+    corpus_state = load_corpusstate_cache(model, corpus)
     
     model = load_model(model)
     corpus = stream_corpus(corpus)
@@ -722,29 +862,38 @@ def assign_components_wrapper(*,
                          'This one doesn\'t, which means it must be a partition of some corpus, or a simluted corpus.\n'
                          'This function must use the originally-created corpus.') from err
 
-    sample = CorpusReader.ingest_sample(
-                    vcf_file, 
-                    exposure_file = exposure_file,
-                    regions_file = corpus.metadata['regions_file'], 
-                    fasta_file = corpus.metadata['fasta_file'],
-                    chr_prefix = chr_prefix,
-                )
-    
-    posterior_df = model.get_posterior_assignments(
-        sample, corpus
+    annotation_fn = partial(
+        _write_posterior_annotated_vcf,
+        model_state=model.model_state, 
+        weight_col=weight_col, 
+        corpus_state=corpus_state,
+        regions_file=corpus.metadata['regions_file'],
+        fasta_file=corpus.metadata['fasta_file'],
+        chr_prefix=chr_prefix,
+        component_names=model.component_names,
     )
-    posterior_df.to_csv(output, index = False)
 
+    del corpus
 
+    Parallel(
+            n_jobs = n_jobs, 
+            verbose = 10,
+        )(
+            delayed(annotation_fn)(vcf, output_prefix + os.path.basename(vcf))
+            for vcf in vcf_files
+        )
 
-assign_components_parser = subparsers.add_parser('model-posterior-assign',
+    
+assign_components_parser = subparsers.add_parser('model-annotate-mutations',
     help = 'Assign each mutation in a VCF file to a component of the model.')
 assign_components_parser.add_argument('model', type = file_exists)
-assign_components_parser.add_argument('--vcf-file','-vcf', type = file_exists, required=True)
+assign_components_parser.add_argument('--vcf-files','-vcfs', nargs='+', type = file_exists, required=True)
 assign_components_parser.add_argument('--corpus','-d', type = file_exists, required=True)
-assign_components_parser.add_argument('--output','-o', type = file_exists, required=True)
+assign_components_parser.add_argument('--output-prefix','-prefix', type = str, required=True)
 assign_components_parser.add_argument('--exposure-file','-e', type = file_exists, default=None)
 assign_components_parser.add_argument('--chr-prefix', type = str, default = '')
+assign_components_parser.add_argument('--weight-col','-w', type = str, default=None)
+assign_components_parser.add_argument('--n-jobs','-j',type=posint, default=1)
 assign_components_parser.set_defaults(func = assign_components_wrapper)
 
 

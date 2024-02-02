@@ -16,6 +16,14 @@ def _get_linear_model(*args, **kw):
         fit_intercept = False,
     )
 
+
+class DummyCorpus:
+
+    def __init__(self, corpus):
+        self.trinuc_distributions = corpus.trinuc_distributions
+        self.shared_correlates = corpus.shared_correlates
+
+
 class ModelState:
 
     n_contexts = 32
@@ -408,6 +416,8 @@ class CorpusState(ModelState):
         if self.corpus.shared_exposures:
             self._log_denom = self._calc_log_denom(model_state, self.corpus.exposures)
 
+        return self
+
     
     def update_alpha(self, sstats, learning_rate):
         _alpha = update_alpha(self.alpha, sstats.alpha_sstats[self.corpus.name])
@@ -456,3 +466,8 @@ class CorpusState(ModelState):
     @property
     def feature_names(self):
         return self.corpus.feature_names
+
+    def as_dummy(self):
+        self.corpus = DummyCorpus(self.corpus)
+        return self
+    

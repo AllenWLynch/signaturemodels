@@ -4,7 +4,6 @@ from locusregression.corpus import COSMIC_SORT_ORDER, SIGNATURE_STRINGS, MUTATIO
 from locusregression.corpus.sbs_sample import SBSSample
 import locusregression.model._sstats as _sstats
 from ._model_state import ModelState, CorpusState
-from ._importance_sampling import _get_z_posterior
 from pandas import DataFrame
 # external imports
 import numpy as np
@@ -145,6 +144,10 @@ class LocusRegressor:
 
 
     def save(self, filename):
+
+        for state in self.corpus_states.values():
+            state.corpus = None
+
         with open(filename, 'wb') as f:
             pickle.dump(self, f)
     
@@ -547,6 +550,7 @@ class LocusRegressor:
         
         for clone in corpus_state_clones.values():
             clone.update_mutation_rate(self.model_state, from_scratch = True)
+            clone.as_dummy()
 
         return corpus_state_clones
 
@@ -762,10 +766,13 @@ class LocusRegressor:
         except KeyError:
             raise ValueError(f'Corpus {corpus.name} not found in model.')
         
-        empirical_mr = corpus.get_empirical_mutation_rate().toarray()
+        empirical_mr = corpus.get_empirical_mutation_rate()
+
+        logger.info('Prediction mutation rate ...')
         predicted_mr = np.exp(self.get_log_marginal_mutation_rate(corpus))
         y_null = corpus.trinuc_distributions
 
+        logger.info('Calculating deviance ...')
         return pseudo_r2(empirical_mr, predicted_mr, y_null)
     
 
@@ -919,47 +926,9 @@ class LocusRegressor:
             self.model_state._convert_beta_sstats_to_array(k, sstats, corpus.shape[1]).ravel()
             for k in range(self.n_components)
         ])
-    
 
 
-    def get_posterior_assignments(self, sample, corpus, n_iters = 1000):
-        
-        try:
-            corpus_state = self.corpus_states[corpus.name]
-        except KeyError:
-            raise ValueError(f'Corpus {corpus.name} not found in model.')
-        
-        new_corpus_state = corpus_state.clone_corpusstate(corpus)
-        new_corpus_state.update_mutation_rate(self.model_state, from_scratch = True)
-
-        observation_ll = np.log(
-            _get_observation_likelihood(
-                model_state=self.model_state,
-                sample=sample,
-                corpus_state=new_corpus_state
-            )
-        )
-
-        z_posterior = np.log(
-            _get_z_posterior(
-                observation_ll,
-                alpha = new_corpus_state.alpha,
-                randomstate = self.random_state,
-                n_iters = n_iters
-            )
-        )
-
-        df_cols = {
-            'CHROM' : sample.chrom.astype(str),
-            'POS' : sample.pos
-        }
-
-        df_cols.update({
-            f"INFO/logp-{component_name.replace(' ','_')}" : _posterior
-            for component_name, _posterior in zip(self.component_names, z_posterior)
-        })
-
-        return DataFrame(df_cols)
+   
         
 
 
