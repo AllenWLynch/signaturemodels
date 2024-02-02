@@ -116,32 +116,41 @@ class SimulatedCorpus:
             for state in states
         ]).T
 
+        omega = signatures
+        delta = signatures.sum(axis=-1)/trinuc_distributions.sum(axis=1)
+
         cell_pi = randomstate.dirichlet(np.ones(num_signatures) * pi_prior, size = n_cells)
         cell_n_mutations = randomstate.lognormal(log_mean_mutations, log_std_mutations, size = n_cells).astype(int)
+
+        locus_effects = SimulatedCorpus.get_locus_effects(
+                    signals, 
+                    exposures, 
+                    beta_matrix = beta_matrix, 
+                    rate_function = rate_function,
+                    mutation_rate_noise = mutation_rate_noise,
+                    random_state= randomstate,
+                )
+        
+        psi_matrix = SimulatedCorpus._get_psi_matrix(
+            exposures = exposures,
+            trinuc_distributions = trinuc_distributions,
+            delta = delta,
+            locus_effects = locus_effects,
+        )
 
         samples = []
         for i, (pi, n_mutations) in tqdm.tqdm(enumerate(zip(cell_pi, cell_n_mutations)),
             total = len(cell_pi), ncols = 100, desc = 'Generating samples'):
 
-            if i == 0 or not shared_exposures:
-                psi_matrix = SimulatedCorpus.get_psi_matrix(
-                        signals, exposures, 
-                        beta_matrix = beta_matrix, 
-                        rate_function = rate_function,
-                        mutation_rate_noise = mutation_rate_noise,
-                        random_state= randomstate,
-                )
-
             samples.append(
                 SimulatedCorpus.simulate_sample(
-                    randomstate, 
-                    psi_matrix=psi_matrix,
-                    trinuc_distributions=trinuc_distributions,
-                    signatures=signatures,
-                    pi = pi, 
-                    n_mutations= n_mutations,
+                    randomstate,
+                    omega = omega,
+                    pi = pi,
+                    n_mutations = n_mutations,
                     exposures = exposures,
-                    name = str(i),
+                    name = i,
+                    psi_matrix = psi_matrix
                 )
             )
 
@@ -211,7 +220,7 @@ class SimulatedCorpus:
 
 
     @staticmethod
-    def get_psi_matrix(signals, exposure,
+    def get_locus_effects(signals, exposure,
                         beta_matrix = None, 
                         rate_function = None,
                         mutation_rate_noise = 0.5,*,
@@ -221,37 +230,58 @@ class SimulatedCorpus:
             assert not beta_matrix is None
             rate_function = lambda x : beta_matrix @ x
 
-        psi_hat = exposure*np.exp(rate_function(signals) + mutation_rate_noise*random_state.randn(signals.shape[-1]))
-        psi = psi_hat/psi_hat.sum(-1, keepdims = True) # K,L, sum l=1 -> L {psi_kl} = 1
-
-        return psi
+        return np.exp(rate_function(signals) + mutation_rate_noise*random_state.randn(signals.shape[-1]))
 
 
     @staticmethod
-    def simulate_sample(randomstate,*,
-            psi_matrix, trinuc_distributions, signatures,
-            pi, n_mutations, exposures, name,
-            ):
+    def _get_psi_matrix(*, exposures, trinuc_distributions, delta, locus_effects):
 
+        locus_effects = (np.log(locus_effects) + np.log(exposures))[:,None,:] # KxL + 1xL -> Kx1xL
+        signature_effects = np.log(delta)[:,:,None] + np.log(trinuc_distributions)[None,:,:] + np.log(10000) # KxCx1 + 1xCxL -> KxCxL
+
+        logits = locus_effects + signature_effects # KxCxL
+
+        logdenom = np.logaddexp.reduce(logits, axis = (1,2), keepdims = True) # KxL
+
+        return np.exp(
+            np.nan_to_num(
+                logits - logdenom,
+                nan = -np.inf
+            )
+        )
+    
+
+    @staticmethod
+    def simulate_sample(
+            randomstate,*,
+            omega,
+            pi, 
+            n_mutations, 
+            exposures, 
+            name,
+            psi_matrix,
+        ):
+        
         loci, contexts, mutations = [],[],[]
+        p_l = psi_matrix.sum(axis = 1)
+        
         for i in range(n_mutations):
 
             sig = randomstate.choice(len(pi), p = pi)
 
-            locus = randomstate.choice(psi_matrix.shape[1], p = psi_matrix[sig,:])
+            locus = randomstate.choice(p_l.shape[1], p = p_l[sig,:])
 
-            context_dist = signatures[sig].sum(-1)
+            context_dist = psi_matrix[sig,:,locus]/psi_matrix[sig,:,locus].sum()
             
-            context = randomstate.choice(
-                32, p = context_dist*trinuc_distributions[:,locus] * (1/np.sum(context_dist*trinuc_distributions[:,locus]))
-            )
+            context = randomstate.choice(32, p = context_dist)
 
-            mutation_dist = signatures[sig, context]/signatures[sig, context].sum()
+            mutation_dist = omega[sig, context]/omega[sig, context].sum()
             mutation = randomstate.choice(3, p = mutation_dist)
 
             loci.append(locus)
             contexts.append(context)
             mutations.append(mutation)
+
 
         elements = dict(
             mutation=np.array(mutations), 
@@ -272,33 +302,25 @@ class SimulatedCorpus:
                     )
 
 
+    @staticmethod
     def from_model(
-        model, 
+        model_state, 
+        corpus_state,
         corpus,
-        n_cells = 100,
         seed = 0,
         ):
 
         randomstate = np.random.RandomState(seed)
-        
-        num_signatures = model.n_components
-        pi_prior = model.alpha
-        n_loci = model.n_loci
-        beta_matrix = model.beta_mu
-        signals = corpus.X_matrix
-        trinuc_distributions = corpus.trinuc_distributions
+        pi_prior = corpus_state.alpha
+        n_cells = len(corpus)
+        _, n_loci = corpus.shape
 
-        signatures = np.vstack([
-            np.expand_dims(SimulatedCorpus.cosmic_sig_to_matrix(dict(zip(COSMIC_SORT_ORDER, model.signature(k)))), 0)
-            for k in range(model.n_components)
-        ])
-
-        cell_pi = randomstate.dirichlet(np.ones(num_signatures) * pi_prior, size = n_cells)
-        cell_n_mutations = [sum(sample['count']) for sample in corpus]
-
-        psi_matrix = SimulatedCorpus.get_psi_matrix(beta_matrix, signals)
+        cell_pi = randomstate.dirichlet(pi_prior, size = n_cells)
+        cell_n_mutations = [int(sum(sample['weight'])) for sample in corpus]
 
         exposures = np.ones((1, n_loci))
+
+        psi_matrix = np.exp(corpus_state.get_log_component_effect_rate(model_state, exposures))
 
         samples = []
         for sample_num, (pi, n_mutations) in tqdm.tqdm(enumerate(zip(cell_pi, cell_n_mutations)),
@@ -306,21 +328,20 @@ class SimulatedCorpus:
 
             samples.append(
                 SimulatedCorpus.simulate_sample(
-                    randomstate, 
-                    psi_matrix=psi_matrix,
-                    trinuc_distributions=trinuc_distributions,
-                    signatures=signatures,
-                    pi = pi, 
-                    n_mutations= n_mutations,
-                    exposures = exposures.copy(),
-                    name = str(sample_num),
+                    randomstate,
+                    omega = model_state.omega,
+                    pi = pi,
+                    n_mutations = n_mutations,
+                    exposures = exposures,
+                    name = sample_num,
+                    psi_matrix = psi_matrix
                 )
             )
         
         return Corpus(
+                name = corpus.name,
                 samples = InMemorySamples(samples),
-                X_matrix = signals,
-                trinuc_distributions = trinuc_distributions,
-                feature_names = corpus.feature_names,
-                shared_correlates = True,
-        )
+                trinuc_distributions = corpus.trinuc_distributions,
+                shared_exposures = corpus.shared_exposures,
+                features = corpus.features
+            )

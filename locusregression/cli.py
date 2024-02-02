@@ -915,6 +915,28 @@ def run_simulation(*,config, prefix):
         pickle.dump(generative_parameters, f)
     
 
+def simulate_from_model(*, model, corpus, output):
+    
+    model = load_model(model)
+    corpus = stream_corpus(corpus)
+
+    corpus_state = model._init_new_corpusstates(corpus)[corpus.name]
+
+    resampled_corpus = SimulatedCorpus.from_model(
+        model_state = model.model_state,
+        corpus_state = corpus_state,
+        corpus = corpus,
+    )
+
+    save_corpus(resampled_corpus, output)
+
+simulate_from_model_parser = subparsers.add_parser('simulate-from-model',
+                                                    help = 'Simulate a new corpus from a trained model.')
+simulate_from_model_parser.add_argument('model', type = file_exists)
+simulate_from_model_parser.add_argument('--corpus','-d', type = file_exists, required=True)
+simulate_from_model_parser.add_argument('--output','-o', type = valid_path, required=True)
+simulate_from_model_parser.set_defaults(func = simulate_from_model)
+
 
 simulation_sub = subparsers.add_parser('simulate', help = 'Create a simulated dataset of cells with mutations')
 simulation_sub.add_argument('--config','-c', type = file_exists, required=True,

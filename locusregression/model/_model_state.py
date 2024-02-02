@@ -22,7 +22,7 @@ class ModelState:
 
     def __init__(self,
                 fix_signatures = None,
-                pseudocounts = 100000,*,
+                pseudocounts = 10000,*,
                 corpus_states,
                 n_components, 
                 n_features, 
@@ -132,6 +132,7 @@ class ModelState:
             
             self.omega[i] = sigmatrix * pseudocounts + 1.
             self.delta[i] = sigmatrix.sum(axis = -1) * pseudocounts/genome_trinuc_distribution.reshape(-1) + 1.
+
 
 
     @staticmethod
