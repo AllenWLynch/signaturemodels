@@ -1,82 +1,27 @@
+from ._cli_utils import *
 from .corpus import *
 from .corpus import logger as reader_logger
-from .model import LocusRegressor, load_model, logger, GBTRegressor
+from .model import load_model, logger
+from .model._importance_sampling import get_posterior_sample
 from .tuning import run_trial, create_study, load_study
 from .simulation import SimulatedCorpus, coef_l1_distance, signature_cosine_distance
 import argparse
-from argparse import ArgumentTypeError
 import os
 import sys
 import logging
+logging.basicConfig(level=logging.INFO)
+logger.setLevel(logging.INFO)
 import pickle
 import logging
 import warnings
 from matplotlib.pyplot import savefig
 from .explanation.explanation import explain
+from functools import partial
+from joblib import Parallel, delayed
+import joblib
 
 from optuna.exceptions import ExperimentalWarning
 warnings.filterwarnings("ignore", category=ExperimentalWarning)
-
-
-def posint(x):
-    x = int(x)
-
-    if x > 0:
-        return x
-    else:
-        raise ArgumentTypeError('Must be positive integer.')
-
-
-def posfloat(x):
-    x = float(x)
-    if x > 0:
-        return x
-    else:
-        raise ArgumentTypeError('Must be positive float.')
-
-
-def file_exists(x):
-    if os.path.exists(x):
-        return x
-    else:
-        raise ArgumentTypeError('File {} does not exist.'.format(x))
-
-def valid_path(x):
-    if not os.access(x, os.W_OK):
-        
-        try:
-            open(x, 'w').close()
-            os.unlink(x)
-            return x
-        except OSError as err:
-            raise ArgumentTypeError('File {} cannot be written. Invalid path.'.format(x)) from err
-    
-    return x
-
-
-def _load_dataset(corpuses):
-
-    if len(corpuses) == 1:
-        dataset = stream_corpus(corpuses[0])
-    else:
-        dataset = MetaCorpus(*[
-            stream_corpus(corpus) for corpus in corpuses
-        ])
-
-    return dataset
-
-
-def _get_basemodel(model_type):
-
-    if model_type == 'regression':
-        basemodel = LocusRegressor
-    elif model_type == 'gbt':
-        basemodel = GBTRegressor
-    else:
-        raise ValueError(f'Unknown model type {model_type}')
-
-    return basemodel
-
 
 
 parser = argparse.ArgumentParser(
@@ -391,7 +336,7 @@ model_options.add_argument('--fix-signatures','-sigs', nargs='+', type = str, de
 model_options.add_argument('--num-epochs', '-e', type = posint, default=500,
     help = 'Maximum number of epochs to allow training during'
             ' successive halving/Hyperband. This should be set high enough such that the model converges to a solution.')
-model_options.add_argument('--model-type','-model', choices=['regression','gbt'], default='regression')
+model_options.add_argument('--model-type','-model', choices=['linear','gbt'], default='linear')
 model_options.add_argument('--locus-subsample','-sub', type = posfloat, default = 0.125,
     help = 'Whether to use locus subsampling to speed up training via stochastic variational inference.')
 model_options.add_argument('--batch-size','-batch', type = posint, default = 128,
@@ -499,7 +444,7 @@ def train_model(
         verbose = False,
         n_jobs = 1,
         empirical_bayes = True,
-        model_type = 'regression',
+        model_type = 'linear',
         begin_prior_updates = 10,
         fix_signatures = None,*,
         n_components,
@@ -555,7 +500,7 @@ trainer_required .add_argument('--output','-o', type = valid_path, required=True
 
 trainer_optional = trainer_sub.add_argument_group('Optional arguments')
 
-trainer_optional.add_argument('--model-type','-model', choices=['regression','gbt'], default='regression')
+trainer_optional.add_argument('--model-type','-model', choices=['linear','gbt'], default='linear')
 trainer_optional.add_argument('--locus-subsample','-sub', type = posfloat, default = None,
     help = 'Whether to use locus subsampling to speed up training via stochastic variational inference.')
 trainer_optional.add_argument('--batch-size','-batch', type = posint, default = 100000,
@@ -703,14 +648,72 @@ explain_parser.set_defaults(func = explain_wrapper)
 
 
 
+def _make_corpusstate_cache(*,model, corpus):
+
+    cache_path = get_corpusstate_cache_path(model, corpus)
+
+    model = load_model(model)
+    corpus = stream_corpus(corpus)
+
+    corpus_state = model._init_new_corpusstates(corpus)[corpus.name]
+
+    joblib.dump(corpus_state, cache_path)
+
+corpusstate_cache_parser = subparsers.add_parser('model-cache-sstats')
+corpusstate_cache_parser.add_argument('model', type = file_exists)
+corpusstate_cache_parser.add_argument('--corpus','-d', type = file_exists, required=True)
+corpusstate_cache_parser.set_defaults(func = _make_corpusstate_cache)
+
+
+
+def _write_posterior_annotated_vcf(
+    input_vcf, output,*,
+    model_state, 
+    weight_col, 
+    corpus_state,
+    regions_file,
+    fasta_file,
+    chr_prefix,
+    component_names,
+    ):
+
+    sample = SBSCorpusMaker.ingest_sample(
+                    input_vcf, 
+                    regions_file=regions_file,
+                    fasta_file=fasta_file,
+                    chr_prefix=chr_prefix,
+                    weight_col=weight_col,
+                )
+    
+    posterior_df = get_posterior_sample(
+                        sample=sample,
+                        model_state=model_state,
+                        corpus_state=corpus_state,
+                        component_names=component_names,
+                        n_iters=5000,
+                    )
+
+    transfer_annotations_to_vcf(
+        posterior_df,
+        vcf_file=input_vcf,
+        description='Log-probability under the posterior that the mutation was generated by this process.', 
+        output=output, 
+        chr_prefix=chr_prefix,
+    )
+
+
 def assign_components_wrapper(*,
         model, 
-        vcf_file, 
+        vcf_files, 
         corpus, 
-        output, 
-        exposure_file = None, 
-        chr_prefix = ''
+        output_prefix, 
+        exposure_file=None, 
+        weight_col=None,
+        chr_prefix = '',
+        n_jobs=1,
     ):
+
+    corpus_state = load_corpusstate_cache(model, corpus)
     
     model = load_model(model)
     corpus = stream_corpus(corpus)
@@ -722,29 +725,38 @@ def assign_components_wrapper(*,
                          'This one doesn\'t, which means it must be a partition of some corpus, or a simluted corpus.\n'
                          'This function must use the originally-created corpus.') from err
 
-    sample = SBSCorpusMaker.ingest_sample(
-                    vcf_file, 
-                    exposure_file = exposure_file,
-                    regions_file = corpus.metadata['regions_file'], 
-                    fasta_file = corpus.metadata['fasta_file'],
-                    chr_prefix = chr_prefix,
-                )
-    
-    posterior_df = model.get_posterior_assignments(
-        sample, corpus
+    annotation_fn = partial(
+        _write_posterior_annotated_vcf,
+        model_state=model.model_state, 
+        weight_col=weight_col, 
+        corpus_state=corpus_state,
+        regions_file=corpus.metadata['regions_file'],
+        fasta_file=corpus.metadata['fasta_file'],
+        chr_prefix=chr_prefix,
+        component_names=model.component_names,
     )
-    posterior_df.to_csv(output, index = False)
 
+    del corpus
 
+    Parallel(
+            n_jobs = n_jobs, 
+            verbose = 10,
+        )(
+            delayed(annotation_fn)(vcf, output_prefix + os.path.basename(vcf))
+            for vcf in vcf_files
+        )
 
-assign_components_parser = subparsers.add_parser('model-posterior-assign',
+    
+assign_components_parser = subparsers.add_parser('model-annotate-mutations',
     help = 'Assign each mutation in a VCF file to a component of the model.')
 assign_components_parser.add_argument('model', type = file_exists)
-assign_components_parser.add_argument('--vcf-file','-vcf', type = file_exists, required=True)
+assign_components_parser.add_argument('--vcf-files','-vcfs', nargs='+', type = file_exists, required=True)
 assign_components_parser.add_argument('--corpus','-d', type = file_exists, required=True)
-assign_components_parser.add_argument('--output','-o', type = file_exists, required=True)
+assign_components_parser.add_argument('--output-prefix','-prefix', type = str, required=True)
 assign_components_parser.add_argument('--exposure-file','-e', type = file_exists, default=None)
 assign_components_parser.add_argument('--chr-prefix', type = str, default = '')
+assign_components_parser.add_argument('--weight-col','-w', type = str, default=None)
+assign_components_parser.add_argument('--n-jobs','-j',type=posint, default=1)
 assign_components_parser.set_defaults(func = assign_components_wrapper)
 
 
@@ -886,7 +898,6 @@ assign_corpus_mutation_parser.add_argument('--anneal-steps','-steps', type = pos
 assign_corpus_mutation_parser.set_defaults(func = assign_corpus_mutation)
 '''
 
-
 def run_simulation(*,config, prefix):
     
     with open(config, 'rb') as f:
@@ -907,7 +918,10 @@ def run_simulation(*,config, prefix):
         pickle.dump(generative_parameters, f)
     
 
-def simulate_from_model(*, model, corpus, output, use_signatures=None):
+
+def simulate_from_model(*, model, corpus, output, 
+                        seed=0, use_signatures=None,
+                        n_jobs=1,):
     
     model = load_model(model)
     corpus = stream_corpus(corpus)
@@ -915,10 +929,12 @@ def simulate_from_model(*, model, corpus, output, use_signatures=None):
     corpus_state = model._init_new_corpusstates(corpus)[corpus.name]
 
     resampled_corpus = SimulatedCorpus.from_model(
-        model_state = model.model_state,
+        model = model,
         corpus_state = corpus_state,
         corpus = corpus,
         use_signatures = use_signatures,
+        seed = seed,
+        n_jobs = n_jobs,
     )
 
     save_corpus(resampled_corpus, output)
@@ -929,6 +945,8 @@ simulate_from_model_parser.add_argument('model', type = file_exists)
 simulate_from_model_parser.add_argument('--corpus','-d', type = file_exists, required=True)
 simulate_from_model_parser.add_argument('--output','-o', type = valid_path, required=True)
 simulate_from_model_parser.add_argument('--use-signatures','-sigs', nargs='+', type = str, default=None)
+simulate_from_model_parser.add_argument('--seed', type = posint, default=0)
+simulate_from_model_parser.add_argument('--n-jobs', '-j', type = posint, default=1)
 simulate_from_model_parser.set_defaults(func = simulate_from_model)
 
 

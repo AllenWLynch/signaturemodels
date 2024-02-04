@@ -4,6 +4,8 @@ from locusregression.corpus.corpus import Corpus, InMemorySamples
 import json
 import os
 import tqdm
+from joblib import Parallel, delayed
+from functools import partial
 
 TRANSITION_MATRIX = np.array([
     [0.99, 0.005, 0.005],
@@ -150,7 +152,7 @@ class SimulatedCorpus:
 
             samples.append(
                 SimulatedCorpus.simulate_sample(
-                    randomstate,
+                    randomstate = randomstate,
                     omega = omega,
                     pi = pi,
                     n_mutations = n_mutations,
@@ -260,7 +262,8 @@ class SimulatedCorpus:
 
     @staticmethod
     def simulate_sample(
-            randomstate,*,
+            randomstate = None,
+            seed = None,*,
             omega,
             pi, 
             n_mutations, 
@@ -268,6 +271,9 @@ class SimulatedCorpus:
             name,
             psi_matrix,
         ):
+
+        if randomstate is None:
+            randomstate = np.random.RandomState(seed)
         
         loci, contexts, mutations = [],[],[]
         p_l = psi_matrix.sum(axis = 1)
@@ -317,24 +323,25 @@ class SimulatedCorpus:
         corpus,
         use_signatures = None,
         seed = 0,
+        n_jobs = 1,
         ):
 
         randomstate = np.random.RandomState(seed)
         n_loci = corpus.locus_dim
 
+        exposures = np.ones((1, n_loci))
+
         if not use_signatures is None:
             use_signatures = np.array([model.component_names.index(sig) for sig in use_signatures])
         else:
-            use_signatures = np.arange(model.n_signatures)
-
-        #cell_pi = randomstate.dirichlet(pi_prior, size = n_cells)
+            use_signatures = np.arange(model.n_components)
             
         psi_matrix = np.exp(corpus_state.get_log_component_effect_rate(model.model_state, exposures))
         psi_matrix = psi_matrix[use_signatures]
 
         cell_gamma = np.array([
             model._predict_sample(sample, corpus_state)
-            for sample in tqdm.tqdm(corpus, ncols = 100)
+            for sample in tqdm.tqdm(corpus, ncols = 100, desc = 'Calculating exposures')
         ])
 
         cell_gamma = cell_gamma[:,use_signatures]
@@ -342,23 +349,22 @@ class SimulatedCorpus:
 
         cell_n_mutations = cell_gamma.sum(axis = 1).astype(int)
 
-        exposures = np.ones((1, n_loci))
+        generate_sample_fn = partial(
+            SimulatedCorpus.simulate_sample,
+            omega=model.model_state.omega[use_signatures],
+            exposures=exposures,
+            psi_matrix=psi_matrix,
+        )
 
-        samples = []
-        for sample_num, (pi, n_mutations) in tqdm.tqdm(enumerate(zip(cell_pi, cell_n_mutations)),
-            total = len(cell_pi), ncols = 100, desc = 'Generating samples'):
-
-            samples.append(
-                SimulatedCorpus.simulate_sample(
-                    randomstate,
-                    omega = model.model_state.omega[use_signatures],
-                    pi = pi,
-                    n_mutations = n_mutations,
-                    exposures = exposures,
-                    name = sample_num,
-                    psi_matrix = psi_matrix
-                )
+        samples = Parallel(n_jobs=n_jobs, verbose = 10)(
+            delayed(generate_sample_fn)(
+                pi = cell_pi[sample_num],
+                n_mutations = cell_n_mutations[sample_num],
+                name = str(sample_num),
+                seed = seed + sample_num,
             )
+            for sample_num in range(len(cell_pi))
+        )
         
         return Corpus(
                 type='SBS',
