@@ -19,6 +19,7 @@ from .explanation.explanation import explain
 from functools import partial
 from joblib import Parallel, delayed
 import joblib
+import numpy as np
 
 from optuna.exceptions import ExperimentalWarning
 warnings.filterwarnings("ignore", category=ExperimentalWarning)
@@ -282,18 +283,6 @@ empirical_mutrate_parser.add_argument('--output', '-o', type = argparse.FileType
 empirical_mutrate_parser.set_defaults(func = empirical_mutation_rate)
 
 
-def _overwrite_features_helper(*, corpus, correlates_file):
-    features, feature_names = CorpusReader.read_correlates(correlates_file)
-    overwrite_corpus_features(corpus, features.T, feature_names)
-
-overwrite_features_parser = subparsers.add_parser('corpus-overwrite-features',
-    help = 'Overwrite the feature matrix of a corpus with a new one.'
-)
-overwrite_features_parser.add_argument('corpus', type = file_exists)
-overwrite_features_parser.add_argument('--correlates-file','-c', type = file_exists, required=True,
-                                       help = 'TSV file of genomic correlates. The first line must be column names which start with "#".')
-overwrite_features_parser.set_defaults(func = _overwrite_features_helper)
-
 
 tune_sub = subparsers.add_parser('study-create', 
     help = 'Tune number of signatures for LocusRegression model on a pre-compiled corpus using the'
@@ -392,7 +381,7 @@ def retrain_best(trial_num = None,
     model_params = attrs['model_params']
     model_params.update(best_trial.params)
 
-    basemodel = _get_basemodel(attrs["model_type"])
+    basemodel = get_basemodel(attrs["model_type"])
     
     print(
         'Training model with params:\n' + \
@@ -452,7 +441,7 @@ def train_model(
         output,
     ):
 
-    basemodel = _get_basemodel(model_type)
+    basemodel = get_basemodel(model_type)
     
     model = basemodel(
         fix_signatures=fix_signatures,
@@ -478,7 +467,7 @@ def train_model(
     logging.basicConfig(level=logging.INFO)
     logger.setLevel(logging.INFO)
 
-    dataset = _load_dataset(corpuses)
+    dataset = load_dataset(corpuses)
     
     model.fit(dataset)
     
@@ -533,7 +522,7 @@ trainer_sub.set_defaults(func = train_model)
 
 def score(*,model, corpuses):
 
-    dataset = _load_dataset(corpuses)
+    dataset = load_dataset(corpuses)
 
     model = load_model(model)
 
@@ -550,7 +539,7 @@ score_parser.set_defaults(func = score)
 
 def predict(*,model, corpuses, output):
 
-    dataset = _load_dataset(corpuses)
+    dataset = load_dataset(corpuses)
 
     model = load_model(model)
 
@@ -606,7 +595,7 @@ list_corpuses_parser.set_defaults(func = list_corpuses)
 def get_mutation_rate_r2(*, model, corpuses):
 
     model = load_model(model)
-    dataset = _load_dataset(corpuses)
+    dataset = load_dataset(corpuses)
     
     print(
         model.get_mutation_rate_r2(dataset),
@@ -624,7 +613,7 @@ mutrate_r2_parser.set_defaults(func = get_mutation_rate_r2)
 def explain_wrapper(n_jobs=1,*,signature, model, corpuses, output):
     
     model = load_model(model)
-    dataset = _load_dataset(corpuses)
+    dataset = load_dataset(corpuses)
 
     results = explain(signature,
             model = model,
@@ -659,7 +648,8 @@ def _make_corpusstate_cache(*,model, corpus):
 
     joblib.dump(corpus_state, cache_path)
 
-corpusstate_cache_parser = subparsers.add_parser('model-cache-sstats')
+corpusstate_cache_parser = subparsers.add_parser('model-cache-sstats',
+                                            help = 'Make a cache with pre-calculated statistcs for this model-corpus pair. This *greatly* speeds up subsequent calculations.')
 corpusstate_cache_parser.add_argument('model', type = file_exists)
 corpusstate_cache_parser.add_argument('--corpus','-d', type = file_exists, required=True)
 corpusstate_cache_parser.set_defaults(func = _make_corpusstate_cache)
@@ -920,13 +910,22 @@ def run_simulation(*,config, prefix):
 
 
 def simulate_from_model(*, model, corpus, output, 
-                        seed=0, use_signatures=None,
-                        n_jobs=1,):
+                        seed=0, 
+                        use_signatures=None,
+                        n_jobs=1,
+                        n_samples=None
+                    ):
+    
+    corpus_state = load_corpusstate_cache(model, corpus)
     
     model = load_model(model)
     corpus = stream_corpus(corpus)
 
-    corpus_state = model._init_new_corpusstates(corpus)[corpus.name]
+    if n_samples < len(corpus):
+        assert n_samples > 0
+        
+        subset_idx = np.random.RandomState(seed).choice(len(corpus), size = n_samples, replace = False)
+        corpus = corpus.subset_samples(subset_idx)
 
     resampled_corpus = SimulatedCorpus.from_model(
         model = model,
@@ -945,6 +944,7 @@ simulate_from_model_parser.add_argument('model', type = file_exists)
 simulate_from_model_parser.add_argument('--corpus','-d', type = file_exists, required=True)
 simulate_from_model_parser.add_argument('--output','-o', type = valid_path, required=True)
 simulate_from_model_parser.add_argument('--use-signatures','-sigs', nargs='+', type = str, default=None)
+simulate_from_model_parser.add_argument('--n-samples','-samples', type = posint, default=None)
 simulate_from_model_parser.add_argument('--seed', type = posint, default=0)
 simulate_from_model_parser.add_argument('--n-jobs', '-j', type = posint, default=1)
 simulate_from_model_parser.set_defaults(func = simulate_from_model)

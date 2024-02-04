@@ -384,12 +384,16 @@ class CorpusState(ModelState):
         return np.log(model_state.delta @ self.context_frequencies) + self._logmu + np.log(exposures)
 
     
-    def get_log_component_effect_rate(self, model_state, exposures):
+    def get_log_component_effect_rate(self, model_state, exposures, use_context=True):
         '''
         Returns a (Z x C x L) tensor of the log of the component-wise mutation rate effects
         '''
         locus_effects = (self._logmu + np.log(exposures))[:,None,:]
-        signature_effects = np.log(model_state.delta)[:,:,None] + np.log(self.context_frequencies)[None,:,:]
+        
+        if not use_context:
+            signature_effects = np.log(model_state.delta @ self.context_frequencies)[:,None,:]
+        else:
+            signature_effects = np.log(model_state.delta)[:,:,None] + np.log(self.context_frequencies)[None,:,:]
 
         return np.nan_to_num(
             locus_effects + signature_effects - self._log_denom[:,None,:],
