@@ -1,8 +1,6 @@
 import numpy as np
-from locusregression.corpus.sbs_sample import SBSSample
-from locusregression.corpus.featurization import COSMIC_SORT_ORDER
+from locusregression.corpus.sbs_observation_config import SBSSample, CONTEXT_IDX, MUTATIONS_IDX
 from locusregression.corpus.corpus import Corpus, InMemorySamples
-from locusregression.corpus.featurization import CONTEXT_IDX, MUTATIONS_IDX
 import json
 import os
 import tqdm
@@ -30,6 +28,12 @@ SIGNAL_MEANS = np.array([1.,1.,1.])
 SIGNAL_STD = np.array([0.3, 0.25, 0.5])
 
 
+complement = {'A' : 'T','T' : 'A','G' : 'C','C' : 'G'}
+
+def revcomp(seq):
+    return ''.join(reversed([complement[nuc] for nuc in seq]))
+
+
 with open(os.path.join(os.path.dirname(__file__), 'cosmic.json'),'r') as f:
     COSMIC_SIGS = json.load(f)
 
@@ -39,14 +43,16 @@ class SimulatedCorpus:
     @staticmethod
     def cosmic_sig_to_matrix(cosmic_sig):
         
-        sigmatrix = np.zeros((32,3))
+        sigmatrix = np.zeros((len(CONTEXT_IDX),3))
 
         for key, p in cosmic_sig.items():
-            'A[T>C]A'
             context = key[0] + key[2] + key[6]
             mutation = key[4]
 
-            sigmatrix[CONTEXT_IDX[context], MUTATIONS_IDX[context][mutation]] += p
+            sigmatrix[CONTEXT_IDX[context], MUTATIONS_IDX[context][mutation]] += p/2
+
+            context = revcomp(context); mutation = complement[mutation]
+            sigmatrix[CONTEXT_IDX[context], MUTATIONS_IDX[context][mutation]] += p/2
 
         return sigmatrix
 
@@ -85,12 +91,12 @@ class SimulatedCorpus:
         if beta_matrix is None:
             assert not rate_function is None
 
-        assert signatures.shape == (num_signatures, 32, 3)
+        #assert signatures.shape == (num_signatures, 32, 3)
 
         assert isinstance(signal_means, np.ndarray) and isinstance(signal_std, np.ndarray) and \
             signal_means.shape == (num_states,) and signal_std.shape == (num_states,)
 
-        assert trinucleotide_priors.shape == (num_states, 32)
+        assert trinucleotide_priors.shape == (num_states, len(CONTEXT_IDX))
 
         #assert isinstance(pi_prior, (int, float))
 
@@ -111,13 +117,13 @@ class SimulatedCorpus:
         signals = SimulatedCorpus.get_signals(randomstate, state = states, 
             signal_means=signal_means, signal_std=signal_std)
 
-        trinuc_distributions = np.vstack([
+        context_frequencies = np.vstack([
             randomstate.dirichlet(trinucleotide_priors[state])[None,:]
             for state in states
         ]).T
 
         omega = signatures
-        delta = signatures.sum(axis=-1)/trinuc_distributions.sum(axis=1)
+        delta = signatures.sum(axis=-1)/context_frequencies.sum(axis=1)
 
         cell_pi = randomstate.dirichlet(np.ones(num_signatures) * pi_prior, size = n_cells)
         cell_n_mutations = randomstate.lognormal(log_mean_mutations, log_std_mutations, size = n_cells).astype(int)
@@ -133,7 +139,7 @@ class SimulatedCorpus:
         
         psi_matrix = SimulatedCorpus._get_psi_matrix(
             exposures = exposures,
-            trinuc_distributions = trinuc_distributions,
+            context_frequencies = context_frequencies,
             delta = delta,
             locus_effects = locus_effects,
         )
@@ -155,9 +161,10 @@ class SimulatedCorpus:
             )
 
         corpus = Corpus(
+                type='SBS',
                 name = corpus_name,
                 samples = InMemorySamples(samples),
-                trinuc_distributions = trinuc_distributions,
+                context_frequencies = context_frequencies,
                 shared_exposures = shared_exposures,
                 features = {
                     'feature' + str(k) : {
@@ -234,10 +241,10 @@ class SimulatedCorpus:
 
 
     @staticmethod
-    def _get_psi_matrix(*, exposures, trinuc_distributions, delta, locus_effects):
+    def _get_psi_matrix(*, exposures, context_frequencies, delta, locus_effects):
 
         locus_effects = (np.log(locus_effects) + np.log(exposures))[:,None,:] # KxL + 1xL -> Kx1xL
-        signature_effects = np.log(delta)[:,:,None] + np.log(trinuc_distributions)[None,:,:] + np.log(10000) # KxCx1 + 1xCxL -> KxCxL
+        signature_effects = np.log(delta)[:,:,None] + np.log(context_frequencies)[None,:,:] + np.log(10000) # KxCx1 + 1xCxL -> KxCxL
 
         logits = locus_effects + signature_effects # KxCxL
 
@@ -273,7 +280,7 @@ class SimulatedCorpus:
 
             context_dist = psi_matrix[sig,:,locus]/psi_matrix[sig,:,locus].sum()
             
-            context = randomstate.choice(32, p = context_dist)
+            context = randomstate.choice(len(CONTEXT_IDX), p = context_dist)
 
             mutation_dist = omega[sig, context]/omega[sig, context].sum()
             mutation = randomstate.choice(3, p = mutation_dist)
@@ -290,6 +297,7 @@ class SimulatedCorpus:
             weight=np.ones_like(loci).astype(float),
             pos = np.array(loci),
             chrom = np.array(['chr1']*len(loci)),
+            attribute = np.zeros_like(loci),
             exposures = exposures,
         )
 
@@ -312,7 +320,7 @@ class SimulatedCorpus:
         ):
 
         randomstate = np.random.RandomState(seed)
-        _, n_loci = corpus.shape
+        n_loci = corpus.locus_dim
 
         if not use_signatures is None:
             use_signatures = np.array([model.component_names.index(sig) for sig in use_signatures])
@@ -353,9 +361,10 @@ class SimulatedCorpus:
             )
         
         return Corpus(
+                type='SBS',
                 name = corpus.name,
                 samples = InMemorySamples(samples),
-                trinuc_distributions = corpus.trinuc_distributions,
+                context_frequencies = corpus.context_frequencies,
                 shared_exposures = corpus.shared_exposures,
                 features = corpus.features
             )

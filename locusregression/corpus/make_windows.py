@@ -2,10 +2,52 @@ import os
 import subprocess
 import tempfile
 import sys
-from collections import defaultdict
+from collections import defaultdict, Counter
 import logging
 logger = logging.getLogger('Windows')
 logger.setLevel(logging.INFO)
+
+
+def check_regions_file(regions_file):
+
+    encountered_idx = defaultdict(lambda : False)
+
+    with open(regions_file, 'r') as f:
+
+        for i, line in enumerate(f):
+            
+            if line.startswith('#'):
+                continue
+            
+            cols = line.strip().split('\t')
+            assert len(cols) >= 12, \
+                f'Expected 12 or more columns (in BED12 format) in {regions_file}, with the fourth column being an integer ID.\n'
+            
+            try:
+                _, start, end, idx = cols[:4]
+                idx = int(idx); start = int(start); end = int(end)
+            except TypeError:
+                raise TypeError(
+                    f'Count not parse line {i} in {regions_file}: {line}.\n'
+                    'Make sure the regions file is tab-delimited with columns chr<str>, start<int>, end<int>, idx<int>.\n'
+                )
+            
+            encountered_idx[idx] = True
+
+    assert len(encountered_idx) > 0, \
+        f'Expected regions file to have at least one region.'
+
+    largest_bin = max(encountered_idx.keys())
+    assert all([encountered_idx[i] for i in range(largest_bin + 1)]), \
+        f'Expected regions file to have a contiguous set of indices from 0 to {largest_bin}.\n'
+    
+    try:
+        subprocess.check_output(['sort', '-k','1,1', '-k','2,2n', '-c', regions_file])
+    except subprocess.CalledProcessError:
+        raise ValueError(
+            f'Expected regions file to be sorted by chromosome and start position.\n'
+            f'Use \'sort -k1,1 -k2,2n -o <filename> <filename>\' to sort the file.\n'
+        )
 
 
 def _make_fixed_size_windows(*, 
@@ -91,7 +133,7 @@ def _get_endpoints(allowed_chroms, *bedfiles):
 
 def _endpoints_to_regions(endpoints, min_windowsize = 5):
 
-    active_features = set()
+    active_features = Counter()
     feature_combination_ids = dict()
     prev_chrom = None; prev_pos = None
 
@@ -102,23 +144,28 @@ def _endpoints_to_regions(endpoints, min_windowsize = 5):
         if prev_chrom is None:
             prev_chrom = chrom; prev_pos = pos
         elif chrom != prev_chrom:
-            active_features = set()
+            active_features = Counter()
             prev_chrom = chrom; prev_pos = pos
         elif pos > (prev_pos + min_windowsize) and len(active_features) > 0:
 
-            feature_combination = tuple(sorted(active_features))
+            feature_combination = tuple(sorted(active_features.keys()))
 
             if not feature_combination in feature_combination_ids:
                 feature_combination_ids[feature_combination] = len(feature_combination_ids)
 
-            
-                
             yield chrom, prev_pos, pos, feature_combination_ids[feature_combination]    
 
         if is_start:
-            active_features.add((track_id,feature))
+            active_features[(track_id,feature)] += 1
         else:
-            active_features.remove((track_id,feature))
+            if active_features[(track_id,feature)] > 1:
+                logger.warning(
+                    f'Multiple overlapping features of the same type detected in file {track_id}, feature {feature} at position {chrom}:{pos}.\n'
+                    'Make sure to merge the bedfile regions if this is intentional.'
+                )
+                active_features[(track_id,feature)]-=1
+            else:
+                active_features.pop((track_id,feature))
 
         prev_pos = pos; prev_chrom = chrom
 
@@ -130,6 +177,10 @@ def make_windows(
     blacklist_file, 
     output=sys.stdout, 
 ):
+    
+    logger.info(f'Checking sort order of bedfiles ...')
+    for bedfile in bedfiles:
+        subprocess.run(["sort", "-k1,1", "-k2,2n", "--check", bedfile], check=True)
 
     allowed_chroms=[]
     with open(genome_file,'r') as f:
@@ -204,60 +255,3 @@ def make_windows(
                   sep='\t', 
                   file=output
             )
-
-
-def check_regions_file(regions_file):
-
-    encountered_idx = defaultdict(lambda : False)
-
-    with open(regions_file, 'r') as f:
-
-        for i, line in enumerate(f):
-            
-            if line.startswith('#'):
-                continue
-            
-            cols = line.strip().split('\t')
-            assert len(cols) >= 12, \
-                f'Expected 12 or more columns (in BED12 format) in {regions_file}, with the fourth column being an integer ID.\n'
-            
-            try:
-                _, start, end, idx = cols[:4]
-                idx = int(idx); start = int(start); end = int(end)
-            except TypeError:
-                raise TypeError(
-                    f'Count not parse line {i} in {regions_file}: {line}.\n'
-                    'Make sure the regions file is tab-delimited with columns chr<str>, start<int>, end<int>, idx<int>.\n'
-                )
-            
-            encountered_idx[idx] = True
-
-    assert len(encountered_idx) > 0, \
-        f'Expected regions file to have at least one region.'
-
-    largest_bin = max(encountered_idx.keys())
-    assert all([encountered_idx[i] for i in range(largest_bin + 1)]), \
-        f'Expected regions file to have a contiguous set of indices from 0 to {largest_bin}.\n'
-    
-    try:
-        subprocess.check_output(['sort', '-k','1,1', '-k','2,2n', '-c', regions_file])
-    except subprocess.CalledProcessError:
-        raise ValueError(
-            f'Expected regions file to be sorted by chromosome and start position.\n'
-            f'Use \'sort -k1,1 -k2,2n -o <filename> <filename>\' to sort the file.\n'
-        )
-
-    
-'''if __name__ == "__main__":
-
-    with open('windows.bed','w') as f:
-        
-        make_windows(
-            genome_file = '/Users/allenwlynch/genomes/hg19.chrom.sizes',
-            window_size=10000000,
-            blacklist_file='blacklist.bed',
-            output=f,
-            *['example.bed', 'example2.bed'],
-        )
-
-    check_regions_file('windows.bed')'''

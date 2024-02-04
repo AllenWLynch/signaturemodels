@@ -105,7 +105,7 @@ trinuc_sub.add_argument('--fasta-file','-fa', type = file_exists, required = Tru
 trinuc_sub.add_argument('--regions-file','-r', type = file_exists, required = True)
 trinuc_sub.add_argument('--n-jobs','-j', type = posint, default = 1, help = 'Number of parallel processes to use. Currently does nothing.')
 trinuc_sub.add_argument('--output','-o', type = valid_path, required = True, help = 'Where to save compiled corpus.')
-trinuc_sub.set_defaults(func = CorpusReader.create_trinuc_file)
+trinuc_sub.set_defaults(func = SBSCorpusMaker.create_trinuc_file)
 
 
 def process_bigwig(group='all',
@@ -722,7 +722,7 @@ def assign_components_wrapper(*,
                          'This one doesn\'t, which means it must be a partition of some corpus, or a simluted corpus.\n'
                          'This function must use the originally-created corpus.') from err
 
-    sample = CorpusReader.ingest_sample(
+    sample = SBSCorpusMaker.ingest_sample(
                     vcf_file, 
                     exposure_file = exposure_file,
                     regions_file = corpus.metadata['regions_file'], 
@@ -885,14 +885,6 @@ assign_corpus_mutation_parser.add_argument('--iters','-iters', type = posint, de
 assign_corpus_mutation_parser.add_argument('--anneal-steps','-steps', type = posint, default = 100)
 assign_corpus_mutation_parser.set_defaults(func = assign_corpus_mutation)
 '''
-
-
-code_sub = subparsers.add_parser('code-sbs')
-code_sub.set_defaults(func = code_SBS_mutation)
-code_sub.add_argument('--query-file','-query', type = argparse.FileType('r'), default=sys.stdin)
-code_sub.add_argument('--fasta-file','-fa', type = file_exists, required=True)
-code_sub.add_argument('--output','-o', type = argparse.FileType('w'), default=sys.stdout)
-code_sub.add_argument('--chr-prefix', type = str, default = '')
 
 
 def run_simulation(*,config, prefix):

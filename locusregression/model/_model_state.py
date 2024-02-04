@@ -18,45 +18,49 @@ def _get_linear_model(*args, **kw):
 
 class ModelState:
 
-    n_contexts = 32
-
     def __init__(self,
                 fix_signatures = None,
-                pseudocounts = 10000,*,
+                pseudocounts = 10000,
+                get_model_fn = _get_linear_model,
+                categorical_encoder = OneHotEncoder(sparse_output=False, drop='first'),*,
                 corpus_states,
-                n_components, 
-                n_features, 
-                n_loci,
+                n_components,
                 random_state, 
                 empirical_bayes,
-                genome_trinuc_distribution,
+                genome_context_frequencies,
+                feature_dim,
+                locus_dim,
+                context_dim,
+                mutation_dim,
+                attribute_dim,
                 dtype,
-                get_model_fn = _get_linear_model,
-                categorical_encoder = OneHotEncoder(sparse_output=False, drop='first'),
                 **kw,
             ):
         
         assert isinstance(n_components, int) and n_components >= 1
         self.n_components = n_components
-        self.n_features = n_features
-        self.n_loci = n_loci
+        self.n_loci = locus_dim
         self.random_state = random_state
         self.empirical_bayes = empirical_bayes
 
         self.tau = np.ones(self.n_components)
 
         self.delta = self.random_state.gamma(100, 1/100, 
-                                               (n_components, self.n_contexts),
+                                               (n_components, context_dim),
                                               ).astype(dtype, copy=False)
         
         self.omega = self.random_state.gamma(100, 1/100,
-                                               (n_components, self.n_contexts, 3),
+                                               (n_components, context_dim, mutation_dim),
                                               ).astype(dtype, copy = False)
         
+        # placeholder for when attributes come into play
+        #self.psi
+        
+        # this will need to be generalized
         if not fix_signatures is None:
             self._fix_signatures(fix_signatures,
                                  n_components = n_components,
-                                 genome_trinuc_distribution = genome_trinuc_distribution,
+                                 genome_context_frequencies = genome_context_frequencies,
                                  pseudocounts = pseudocounts
                                 )
         else:
@@ -113,7 +117,7 @@ class ModelState:
 
     def _fix_signatures(self, fix_signatures,*,
                         n_components, 
-                        genome_trinuc_distribution, 
+                        genome_context_frequencies, 
                         pseudocounts = 10000):
             
         assert isinstance(fix_signatures, list) and len(fix_signatures) <= n_components, \
@@ -131,7 +135,7 @@ class ModelState:
             sigmatrix = SimulatedCorpus.cosmic_sig_to_matrix(COSMIC_SIGS[sig])
             
             self.omega[i] = sigmatrix * pseudocounts + 1.
-            self.delta[i] = sigmatrix.sum(axis = -1) * pseudocounts/genome_trinuc_distribution.reshape(-1) + 1.
+            self.delta[i] = sigmatrix.sum(axis = -1) * pseudocounts/genome_context_frequencies.reshape(-1) + 1.
 
 
 
@@ -162,7 +166,7 @@ class ModelState:
     def _lambda_update(self, k, sstats, corpus_states):
 
         def _get_context_exposure(corpus_state):
-            return corpus_state.trinuc_distributions @ \
+            return corpus_state.context_frequencies @ \
                 (corpus_state.exposures.ravel() * np.exp(corpus_state.logmu[k]))
 
         context_exposure = sum(map(_get_context_exposure, corpus_states.values()))
@@ -208,14 +212,14 @@ class ModelState:
             ])
 
 
-    def _get_nucleotide_effect(self, k, trinuc_distributions):
-        return self.delta[k] @ trinuc_distributions
+    def _get_nucleotide_effect(self, k, context_frequencies):
+        return self.delta[k] @ context_frequencies
     
 
     def _get_targets(self, sstats, corpus_states):
         
-        trinuc_matrix = next(iter(corpus_states.values())).trinuc_distributions
-        num_corpuses = len(corpus_states); n_bins=trinuc_matrix.shape[1]
+        context_frequencies = next(iter(corpus_states.values())).context_frequencies
+        num_corpuses = len(corpus_states); n_bins=context_frequencies.shape[1]
 
         exposures = np.concatenate(
             [corpus_states[name].exposures for name in sstats.corpus_names],
@@ -229,7 +233,7 @@ class ModelState:
             ).ravel()
 
             context_effect = np.repeat(
-                self._get_nucleotide_effect(k, trinuc_matrix)[None,:],
+                self._get_nucleotide_effect(k, context_frequencies)[None,:],
                 num_corpuses, axis = 0
             )
 
@@ -314,7 +318,7 @@ class CorpusState(ModelState):
         self.n_components = n_components
         self.dtype = dtype
         self.pi_prior = pi_prior
-        self.n_features, self.n_loci = corpus.shape
+        self.n_loci = corpus.locus_dim
         self.subset_sample = subset_sample
         
         self.n_samples = len(corpus)
@@ -369,7 +373,7 @@ class CorpusState(ModelState):
 
 
     def _get_mutation_rate_logits(self, model_state, exposures):
-        return np.log(model_state.delta @ self.trinuc_distributions) + self._logmu + np.log(exposures)
+        return np.log(model_state.delta @ self.context_frequencies) + self._logmu + np.log(exposures)
 
     
     def get_log_component_effect_rate(self, model_state, exposures):
@@ -377,7 +381,7 @@ class CorpusState(ModelState):
         Returns a (Z x C x L) tensor of the log of the component-wise mutation rate effects
         '''
         locus_effects = (self._logmu + np.log(exposures))[:,None,:]
-        signature_effects = np.log(model_state.delta)[:,:,None] + np.log(self.trinuc_distributions)[None,:,:]
+        signature_effects = np.log(model_state.delta)[:,:,None] + np.log(self.context_frequencies)[None,:,:]
 
         return np.nan_to_num(
             locus_effects + signature_effects - self._log_denom[:,None,:],
@@ -442,8 +446,8 @@ class CorpusState(ModelState):
         
 
     @property
-    def trinuc_distributions(self):
-        return self.corpus.trinuc_distributions
+    def context_frequencies(self):
+        return self.corpus.context_frequencies
     
     @property
     def features(self):
