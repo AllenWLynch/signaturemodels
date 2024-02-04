@@ -21,6 +21,14 @@ def load_corpusstate_cache(model_path, corpus_path):
     
     cache_path = get_corpusstate_cache_path(model_path, corpus_path)
 
+    if not os.path.exists(cache_path):
+        print(cache_path)
+        raise FileNotFoundError(
+            f'A corpus state cache was not found for this model, corpus pairing: {model_path}, {corpus_path}.\n'
+            'You can generate on by using the following command:\n'
+            f'\t$ locusregression model-cache-sstats {model_path} -d {corpus_path}'
+        )
+
     model_mtime = os.path.getmtime(model_path)
     corpus_mtime = os.path.getmtime(corpus_path)
     cache_mtime = os.path.getmtime(cache_path)
@@ -131,7 +139,7 @@ def valid_path(x):
     return x
 
 
-def _load_dataset(corpuses):
+def load_dataset(corpuses):
 
     if len(corpuses) == 1:
         dataset = stream_corpus(corpuses[0])
@@ -143,7 +151,7 @@ def _load_dataset(corpuses):
     return dataset
 
 
-def _get_basemodel(model_type):
+def get_basemodel(model_type):
 
     if model_type == 'linear':
         basemodel = LocusRegressor

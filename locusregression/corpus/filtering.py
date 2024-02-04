@@ -19,7 +19,7 @@ def get_rainfall_statistic(vcf_file,*,output):
         
         with open(tempfile,'w') as f:
             query_process = subprocess.Popen(
-                ['bcftools','query','-f', chr_prefix + '%CHROM\t%POS0\t%POS0' + '\n',],
+                ['bcftools','query','-f', '%CHROM\t%POS0\t%POS0' + '\n',],
                 stdin = filter_process.stdout,
                 stdout = f,
                 universal_newlines=True,
