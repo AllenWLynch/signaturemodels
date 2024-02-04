@@ -21,6 +21,7 @@ from functools import partial
 import subprocess
 from joblib import Parallel, delayed
 import joblib
+import numpy as np
 
 from optuna.exceptions import ExperimentalWarning
 warnings.filterwarnings("ignore", category=ExperimentalWarning)
@@ -39,6 +40,14 @@ def get_corpusstate_cache_path(model_path, corpus_path):
 def load_corpusstate_cache(model_path, corpus_path):
     
     cache_path = get_corpusstate_cache_path(model_path, corpus_path)
+
+    if not os.path.exists(cache_path):
+        print(cache_path)
+        raise FileNotFoundError(
+            f'A corpus state cache was not found for this model, corpus pairing: {model_path}, {corpus_path}.\n'
+            'You can generate on by using the following command:\n'
+            f'\t$ locusregression model-cache-sstats {model_path} -d {corpus_path}'
+        )
 
     model_mtime = os.path.getmtime(model_path)
     corpus_mtime = os.path.getmtime(corpus_path)
@@ -796,7 +805,8 @@ def _make_corpusstate_cache(*,model, corpus):
 
     joblib.dump(corpus_state, cache_path)
 
-corpusstate_cache_parser = subparsers.add_parser('model-cache-sstats')
+corpusstate_cache_parser = subparsers.add_parser('model-cache-sstats',
+                                            help = 'Make a cache with pre-calculated statistcs for this model-corpus pair. This *greatly* speeds up subsequent calculations.')
 corpusstate_cache_parser.add_argument('model', type = file_exists)
 corpusstate_cache_parser.add_argument('--corpus','-d', type = file_exists, required=True)
 corpusstate_cache_parser.set_defaults(func = _make_corpusstate_cache)
@@ -1065,13 +1075,22 @@ def run_simulation(*,config, prefix):
     
 
 def simulate_from_model(*, model, corpus, output, 
-                        seed=0, use_signatures=None,
-                        n_jobs=1,):
+                        seed=0, 
+                        use_signatures=None,
+                        n_jobs=1,
+                        n_samples=None
+                    ):
+    
+    corpus_state = load_corpusstate_cache(model, corpus)
     
     model = load_model(model)
     corpus = stream_corpus(corpus)
 
-    corpus_state = model._init_new_corpusstates(corpus)[corpus.name]
+    if n_samples < len(corpus):
+        assert n_samples > 0
+        
+        subset_idx = np.random.RandomState(seed).choice(len(corpus), size = n_samples, replace = False)
+        corpus = corpus.subset_samples(subset_idx)
 
     resampled_corpus = SimulatedCorpus.from_model(
         model = model,
@@ -1090,6 +1109,7 @@ simulate_from_model_parser.add_argument('model', type = file_exists)
 simulate_from_model_parser.add_argument('--corpus','-d', type = file_exists, required=True)
 simulate_from_model_parser.add_argument('--output','-o', type = valid_path, required=True)
 simulate_from_model_parser.add_argument('--use-signatures','-sigs', nargs='+', type = str, default=None)
+simulate_from_model_parser.add_argument('--n-samples','-samples', type = posint, default=None)
 simulate_from_model_parser.add_argument('--seed', type = posint, default=0)
 simulate_from_model_parser.add_argument('--n-jobs', '-j', type = posint, default=1)
 simulate_from_model_parser.set_defaults(func = simulate_from_model)
