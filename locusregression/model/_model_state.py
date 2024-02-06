@@ -20,7 +20,7 @@ def _get_linear_model(*args, **kw):
 class DummyCorpus:
 
     def __init__(self, corpus):
-        self.trinuc_distributions = corpus.trinuc_distributions
+        self.context_frequencies = corpus.context_frequencies
         self.shared_correlates = corpus.shared_correlates
 
 
@@ -204,21 +204,6 @@ class ModelState:
 
         self._svi_update('delta', _delta, learning_rate)
 
-    
-    @staticmethod
-    def _convert_beta_sstats_to_array(k, sstats, len):
-        
-        def statsdict_to_arr(stats, k):
-            arr = np.zeros(len)
-            for l,v in stats.items():
-                arr[l] = v[k]
-            return arr
-        
-        return np.array([
-                statsdict_to_arr(corpusstats, k)
-                for corpusstats in sstats.beta_sstats
-            ])
-
 
     def _get_nucleotide_effect(self, k, context_frequencies):
         return self.delta[k] @ context_frequencies
@@ -230,14 +215,14 @@ class ModelState:
         num_corpuses = len(corpus_states); n_bins=context_frequencies.shape[1]
 
         exposures = np.concatenate(
-            [corpus_states[name].exposures for name in sstats.corpus_names],
+            [state.exposures for state in corpus_states.values()],
             axis = 0,
         )
 
         for k in range(self.n_components):
 
             current_lograte_prediction = np.array(
-                [corpus_states[name].logmu[k] for name in sstats.corpus_names]
+                [state.logmu[k] for state in corpus_states.values()]
             ).ravel()
 
             context_effect = np.repeat(
@@ -245,7 +230,7 @@ class ModelState:
                 num_corpuses, axis = 0
             )
 
-            target = self._convert_beta_sstats_to_array(k, sstats, n_bins).ravel()
+            target = np.concatenate([sstats[name].beta_sstats(k, n_bins) for name in corpus_states.keys()])
             eta = (exposures * context_effect).ravel()
 
             # rescale the targets to mean 1 so that the learning rate is comparable across components and over epochs
@@ -428,7 +413,7 @@ class CorpusState(ModelState):
 
     
     def update_alpha(self, sstats, learning_rate):
-        _alpha = update_alpha(self.alpha, sstats.alpha_sstats[self.corpus.name])
+        _alpha = update_alpha(self.alpha, sstats[self.corpus.name].alpha_sstats)
         self._svi_update('alpha', _alpha, learning_rate)
 
 

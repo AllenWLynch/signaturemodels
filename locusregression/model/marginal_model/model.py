@@ -1,7 +1,7 @@
 
 import locusregression
 import numpy as np
-from locusregression.model._dirichlet_update import pseudo_r2
+#from locusregression.model import _pseudo_r2
 from locusregression.model.gbt._gbt_modelstate import GBTModelState
 
 
@@ -144,5 +144,5 @@ class MarginalModel:
         # the null predictor is just proportional to the size of the windows
         y_null = corpus.context_frequencies
 
-        return pseudo_r2(y, y_hat, y_null)
+        return _pseudo_r2(y, y_hat, y_null)
     

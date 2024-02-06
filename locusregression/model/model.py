@@ -1,5 +1,5 @@
 
-from ._dirichlet_update import log_dirichlet_expectation, pseudo_r2, dirichlet_bound
+from ._dirichlet_update import log_dirichlet_expectation, dirichlet_bound
 import locusregression.model._sstats as _sstats
 from ._model_state import ModelState, CorpusState
 from pandas import DataFrame
@@ -9,8 +9,16 @@ import warnings
 import matplotlib.pyplot as plt
 import pickle
 import logging
+from scipy.special import xlogy
 logger = logging.getLogger(' LocusRegressor')
 
+
+def _multinomial_deviance(y, y_hat):
+    return 2*( xlogy(y, y/y.sum()).sum() - xlogy(y, y_hat/y_hat.sum()).sum() )
+
+
+def _pseudo_r2(y, y_hat, y_null):
+    return 1 - _multinomial_deviance(y, y_hat)/_multinomial_deviance(y, y_null)
 
 
 def _get_observation_likelihood(*,model_state, sample, corpus_state):
@@ -761,7 +769,7 @@ class LocusRegressor:
         y_null = corpus.context_frequencies
 
         logger.info('Calculating deviance ...')
-        return pseudo_r2(empirical_mr, predicted_mr, y_null)
+        return _pseudo_r2(empirical_mr, predicted_mr, y_null)
     
 
 

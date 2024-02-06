@@ -1,6 +1,7 @@
 
 from ..model import LocusRegressor
 from ..model import GBTRegressor
+from ..model import _pseudo_r2
 import optuna
 from tqdm import trange
 import sys
@@ -55,6 +56,9 @@ def objective(trial,
     
     scores = []
 
+    train_empirical = train.get_empirical_mutation_rate(); train_null = train.context_frequencies
+    test_empirical = test.get_empirical_mutation_rate(); test_null = test.context_frequencies
+
     for train_score, test_score in model._fit(
         train, test_corpus=test, subset_by_loci=subset_by_loci,
     ):
@@ -64,8 +68,12 @@ def objective(trial,
 
         trial.set_user_attr(f'test_score_{step}',  test_score)
         trial.set_user_attr(f'train_score_{step}',  train_score)
-        trial.set_user_attr(f'test_mutation_r2_{step}', model.get_mutation_rate_r2(test))
-        trial.set_user_attr(f'train_mutation_r2_{step}', model.get_mutation_rate_r2(train))
+        
+        test_mutation_r2 = _pseudo_r2(test_empirical, model.get_log_marginal_mutation_rate(test), test_null)
+        train_mutation_r2 = _pseudo_r2(train_empirical, model.get_log_marginal_mutation_rate(train), train_null)
+                
+        trial.set_user_attr(f'test_mutation_r2_{step}', test_mutation_r2)
+        trial.set_user_attr(f'train_mutation_r2_{step}', train_mutation_r2)
 
         if trial.should_prune():
             raise optuna.TrialPruned()
