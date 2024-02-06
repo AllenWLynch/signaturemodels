@@ -31,6 +31,12 @@ parser = argparse.ArgumentParser(
 subparsers = parser.add_subparsers(help = 'Commands')
 
 
+rainfall_parser = subparsers.add_parser('get-rainfall', help = 'Calculate the rainfall statistic for a given VCF file.')
+rainfall_parser.add_argument('vcf_file', type = file_exists)
+rainfall_parser.add_argument('--output','-o', type = argparse.FileType('w'), default=sys.stdout)
+rainfall_parser.set_defaults(func = get_rainfall_statistic)
+
+
 def make_windows_wrapper(*,categorical_features, **kw):
     make_windows(*categorical_features, **kw)
 

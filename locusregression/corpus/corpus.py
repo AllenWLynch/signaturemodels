@@ -5,6 +5,7 @@ import h5py as h5
 import logging
 from .sample import Sample, SampleLoader, InMemorySamples
 from .sbs_observation_config import SBSSample
+from tqdm import trange
 logger = logging.getLogger('Corpus')
 
 
@@ -93,22 +94,18 @@ class CorpusMixin(ABC):
         raise NotImplementedError()
 
 
-
-class dotdict(dict):
-    """dot.notation access to dictionary attributes"""
-    __getattr__ = dict.get
-    __setattr__ = dict.__setitem__
-    __delattr__ = dict.__delitem__
-
-
 class Corpus(CorpusMixin):
+
+    @classmethod
+    def _get_observation_class(cls, classname):
+        if classname.lower() == 'sbs':
+            return SBSSample
+        else:
+            raise ValueError(f'Unknown corpus type {classname}')
 
     @property
     def observation_class(self):
-        if self.type.lower() == 'sbs':
-            return SBSSample
-        else:
-            raise ValueError(f'Unknown corpus type {self.type}')
+        return self._get_observation_class(self.type)        
         
     @property
     def context_dim(self):
@@ -134,11 +131,12 @@ class Corpus(CorpusMixin):
     def __len__(self):
         return len(self.samples)
 
+
     def __getitem__(self, idx):
-        return dotdict({
-            **self.samples[idx].asdict(),
-            'corpus_name' : self.name
-        })
+        sample = self.samples[idx]
+        sample.corpus_name = self.name
+
+        return sample
 
 
     def __iter__(self):
@@ -162,6 +160,7 @@ class Corpus(CorpusMixin):
     def subset_samples(self, subset_idx):
 
         return Corpus(
+            type = self.type,
             samples = self.samples.subset(subset_idx),
             features=self.features,
             context_frequencies = self.context_frequencies,
@@ -174,7 +173,7 @@ class Corpus(CorpusMixin):
 
         subsample_lookup = dict(zip(loci, np.arange(len(loci)).astype(int)))
         
-        bool_array = np.zeros(self.shape[1]).astype(bool)
+        bool_array = np.zeros(self.shape['locus_dim']).astype(bool)
         bool_array[loci] = True
 
         #total_mutations = 0
@@ -183,7 +182,7 @@ class Corpus(CorpusMixin):
                         
             mask = bool_array[sample.locus]
 
-            new_sample = Sample(**{
+            new_sample = self.observation_class(**{
                 'attribute' : sample.attribute[mask],
                 'mutation' : sample.mutation[mask],
                 'context' : sample.context[mask],
@@ -197,6 +196,7 @@ class Corpus(CorpusMixin):
             new_samples.append(new_sample)
         
         return Corpus(
+            type = self.type,
             samples = InMemorySamples(new_samples),
             features = {
                 feature_name : {
@@ -244,6 +244,11 @@ class MetaCorpus(CorpusMixin):
         self.idx_starts = np.cumsum(
             [0] + [len(corpus) for corpus in self.corpuses]
         )
+
+    @property
+    def observation_class(self):
+        return self.corpuses[0].observation_class
+    
 
     @property
     def corpuses(self):
@@ -376,6 +381,12 @@ def save_corpus(corpus, filename):
             sample.create_h5_dataset(samples_group, str(i))
 
 
+def _peek_type(filename):
+    
+    with h5.File(filename, 'r') as f:
+        return Corpus._get_observation_class(f['data'].attrs['type'])
+
+
 def _read_features(data):
 
     features = {}
@@ -420,9 +431,11 @@ def _load_corpus(filename, sample_obj):
 
 def load_corpus(filename):
 
+    sample_type = _peek_type(filename)
+
     with h5.File(filename, 'r') as f:
         samples = InMemorySamples([
-            Sample.read_h5_dataset(f, f'samples/{i}')
+            sample_type.read_h5_dataset(f, f'samples/{i}')
             for i in range(len(f['samples'].keys()))
         ])
 
@@ -436,9 +449,9 @@ def stream_corpus(filename):
 
     return _load_corpus(
         filename,
-        SampleLoader(filename)
+        SampleLoader(filename, observation_class=_peek_type(filename)
+)
     )
-
 
 
 def train_test_split(corpus, seed = 0, train_size = 0.7,

@@ -1,12 +1,13 @@
+
 import subprocess
 import tempfile
+from math import log10
 
 def get_rainfall_statistic(vcf_file,*,output):
 
     def get_distance_cutoff(mutations_file):
-        pass
+        return 10000
 
-    
     with tempfile.NamedTemporaryFile() as temp_file:
 
         filter_process = subprocess.Popen(
@@ -17,21 +18,29 @@ def get_rainfall_statistic(vcf_file,*,output):
                 stderr = subprocess.DEVNULL,
             )
         
-        with open(tempfile,'w') as f:
-            query_process = subprocess.Popen(
-                ['bcftools','query','-f', '%CHROM\t%POS0\t%POS0' + '\n',],
-                stdin = filter_process.stdout,
+        query_process = subprocess.Popen(
+            ['bcftools','query','-f', '%CHROM\t%POS0\t%POS0' + '\n',],
+            stdin = filter_process.stdout,
+            stdout = subprocess.PIPE,
+            universal_newlines=True,
+            bufsize=10000,
+        )
+        
+        with open(temp_file.name,'w') as f:
+            sort_process = subprocess.Popen(
+                ['sort','-k1,1','-k2,2n'],
+                stdin = query_process.stdout,
                 stdout = f,
                 universal_newlines=True,
                 bufsize=10000,
             )
-            query_process.wait()
+            sort_process.wait()
 
         closest_process = subprocess.Popen(
             ['bedtools','closest',
              '-a',temp_file.name,
              '-b',temp_file.name,
-             '-io',
+             '-io','-d',
             ],
             stdout = subprocess.PIPE,
             universal_newlines=True,
@@ -53,8 +62,11 @@ def get_rainfall_statistic(vcf_file,*,output):
             chrom, start, end, distance = line.strip().split('\t')
             distance = int(distance)
 
+            if distance < 0:
+                distance = 10000000
+
             print(
-                chrom, start, end, distance, distance < distance_cutoff,
+                chrom, start, end, log10(distance), distance < distance_cutoff,
                 sep='\t',
                 file=output
             )
