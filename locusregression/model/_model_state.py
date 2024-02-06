@@ -50,6 +50,7 @@ class ModelState:
         self.n_loci = locus_dim
         self.random_state = random_state
         self.empirical_bayes = empirical_bayes
+        self.n_contexts = context_dim
 
         self.tau = np.ones(self.n_components)
 
@@ -111,16 +112,19 @@ class ModelState:
                     ).fit(
                         np.array(corpus_names).reshape((-1,1))
                     )
-        
-
-    def _get_design_matrix(self, corpus_states):
-        n_loci = next(iter(corpus_states.values())).n_loci
-        labels = np.concatenate([[name]*n_loci for name in corpus_states.keys()])
+    
+    def _get_onehot_column(self, corpus_states, n_repeats):
+        labels = np.concatenate([[name]*n_repeats for name in corpus_states.keys()])
         # One-hot encode the labels
         encoded_labels = self.corpus_intercept_encoder_.transform(
             labels.reshape((-1,1))
         )
         return encoded_labels
+
+
+    def _get_design_matrix(self, corpus_states):
+        n_loci = next(iter(corpus_states.values())).n_loci
+        return self._get_onehot_column(corpus_states, n_loci)
     
 
     def _fix_signatures(self, fix_signatures,*,
@@ -170,6 +174,46 @@ class ModelState:
 
         self._svi_update('omega', new_rho, learning_rate)
 
+
+    def _lambda_update_new(self, k, sstats, corpus_states):
+
+        def _get_context_exposure(corpus_state):
+            return corpus_state.context_frequencies @ \
+                (corpus_state.exposures.ravel() * np.exp(corpus_state.logmu[k]))
+        
+        I = len(corpus_states.keys())
+        eta = np.concatenate([_get_context_exposure(state) for state in corpus_states.values()]) # I x C -> I*C
+        target = np.concatenate([sstats[name].lambda_sstats(k) for name in corpus_states.keys()])
+
+        m = (target/eta).mean()
+        sample_weights = eta * m
+
+        # remove any samples with zero weight to avoid divide-by-zero errors
+        zero_mask = sample_weights == 0
+
+        if (target[zero_mask] > 0).any():
+            raise ValueError('A sample weight is zero but the target is positive')
+        else:
+            target = target[~zero_mask]
+            sample_weights = sample_weights[~zero_mask]
+
+        X = np.hstack([
+                np.tile(
+                    np.diag(np.ones(self.n_contexts)),
+                    (I, 1)
+                ),
+                self._get_onehot_column(corpus_states, self.n_contexts).toarray()
+            ])
+
+        return np.exp(
+            self.context_models[k]\
+            .fit(
+                X, 
+                target/sample_weights,
+                sample_weight=sample_weights/sample_weights.mean()
+            ).coef_[:self.n_contexts]
+        )
+
     
     def _lambda_update(self, k, sstats, corpus_states):
 
@@ -198,7 +242,7 @@ class ModelState:
     def update_lambda(self, sstats, corpus_states, learning_rate):
         
         _delta = np.array([
-            self._lambda_update(k, sstats, corpus_states)
+            self._lambda_update_new(k, sstats, corpus_states)
             for k in range(self.n_components)
         ])
 
@@ -225,9 +269,9 @@ class ModelState:
                 [state.logmu[k] for state in corpus_states.values()]
             ).ravel()
 
-            context_effect = np.repeat(
+            context_effect = np.tile(
                 self._get_nucleotide_effect(k, context_frequencies)[None,:],
-                num_corpuses, axis = 0
+                (num_corpuses, 1)
             )
 
             target = np.concatenate([sstats[name].beta_sstats(k, n_bins) for name in corpus_states.keys()])
