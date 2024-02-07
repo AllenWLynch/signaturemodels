@@ -4,4 +4,3 @@ from .corpus import load_corpus, save_corpus, train_test_split, stream_corpus, \
 from .ingest_tracks import make_continous_features, make_distance_features, make_discrete_features
 from .make_windows import make_windows as make_windows
 from .make_windows import check_regions_file
-from .filtering import get_rainfall_statistic
