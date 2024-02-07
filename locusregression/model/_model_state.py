@@ -20,51 +20,56 @@ def _get_linear_model(*args, **kw):
 class DummyCorpus:
 
     def __init__(self, corpus):
-        self.trinuc_distributions = corpus.trinuc_distributions
+        self.context_frequencies = corpus.context_frequencies
         self.shared_correlates = corpus.shared_correlates
 
 
 class ModelState:
 
-    n_contexts = 32
-
     def __init__(self,
                 fix_signatures = None,
-                pseudocounts = 10000,*,
+                pseudocounts = 10000,
+                get_model_fn = _get_linear_model,
+                categorical_encoder = OneHotEncoder(sparse_output=False, drop='first'),*,
                 corpus_states,
-                n_components, 
-                n_features, 
-                n_loci,
+                n_components,
                 random_state, 
                 empirical_bayes,
-                genome_trinuc_distribution,
+                genome_context_frequencies,
+                feature_dim,
+                locus_dim,
+                context_dim,
+                mutation_dim,
+                attribute_dim,
                 dtype,
-                get_model_fn = _get_linear_model,
-                categorical_encoder = OneHotEncoder(sparse_output=False, drop='first'),
                 **kw,
             ):
         
         assert isinstance(n_components, int) and n_components >= 1
         self.n_components = n_components
-        self.n_features = n_features
-        self.n_loci = n_loci
+        self.n_loci = locus_dim
         self.random_state = random_state
         self.empirical_bayes = empirical_bayes
+        self.n_contexts = context_dim
 
         self.tau = np.ones(self.n_components)
 
         self.delta = self.random_state.gamma(100, 1/100, 
-                                               (n_components, self.n_contexts),
+                                               (n_components, context_dim),
                                               ).astype(dtype, copy=False)
         
         self.omega = self.random_state.gamma(100, 1/100,
-                                               (n_components, self.n_contexts, 3),
+                                               (n_components, context_dim, mutation_dim),
                                               ).astype(dtype, copy = False)
         
+        # placeholder for when attributes come into play
+        #self.psi
+        
+        # this will need to be generalized
         if not fix_signatures is None:
             self._fix_signatures(fix_signatures,
                                  n_components = n_components,
-                                 genome_trinuc_distribution = genome_trinuc_distribution,
+                                 genome_context_frequencies = genome_context_frequencies,
                                  pseudocounts = pseudocounts
                                 )
         else:
@@ -107,21 +112,24 @@ class ModelState:
                     ).fit(
                         np.array(corpus_names).reshape((-1,1))
                     )
-        
-
-    def _get_design_matrix(self, corpus_states):
-        n_loci = next(iter(corpus_states.values())).n_loci
-        labels = np.concatenate([[name]*n_loci for name in corpus_states.keys()])
+    
+    def _get_onehot_column(self, corpus_states, n_repeats):
+        labels = np.concatenate([[name]*n_repeats for name in corpus_states.keys()])
         # One-hot encode the labels
         encoded_labels = self.corpus_intercept_encoder_.transform(
             labels.reshape((-1,1))
         )
         return encoded_labels
+
+
+    def _get_design_matrix(self, corpus_states):
+        n_loci = next(iter(corpus_states.values())).n_loci
+        return self._get_onehot_column(corpus_states, n_loci)
     
 
     def _fix_signatures(self, fix_signatures,*,
                         n_components, 
-                        genome_trinuc_distribution, 
+                        genome_context_frequencies, 
                         pseudocounts = 10000):
             
         assert isinstance(fix_signatures, list) and len(fix_signatures) <= n_components, \
@@ -139,7 +147,7 @@ class ModelState:
             sigmatrix = SimulatedCorpus.cosmic_sig_to_matrix(COSMIC_SIGS[sig])
             
             self.omega[i] = sigmatrix * pseudocounts + 1.
-            self.delta[i] = sigmatrix.sum(axis = -1) * pseudocounts/genome_trinuc_distribution.reshape(-1) + 1.
+            self.delta[i] = sigmatrix.sum(axis = -1) * pseudocounts/genome_context_frequencies.reshape(-1) + 1.
 
 
 
@@ -166,11 +174,51 @@ class ModelState:
 
         self._svi_update('omega', new_rho, learning_rate)
 
+
+    def _lambda_update_new(self, k, sstats, corpus_states):
+
+        def _get_context_exposure(corpus_state):
+            return corpus_state.context_frequencies @ \
+                (corpus_state.exposures.ravel() * np.exp(corpus_state.logmu[k]))
+        
+        I = len(corpus_states.keys())
+        eta = np.concatenate([_get_context_exposure(state) for state in corpus_states.values()]) # I x C -> I*C
+        target = np.concatenate([sstats[name].lambda_sstats(k) for name in corpus_states.keys()])
+
+        m = (target/eta).mean()
+        sample_weights = eta * m
+
+        # remove any samples with zero weight to avoid divide-by-zero errors
+        zero_mask = sample_weights == 0
+
+        if (target[zero_mask] > 0).any():
+            raise ValueError('A sample weight is zero but the target is positive')
+        else:
+            target = target[~zero_mask]
+            sample_weights = sample_weights[~zero_mask]
+
+        X = np.hstack([
+                np.tile(
+                    np.diag(np.ones(self.n_contexts)),
+                    (I, 1)
+                ),
+                self._get_onehot_column(corpus_states, self.n_contexts).toarray()
+            ])
+
+        return np.exp(
+            self.context_models[k]\
+            .fit(
+                X, 
+                target/sample_weights,
+                sample_weight=sample_weights/sample_weights.mean()
+            ).coef_[:self.n_contexts]
+        )
+
     
     def _lambda_update(self, k, sstats, corpus_states):
 
         def _get_context_exposure(corpus_state):
-            return corpus_state.trinuc_distributions @ \
+            return corpus_state.context_frequencies @ \
                 (corpus_state.exposures.ravel() * np.exp(corpus_state.logmu[k]))
 
         context_exposure = sum(map(_get_context_exposure, corpus_states.values()))
@@ -194,54 +242,39 @@ class ModelState:
     def update_lambda(self, sstats, corpus_states, learning_rate):
         
         _delta = np.array([
-            self._lambda_update(k, sstats, corpus_states)
+            self._lambda_update_new(k, sstats, corpus_states)
             for k in range(self.n_components)
         ])
 
         self._svi_update('delta', _delta, learning_rate)
 
-    
-    @staticmethod
-    def _convert_beta_sstats_to_array(k, sstats, len):
-        
-        def statsdict_to_arr(stats, k):
-            arr = np.zeros(len)
-            for l,v in stats.items():
-                arr[l] = v[k]
-            return arr
-        
-        return np.array([
-                statsdict_to_arr(corpusstats, k)
-                for corpusstats in sstats.beta_sstats
-            ])
 
-
-    def _get_nucleotide_effect(self, k, trinuc_distributions):
-        return self.delta[k] @ trinuc_distributions
+    def _get_nucleotide_effect(self, k, context_frequencies):
+        return self.delta[k] @ context_frequencies
     
 
     def _get_targets(self, sstats, corpus_states):
         
-        trinuc_matrix = next(iter(corpus_states.values())).trinuc_distributions
-        num_corpuses = len(corpus_states); n_bins=trinuc_matrix.shape[1]
+        context_frequencies = next(iter(corpus_states.values())).context_frequencies
+        num_corpuses = len(corpus_states); n_bins=context_frequencies.shape[1]
 
         exposures = np.concatenate(
-            [corpus_states[name].exposures for name in sstats.corpus_names],
+            [state.exposures for state in corpus_states.values()],
             axis = 0,
         )
 
         for k in range(self.n_components):
 
             current_lograte_prediction = np.array(
-                [corpus_states[name].logmu[k] for name in sstats.corpus_names]
+                [state.logmu[k] for state in corpus_states.values()]
             ).ravel()
 
-            context_effect = np.repeat(
-                self._get_nucleotide_effect(k, trinuc_matrix)[None,:],
-                num_corpuses, axis = 0
+            context_effect = np.tile(
+                self._get_nucleotide_effect(k, context_frequencies)[None,:],
+                (num_corpuses, 1)
             )
 
-            target = self._convert_beta_sstats_to_array(k, sstats, n_bins).ravel()
+            target = np.concatenate([sstats[name].beta_sstats(k, n_bins) for name in corpus_states.keys()])
             eta = (exposures * context_effect).ravel()
 
             # rescale the targets to mean 1 so that the learning rate is comparable across components and over epochs
@@ -322,7 +355,7 @@ class CorpusState(ModelState):
         self.n_components = n_components
         self.dtype = dtype
         self.pi_prior = pi_prior
-        self.n_features, self.n_loci = corpus.shape
+        self.n_loci = corpus.locus_dim
         self.subset_sample = subset_sample
         
         self.n_samples = len(corpus)
@@ -377,7 +410,7 @@ class CorpusState(ModelState):
 
 
     def _get_mutation_rate_logits(self, model_state, exposures):
-        return np.log(model_state.delta @ self.trinuc_distributions) + self._logmu + np.log(exposures)
+        return np.log(model_state.delta @ self.context_frequencies) + self._logmu + np.log(exposures)
 
     
     def get_log_component_effect_rate(self, model_state, exposures, use_context=True):
@@ -387,9 +420,9 @@ class CorpusState(ModelState):
         locus_effects = (self._logmu + np.log(exposures))[:,None,:]
         
         if not use_context:
-            signature_effects = np.log(model_state.delta @ self.trinuc_distributions)[:,None,:]
+            signature_effects = np.log(model_state.delta @ self.context_frequencies)[:,None,:]
         else:
-            signature_effects = np.log(model_state.delta)[:,:,None] + np.log(self.trinuc_distributions)[None,:,:]
+            signature_effects = np.log(model_state.delta)[:,:,None] + np.log(self.context_frequencies)[None,:,:]
 
         return np.nan_to_num(
             locus_effects + signature_effects - self._log_denom[:,None,:],
@@ -424,7 +457,7 @@ class CorpusState(ModelState):
 
     
     def update_alpha(self, sstats, learning_rate):
-        _alpha = update_alpha(self.alpha, sstats.alpha_sstats[self.corpus.name])
+        _alpha = update_alpha(self.alpha, sstats[self.corpus.name].alpha_sstats)
         self._svi_update('alpha', _alpha, learning_rate)
 
 
@@ -456,8 +489,8 @@ class CorpusState(ModelState):
         
 
     @property
-    def trinuc_distributions(self):
-        return self.corpus.trinuc_distributions
+    def context_frequencies(self):
+        return self.corpus.context_frequencies
     
     @property
     def features(self):

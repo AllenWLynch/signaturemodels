@@ -1,13 +1,13 @@
 
 import locusregression
 import numpy as np
-from locusregression.model._dirichlet_update import pseudo_r2
+#from locusregression.model import _pseudo_r2
 from locusregression.model.gbt._gbt_modelstate import GBTModelState
 
 
 def _get_targets(model_state, corpus_states, target):
         
-    trinuc_matrix = next(iter(corpus_states.values())).trinuc_distributions
+    trinuc_matrix = next(iter(corpus_states.values())).context_frequencies
     num_corpuses = len(corpus_states)
 
     exposures = np.concatenate(
@@ -86,7 +86,7 @@ class MarginalModel:
         #    for context, weight in zip(sample.context, sample.weight):
         #        context_counts[context]+=weight
 
-        global_trinuc = corpus.trinuc_distributions.sum(axis = 1)
+        global_trinuc = corpus.context_frequencies.sum(axis = 1)
         self.model_state.delta[0] = context_counts/global_trinuc
         # ^^^^^^
 
@@ -142,7 +142,7 @@ class MarginalModel:
         y_hat = self.predict(corpus)
 
         # the null predictor is just proportional to the size of the windows
-        y_null = corpus.trinuc_distributions
+        y_null = corpus.context_frequencies
 
-        return pseudo_r2(y, y_hat, y_null)
+        return _pseudo_r2(y, y_hat, y_null)
     

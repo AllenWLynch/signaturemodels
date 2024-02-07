@@ -1,19 +1,24 @@
 
-from ._dirichlet_update import log_dirichlet_expectation, pseudo_r2, dirichlet_bound
-from locusregression.corpus import COSMIC_SORT_ORDER, SIGNATURE_STRINGS, MUTATION_PALETTE
-from locusregression.corpus.sbs_sample import SBSSample
+from ._dirichlet_update import log_dirichlet_expectation, dirichlet_bound
 import locusregression.model._sstats as _sstats
 from ._model_state import ModelState, CorpusState
 from pandas import DataFrame
-# external imports
 import numpy as np
 import time
 import warnings
 import matplotlib.pyplot as plt
 import pickle
 import logging
+from scipy.special import xlogy
 logger = logging.getLogger(' LocusRegressor')
 
+
+def _multinomial_deviance(y, y_hat):
+    return 2*( xlogy(y, y/y.sum()).sum() - xlogy(y, y_hat/y_hat.sum()).sum() )
+
+
+def _pseudo_r2(y, y_hat, y_null):
+    return 1 - _multinomial_deviance(y, y_hat)/_multinomial_deviance(y, y_null)
 
 
 def _get_observation_likelihood(*,model_state, sample, corpus_state):
@@ -28,7 +33,7 @@ def _get_observation_likelihood(*,model_state, sample, corpus_state):
             np.log(model_state.delta)[:,:,None]
         )[:, sample.context, sample.mutation]\
         + np.log(sample.exposures[:, sample.locus]) \
-        + np.log(corpus_state.trinuc_distributions[sample.context, sample.locus]) \
+        + np.log(corpus_state.context_frequencies[sample.context, sample.locus]) \
         + corpus_state.logmu[:, sample.locus] \
         - corpus_state.get_log_denom(sample.exposures)\
     
@@ -316,8 +321,10 @@ class LocusRegressor:
         self.random_state = np.random.RandomState(self.seed)
         self.bound_random_state = np.random.RandomState(self.seed + 1)
 
-        self.n_locus_features, self.n_loci = corpus.shape
-        self.n_samples, self.feature_names = len(corpus), corpus.feature_names
+        self.observation_class = corpus.observation_class
+        self.n_locus_features = corpus.feature_dim
+        self.n_loci = corpus.locus_dim
+        self.n_samples = len(corpus)
 
         self._calc_signature_sstats(corpus)
 
@@ -346,14 +353,13 @@ class LocusRegressor:
         }
 
         self.model_state = self.MODEL_STATE(
+                **corpus.shape,
                 n_components=self.n_components,
                 random_state=self.random_state,
-                n_features=self.n_locus_features,
-                n_loci=self.n_loci,
                 empirical_bayes = self.empirical_bayes,
                 dtype = self.dtype,
                 fix_signatures = self.fix_signatures,
-                genome_trinuc_distribution = self._genome_trinuc_distribution,
+                genome_context_frequencies = self._genome_context_frequencies,
                 corpus_states=self.corpus_states,
                 **self._get_rate_model_parameters()
         )
@@ -596,16 +602,6 @@ class LocusRegressor:
                 )
             
         return self._perplexity(elbo, corpus)
-
-
-
-    @staticmethod
-    def _ingest_vcf(self, vcf, corpus_state):
-        
-        return SBSSample.featurize_mutations(
-            vcf_file = vcf,
-            **corpus_state.corpus.instantiation_attrs
-        )
     
 
     def _predict_sample(self, sample, corpus_state):
@@ -669,12 +665,12 @@ class LocusRegressor:
 
     def _calc_signature_sstats(self, corpus):
 
-        _genome_trinuc_distribution = np.sum(
-            corpus.trinuc_distributions,
+        _genome_context_frequencies = np.sum(
+            corpus.context_frequencies,
             -1, keepdims= True
         )
 
-        self._genome_trinuc_distribution = _genome_trinuc_distribution/_genome_trinuc_distribution.sum()
+        self._genome_context_frequencies = _genome_context_frequencies/_genome_context_frequencies.sum()
 
 
     def get_log_nucleotide_effect(self, corpus):
@@ -684,7 +680,7 @@ class LocusRegressor:
         except KeyError:
             raise ValueError(f'Corpus {corpus.name} not found in model.')
         
-        return np.log( self.model_state.delta @ corpus.trinuc_distributions )
+        return np.log( self.model_state.delta @ corpus.context_frequencies )
 
 
     def get_log_component_mutation_rate(self, corpus, use_context=True):
@@ -770,10 +766,10 @@ class LocusRegressor:
 
         logger.info('Prediction mutation rate ...')
         predicted_mr = np.exp(self.get_log_marginal_mutation_rate(corpus))
-        y_null = corpus.trinuc_distributions
+        y_null = corpus.context_frequencies
 
         logger.info('Calculating deviance ...')
-        return pseudo_r2(empirical_mr, predicted_mr, y_null)
+        return _pseudo_r2(empirical_mr, predicted_mr, y_null)
     
 
 
@@ -795,53 +791,11 @@ class LocusRegressor:
             raise ValueError(f'Component {component} not found in model.')
         
         return component
-    
-
-    def signature(self, component, 
-            normalization = 'global'):
-        '''
-        Returns the 96-dimensional channel for a component.
-
-        Parameters
-        ----------
-        component : int > 0
-            Which signature to return
-        monte_carlo_draws : int > 0, default = 1000
-            How many monte_carlo draws to use to approximate the posterior distribution of the signature.
-        return_error : boolean, default = False
-            Return 95% confidence interval/highest-density interval on posterior.
-        
-        Returns
-        -------
-        signature : np.ndarray of shape (96,)
-        errors : np.ndarray of shape(96,)
-        '''
-        component = self._get_signature_idx(component)
-        
-        try:
-            if normalization == 'local':
-                norm_frequencies = self._weighted_trinuc_dists[component]
-            elif normalization == 'global':
-                norm_frequencies = self._genome_trinuc_distribution.ravel()
-            else:
-                raise ValueError(f'Normalization option {normalization} does not exist.')
-        except AttributeError as err:
-            raise AttributeError('User must run "model.calc_signature_sstats(corpus)" before extracting signatures from data.') from err
-
-        eps_expectation = self.model_state.omega[component]/self.model_state.omega[component].sum(axis = 1, keepdims = True) 
-        lambda_expectation = self.model_state.delta[component]*norm_frequencies\
-                                /(norm_frequencies*self.model_state.delta[component]).sum()
-
-        signature_expectation = (lambda_expectation[:,None]*eps_expectation).reshape(-1)
-
-        sig_dict = dict(zip(SIGNATURE_STRINGS, signature_expectation))
-
-        return [sig_dict[mut] for mut in COSMIC_SORT_ORDER]
 
 
 
     def plot_signature(self, component, ax = None, 
-                       figsize = (5.5,1.25), 
+                       figsize = (5.5,3), 
                        normalization = 'global', 
                        fontsize=7):
         '''
@@ -850,31 +804,14 @@ class LocusRegressor:
 
         component = self._get_signature_idx(component)
 
-        mean = self.signature(
-            component,
-            normalization = normalization
+        self.observation_class.plot_factorized(
+            context_dist = self.model_state.delta[component]/self._genome_context_frequencies.ravel(),
+            mutation_dist = self.model_state.omega[component],
+            attribute_dist = None,
+            ax = ax,
+            figsize = figsize,
+            fontsize = fontsize
         )
-        
-        if ax is None:
-            _, ax = plt.subplots(1,1,figsize= figsize)
-
-        ax.bar(
-            height = mean,
-            x = COSMIC_SORT_ORDER,
-            color = MUTATION_PALETTE,
-            width = 1,
-            edgecolor = 'white',
-            linewidth = 0.5,
-            error_kw = {'alpha' : 0.5, 'linewidth' : 0.5}
-        )
-
-        for s in ['left','right','top']:
-            ax.spines[s].set_visible(False)
-
-        ax.set(yticks = [], xticks = [], 
-               xlim = (-1,96), ylim = (0, 1.1* max(mean))
-            )  
-        ax.set_title(self.component_names[component], fontsize = fontsize)
 
         return ax
 
@@ -923,7 +860,7 @@ class LocusRegressor:
         )
 
         return np.array([
-            self.model_state._convert_beta_sstats_to_array(k, sstats, corpus.shape[1]).ravel()
+            self.model_state._convert_beta_sstats_to_array(k, sstats, corpus.locus_dim).ravel()
             for k in range(self.n_components)
         ])
 

@@ -1,11 +1,11 @@
+from ._cli_utils import *
 from .corpus import *
 from .corpus import logger as reader_logger
-from .model import LocusRegressor, load_model, logger, GBTRegressor
+from .model import load_model, logger
 from .model._importance_sampling import get_posterior_sample
 from .tuning import run_trial, create_study, load_study
 from .simulation import SimulatedCorpus, coef_l1_distance, signature_cosine_distance
 import argparse
-from argparse import ArgumentTypeError
 import os
 import sys
 import logging
@@ -16,9 +16,7 @@ import logging
 import warnings
 from matplotlib.pyplot import savefig
 from .explanation.explanation import explain
-from tempfile import NamedTemporaryFile
 from functools import partial
-import subprocess
 from joblib import Parallel, delayed
 import joblib
 import numpy as np
@@ -27,153 +25,16 @@ from optuna.exceptions import ExperimentalWarning
 warnings.filterwarnings("ignore", category=ExperimentalWarning)
 
 
-def get_corpusstate_cache_path(model_path, corpus_path):
-    return os.path.join(
-        os.path.dirname(corpus_path),
-        '.' + os.path.basename(corpus_path) + os.path.relpath(model_path, corpus_path)\
-            .replace('/','.')\
-            .replace(' ','') \
-        + '.corpusstate'
-    )
-
-
-def load_corpusstate_cache(model_path, corpus_path):
-    
-    cache_path = get_corpusstate_cache_path(model_path, corpus_path)
-
-    if not os.path.exists(cache_path):
-        print(cache_path)
-        raise FileNotFoundError(
-            f'A corpus state cache was not found for this model, corpus pairing: {model_path}, {corpus_path}.\n'
-            'You can generate on by using the following command:\n'
-            f'\t$ locusregression model-cache-sstats {model_path} -d {corpus_path}'
-        )
-
-    model_mtime = os.path.getmtime(model_path)
-    corpus_mtime = os.path.getmtime(corpus_path)
-    cache_mtime = os.path.getmtime(cache_path)
-
-    assert model_mtime > corpus_mtime, 'Model must have been trained after corpus was last modified.'
-    assert cache_mtime > model_mtime, 'Cache must have been created after model was trained'
-
-    # check if model was saved after corpus, and if path was saved after model
-    return joblib.load(cache_path)
-
-
-
-def transfer_annotations_vcf(
-        annotations_df,*,
-        vcf_file,
-        description, 
-        output, 
-        chr_prefix=''
-    ):
-
-    annotations_df = annotations_df.copy()
-
-    annotations_df['CHROM'] = annotations_df.CHROM.str.removeprefix(chr_prefix)
-    annotations_df['POS'] = annotations_df.POS + 1 #switch to 1-based from 0-based indexing
-    annotations_df = annotations_df.sort_values(['CHROM','POS'])
-
-    transfer_columns = ','.join(['CHROM','POS'] + list(map(lambda c : 'INFO/' + c, annotations_df.columns[2:])))
-
-    with NamedTemporaryFile() as header, \
-        NamedTemporaryFile(delete=False) as dataframe:
-
-        with open(header.name, 'w') as f:
-            for col in annotations_df.columns[2:]:
-                print(
-                    f'##INFO=<ID={col},Number=1,Type=Float,Description="{description}">',
-                    file = f,
-                    sep = '\n',
-                )
-
-            annotations_df.to_csv(dataframe.name, index = None, sep = '\t', header = None)
-
-        try:    
-            subprocess.check_output(['bgzip','-f',dataframe.name])
-            subprocess.check_output(['tabix','-s1','-b2','-e2', '-f', dataframe.name + '.gz'])
-
-            subprocess.check_output(
-                ['bcftools','annotate',
-                '-a',  dataframe.name + '.gz',
-                '-h', header.name,
-                '-c', transfer_columns,
-                '-o', output,
-                vcf_file,
-                ]
-            )
-        
-        finally:
-            os.remove(dataframe.name + '.gz')
-            os.remove(dataframe.name + '.gz.tbi')
-
-
-def posint(x):
-    x = int(x)
-
-    if x > 0:
-        return x
-    else:
-        raise ArgumentTypeError('Must be positive integer.')
-
-
-def posfloat(x):
-    x = float(x)
-    if x > 0:
-        return x
-    else:
-        raise ArgumentTypeError('Must be positive float.')
-
-
-def file_exists(x):
-    if os.path.exists(x):
-        return x
-    else:
-        raise ArgumentTypeError('File {} does not exist.'.format(x))
-
-def valid_path(x):
-    if not os.access(x, os.W_OK):
-        
-        try:
-            open(x, 'w').close()
-            os.unlink(x)
-            return x
-        except OSError as err:
-            raise ArgumentTypeError('File {} cannot be written. Invalid path.'.format(x)) from err
-    
-    return x
-
-
-def _load_dataset(corpuses):
-
-    if len(corpuses) == 1:
-        dataset = stream_corpus(corpuses[0])
-    else:
-        dataset = MetaCorpus(*[
-            stream_corpus(corpus) for corpus in corpuses
-        ])
-
-    return dataset
-
-
-def _get_basemodel(model_type):
-
-    if model_type == 'linear':
-        basemodel = LocusRegressor
-    elif model_type == 'gbt':
-        basemodel = GBTRegressor
-    else:
-        raise ValueError(f'Unknown model type {model_type}')
-
-    return basemodel
-
-
-
 parser = argparse.ArgumentParser(
     formatter_class=argparse.ArgumentDefaultsHelpFormatter,
 )
 subparsers = parser.add_subparsers(help = 'Commands')
+
+
+rainfall_parser = subparsers.add_parser('get-rainfall', help = 'Calculate the rainfall statistic for a given VCF file.')
+rainfall_parser.add_argument('vcf_file', type = file_exists)
+rainfall_parser.add_argument('--output','-o', type = argparse.FileType('w'), default=sys.stdout)
+rainfall_parser.set_defaults(func = get_rainfall_statistic)
 
 
 def make_windows_wrapper(*,categorical_features, **kw):
@@ -196,7 +57,7 @@ trinuc_sub.add_argument('--fasta-file','-fa', type = file_exists, required = Tru
 trinuc_sub.add_argument('--regions-file','-r', type = file_exists, required = True)
 trinuc_sub.add_argument('--n-jobs','-j', type = posint, default = 1, help = 'Number of parallel processes to use. Currently does nothing.')
 trinuc_sub.add_argument('--output','-o', type = valid_path, required = True, help = 'Where to save compiled corpus.')
-trinuc_sub.set_defaults(func = CorpusReader.create_trinuc_file)
+trinuc_sub.set_defaults(func = SBSCorpusMaker.create_trinuc_file)
 
 
 def process_bigwig(group='all',
@@ -428,18 +289,6 @@ empirical_mutrate_parser.add_argument('--output', '-o', type = argparse.FileType
 empirical_mutrate_parser.set_defaults(func = empirical_mutation_rate)
 
 
-def _overwrite_features_helper(*, corpus, correlates_file):
-    features, feature_names = CorpusReader.read_correlates(correlates_file)
-    overwrite_corpus_features(corpus, features.T, feature_names)
-
-overwrite_features_parser = subparsers.add_parser('corpus-overwrite-features',
-    help = 'Overwrite the feature matrix of a corpus with a new one.'
-)
-overwrite_features_parser.add_argument('corpus', type = file_exists)
-overwrite_features_parser.add_argument('--correlates-file','-c', type = file_exists, required=True,
-                                       help = 'TSV file of genomic correlates. The first line must be column names which start with "#".')
-overwrite_features_parser.set_defaults(func = _overwrite_features_helper)
-
 
 tune_sub = subparsers.add_parser('study-create', 
     help = 'Tune number of signatures for LocusRegression model on a pre-compiled corpus using the'
@@ -538,7 +387,7 @@ def retrain_best(trial_num = None,
     model_params = attrs['model_params']
     model_params.update(best_trial.params)
 
-    basemodel = _get_basemodel(attrs["model_type"])
+    basemodel = get_basemodel(attrs["model_type"])
     
     print(
         'Training model with params:\n' + \
@@ -598,7 +447,7 @@ def train_model(
         output,
     ):
 
-    basemodel = _get_basemodel(model_type)
+    basemodel = get_basemodel(model_type)
     
     model = basemodel(
         fix_signatures=fix_signatures,
@@ -624,7 +473,7 @@ def train_model(
     logging.basicConfig(level=logging.INFO)
     logger.setLevel(logging.INFO)
 
-    dataset = _load_dataset(corpuses)
+    dataset = load_dataset(corpuses)
     
     model.fit(dataset)
     
@@ -679,7 +528,7 @@ trainer_sub.set_defaults(func = train_model)
 
 def score(*,model, corpuses):
 
-    dataset = _load_dataset(corpuses)
+    dataset = load_dataset(corpuses)
 
     model = load_model(model)
 
@@ -696,7 +545,7 @@ score_parser.set_defaults(func = score)
 
 def predict(*,model, corpuses, output):
 
-    dataset = _load_dataset(corpuses)
+    dataset = load_dataset(corpuses)
 
     model = load_model(model)
 
@@ -752,7 +601,7 @@ list_corpuses_parser.set_defaults(func = list_corpuses)
 def get_mutation_rate_r2(*, model, corpuses):
 
     model = load_model(model)
-    dataset = _load_dataset(corpuses)
+    dataset = load_dataset(corpuses)
     
     print(
         model.get_mutation_rate_r2(dataset),
@@ -770,7 +619,7 @@ mutrate_r2_parser.set_defaults(func = get_mutation_rate_r2)
 def explain_wrapper(n_jobs=1,*,signature, model, corpuses, output):
     
     model = load_model(model)
-    dataset = _load_dataset(corpuses)
+    dataset = load_dataset(corpuses)
 
     results = explain(signature,
             model = model,
@@ -824,7 +673,7 @@ def _write_posterior_annotated_vcf(
     component_names,
     ):
 
-    sample = CorpusReader.ingest_sample(
+    sample = SBSCorpusMaker.ingest_sample(
                     input_vcf, 
                     regions_file=regions_file,
                     fasta_file=fasta_file,
@@ -840,7 +689,7 @@ def _write_posterior_annotated_vcf(
                         n_iters=5000,
                     )
 
-    transfer_annotations_vcf(
+    transfer_annotations_to_vcf(
         posterior_df,
         vcf_file=input_vcf,
         description='Log-probability under the posterior that the mutation was generated by this process.', 
@@ -1045,15 +894,6 @@ assign_corpus_mutation_parser.add_argument('--anneal-steps','-steps', type = pos
 assign_corpus_mutation_parser.set_defaults(func = assign_corpus_mutation)
 '''
 
-
-code_sub = subparsers.add_parser('code-sbs')
-code_sub.set_defaults(func = code_SBS_mutation)
-code_sub.add_argument('--query-file','-query', type = argparse.FileType('r'), default=sys.stdin)
-code_sub.add_argument('--fasta-file','-fa', type = file_exists, required=True)
-code_sub.add_argument('--output','-o', type = argparse.FileType('w'), default=sys.stdout)
-code_sub.add_argument('--chr-prefix', type = str, default = '')
-
-
 def run_simulation(*,config, prefix):
     
     with open(config, 'rb') as f:
@@ -1073,6 +913,7 @@ def run_simulation(*,config, prefix):
     with open(params_path, 'wb') as f:
         pickle.dump(generative_parameters, f)
     
+
 
 def simulate_from_model(*, model, corpus, output, 
                         seed=0, 

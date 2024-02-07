@@ -59,6 +59,8 @@ def make_continous_features_bedgraph(*,
                 null = 'nan',
             ):
     
+    raise NotImplementedError('This function is not implemented yet')
+    
     check_regions_file(regions_file)
 
     if extend is not None:

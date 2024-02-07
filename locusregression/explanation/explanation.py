@@ -48,7 +48,7 @@ def explain(
         check_additivity=False
     )
 
-    num_chunks = corpus.shape[1] // chunk_size + 1
+    num_chunks = corpus.locus_dim // chunk_size + 1
 
     shap_values = vstack(
         Parallel(n_jobs=n_jobs, verbose=10)(

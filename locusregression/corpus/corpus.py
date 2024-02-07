@@ -3,33 +3,47 @@ from abc import ABC, abstractmethod
 from collections import defaultdict
 import h5py as h5
 import logging
-from .sbs_sample import SBSSample
+from .sample import Sample, SampleLoader, InMemorySamples
+from .sbs_observation_config import SBSSample
 from tqdm import trange
 logger = logging.getLogger('Corpus')
+
 
 class CorpusMixin(ABC):
 
     def __init__(self,
         metadata = {},*,
+        type,
         name,
         samples,
         features,
-        trinuc_distributions,
+        context_frequencies,
         shared_exposures,
     ):
+        self.type=type
         self.name = name
         self.samples = samples
         self.features = features
-        self.trinuc_distributions = trinuc_distributions
+        self.context_frequencies = context_frequencies
         self._shared_exposures = shared_exposures
         self.metadata = metadata
 
         if self._shared_exposures:
             self._exposures = samples[0].exposures
 
+    @abstractmethod
+    def observation_class(self):
+        raise NotImplementedError()
+
     @property
     def shape(self):
-        return (len(self.features), len(next(iter(self.features.values()))['values']))
+        return {
+            'context_dim' : self.context_dim,
+            'mutation_dim' : self.mutation_dim,
+            'attribute_dim' : self.attribute_dim,
+            'locus_dim' : self.locus_dim,
+            'feature_dim' : self.feature_dim,
+        }
     
     @property
     def feature_names(self):
@@ -80,191 +94,49 @@ class CorpusMixin(ABC):
         raise NotImplementedError()
 
 
-
-class SampleLoader:
-
-    def __init__(self, filename, subset_idx = None):
-        
-        self.filename = filename
-        
-        if subset_idx is None:
-            
-            with h5.File(self.filename, 'r') as f:
-                n_samples = len(f['samples'].keys())
-
-            subset_idx = list(range(n_samples))
-        
-        self.subset_idx = subset_idx
-
-
-    def __len__(self):
-        return len(self.subset_idx)
-
-
-    def _read_item(self, h5, idx):
-        return SBSSample.read_h5_dataset(h5, f'samples/{idx}')
-
-
-    def __iter__(self):
-
-        with h5.File(self.filename, 'r') as f:
-            for i in self.subset_idx:
-                yield self._read_item(f,i)
-        
-
-    def __getitem__(self, idx):
-        
-        idx = self.subset_idx[idx]
-
-        with h5.File(self.filename, 'r') as f:
-            return self._read_item(f, idx)
-
-
-    def subset(self, idx_list):
-        return SampleLoader(self.filename, [self.subset_idx[i] for i in idx_list])
-
-
-class InMemorySamples(list):
-
-    def subset(self, idx_list):
-        return InMemorySamples([self[i] for i in idx_list])
-
-
-def save_corpus(corpus, filename):
-
-    with h5.File(filename, 'w') as f:
-        
-        data_group = f.create_group('data')
-        data_group.attrs['shared_exposures'] = corpus.shared_exposures
-        data_group.attrs['name'] = corpus.name
-        
-        metadata_group = f.create_group('metadata')
-        for key, val in corpus.metadata.items():
-            metadata_group.attrs[key] = val
-
-        data_group.create_dataset('trinuc_distributions', data = corpus.trinuc_distributions)
-        features_group = data_group.create_group('features')
-
-        for feature_name, feature in corpus.features.items():
-            
-            logger.debug(f'Saving correlate: {feature_name} ...')
-            
-            feature_group = features_group.create_group(feature_name)
-            feature_group.attrs['type'] = feature['type']
-            feature_group.attrs['group'] = feature['group']
-
-            if np.issubdtype(feature['values'].dtype, np.str_):
-                feature['values'] = feature['values'].astype('S')
-            
-            feature_group.create_dataset('values', data = feature['values'])
-
-        samples_group = f.create_group('samples')
-
-        for i, sample in enumerate(corpus.samples):
-            sample.create_h5_dataset(samples_group, str(i))
-
-
-def _read_features(data):
-
-    features = {}
-    feature_groups = data['data/features']
-    
-    for feature_name in feature_groups.keys():
-        feature_group = feature_groups[feature_name]
-        features[feature_name] = {
-            'type' : feature_group.attrs['type'],
-            'group' : feature_group.attrs['group'],
-            'values' : feature_group['values'][...],
-        }
-
-    return features
-
-
-def _load_corpus(filename, sample_obj):
-
-    with h5.File(filename, 'r') as f:
-
-        is_shared = f['data'].attrs['shared_exposures']
-
-        if 'metadata' in f.keys():
-            metadata = {
-                key : val for key, val in f['metadata'].attrs.items()
-            }
-        else:
-            metadata = {}
-
-
-        return Corpus(
-            trinuc_distributions = f['data/trinuc_distributions'][...],
-            features = _read_features(f),
-            samples = sample_obj,
-            shared_exposures=is_shared,
-            name = f['data'].attrs['name'],
-            metadata=metadata
-        )
-
-
-
-def load_corpus(filename):
-
-    with h5.File(filename, 'r') as f:
-        samples = InMemorySamples([
-            SBSSample.read_h5_dataset(f, f'samples/{i}')
-            for i in range(len(f['samples'].keys()))
-        ])
-
-    return _load_corpus(
-        filename,
-        samples,
-    )
-    
-
-def stream_corpus(filename):
-
-    return _load_corpus(
-        filename,
-        SampleLoader(filename)
-    )
-
-
-
-def train_test_split(corpus, seed = 0, train_size = 0.7,
-                     by_locus = False):
-
-    randomstate = np.random.RandomState(seed)
-
-    N = len(corpus) if not by_locus else corpus.shape[1]
-    subset_fn = corpus.subset_samples if not by_locus else corpus.subset_loci
-
-    train_idx = sorted(randomstate.choice(
-                N, size = int(train_size * N), replace=False
-            ))
-    
-    test_idx = sorted(list( set(range(N)).difference(set(train_idx)) )) 
-
-    return subset_fn(train_idx), subset_fn(test_idx)
-
-
-
-class dotdict(dict):
-    """dot.notation access to dictionary attributes"""
-    __getattr__ = dict.get
-    __setattr__ = dict.__setitem__
-    __delattr__ = dict.__delitem__
-
-
 class Corpus(CorpusMixin):
+
+    @classmethod
+    def _get_observation_class(cls, classname):
+        if classname.lower() == 'sbs':
+            return SBSSample
+        else:
+            raise ValueError(f'Unknown corpus type {classname}')
+
+    @property
+    def observation_class(self):
+        return self._get_observation_class(self.type)        
+        
+    @property
+    def context_dim(self):
+        return self.observation_class.N_CONTEXTS
+    
+    @property
+    def mutation_dim(self):
+        return self.observation_class.N_MUTATIONS
+    
+    @property
+    def attribute_dim(self):
+        return self.observation_class.N_ATTRIBUTES
+    
+    @property
+    def locus_dim(self):
+        return len(next(iter(self.features.values()))['values'])
+    
+    @property
+    def feature_dim(self):
+        return len(self.features)
+
 
     def __len__(self):
         return len(self.samples)
 
 
     def __getitem__(self, idx):
-        
-        return dotdict({
-            **self.samples[idx].asdict(),
-            'corpus_name' : self.name
-        })
+        sample = self.samples[idx]
+        sample.corpus_name = self.name
+
+        return sample
 
 
     def __iter__(self):
@@ -288,9 +160,10 @@ class Corpus(CorpusMixin):
     def subset_samples(self, subset_idx):
 
         return Corpus(
+            type = self.type,
             samples = self.samples.subset(subset_idx),
             features=self.features,
-            trinuc_distributions = self.trinuc_distributions,
+            context_frequencies = self.context_frequencies,
             shared_exposures = self.shared_exposures,
             name = self.name,
         )
@@ -300,7 +173,7 @@ class Corpus(CorpusMixin):
 
         subsample_lookup = dict(zip(loci, np.arange(len(loci)).astype(int)))
         
-        bool_array = np.zeros(self.shape[1]).astype(bool)
+        bool_array = np.zeros(self.shape['locus_dim']).astype(bool)
         bool_array[loci] = True
 
         #total_mutations = 0
@@ -309,11 +182,12 @@ class Corpus(CorpusMixin):
                         
             mask = bool_array[sample.locus]
 
-            new_sample = SBSSample(**{
+            new_sample = self.observation_class(**{
+                'attribute' : sample.attribute[mask],
                 'mutation' : sample.mutation[mask],
                 'context' : sample.context[mask],
                 'weight' : sample.weight[mask],
-                'locus' : np.array([subsample_lookup[locus] for locus in sample.locus[mask]]).astype(int), 
+                'locus' : np.array([subsample_lookup[locus] for locus in sample.locus[mask]]).astype(int),
                 'chrom' : sample.chrom[mask],
                 'pos' : sample.pos[mask],
                 'exposures' : sample.exposures[:,loci],   
@@ -322,6 +196,7 @@ class Corpus(CorpusMixin):
             new_samples.append(new_sample)
         
         return Corpus(
+            type = self.type,
             samples = InMemorySamples(new_samples),
             features = {
                 feature_name : {
@@ -331,7 +206,7 @@ class Corpus(CorpusMixin):
                 }
                 for feature_name, v in self.features.items()
             },
-            trinuc_distributions = self.trinuc_distributions[:,loci],
+            context_frequencies = self.context_frequencies[:,loci],
             shared_exposures = self.shared_exposures,
             name = self.name,
         )
@@ -371,6 +246,11 @@ class MetaCorpus(CorpusMixin):
         )
 
     @property
+    def observation_class(self):
+        return self.corpuses[0].observation_class
+    
+
+    @property
     def corpuses(self):
         return self._corpuses
 
@@ -381,6 +261,14 @@ class MetaCorpus(CorpusMixin):
     @property
     def shape(self):
         return self.corpuses[0].shape
+    
+    @property
+    def feature_dim(self):
+        return self.corpuses[0].feature_dim
+    
+    @property
+    def locus_dim(self):
+        return self.corpuses[0].locus_dim
     
     @property
     def corpus_names(self):
@@ -435,6 +323,7 @@ class MetaCorpus(CorpusMixin):
             corpus.subset_loci(loci) for corpus in self.corpuses
         ])
     
+
     def get_corpus(self, name):
         
         for corpus in self.corpuses:
@@ -448,9 +337,135 @@ class MetaCorpus(CorpusMixin):
         return False
     
     @property
-    def trinuc_distributions(self):
-        return self.corpuses[0].trinuc_distributions
+    def context_frequencies(self):
+        return self.corpuses[0].context_frequencies
 
     @property
     def feature_names(self):
         return self.corpuses[0].feature_names
+
+
+
+def save_corpus(corpus, filename):
+
+    with h5.File(filename, 'w') as f:
+        
+        data_group = f.create_group('data')
+        data_group.attrs['shared_exposures'] = corpus.shared_exposures
+        data_group.attrs['name'] = corpus.name
+        data_group.attrs['type'] = corpus.type
+        
+        metadata_group = f.create_group('metadata')
+        for key, val in corpus.metadata.items():
+            metadata_group.attrs[key] = val
+
+        data_group.create_dataset('context_frequencies', data = corpus.context_frequencies)
+        features_group = data_group.create_group('features')
+
+        for feature_name, feature in corpus.features.items():
+            
+            logger.debug(f'Saving correlate: {feature_name} ...')
+            
+            feature_group = features_group.create_group(feature_name)
+            feature_group.attrs['type'] = feature['type']
+            feature_group.attrs['group'] = feature['group']
+
+            if np.issubdtype(feature['values'].dtype, np.str_):
+                feature['values'] = feature['values'].astype('S')
+            
+            feature_group.create_dataset('values', data = feature['values'])
+
+        samples_group = f.create_group('samples')
+
+        for i, sample in enumerate(corpus.samples):
+            sample.create_h5_dataset(samples_group, str(i))
+
+
+def _peek_type(filename):
+    
+    with h5.File(filename, 'r') as f:
+        return Corpus._get_observation_class(f['data'].attrs['type'])
+
+
+def _read_features(data):
+
+    features = {}
+    feature_groups = data['data/features']
+    
+    for feature_name in feature_groups.keys():
+        feature_group = feature_groups[feature_name]
+        features[feature_name] = {
+            'type' : feature_group.attrs['type'],
+            'group' : feature_group.attrs['group'],
+            'values' : feature_group['values'][...],
+        }
+
+    return features
+
+
+def _load_corpus(filename, sample_obj):
+
+    with h5.File(filename, 'r') as f:
+
+        is_shared = f['data'].attrs['shared_exposures']
+
+        if 'metadata' in f.keys():
+            metadata = {
+                key : val for key, val in f['metadata'].attrs.items()
+            }
+        else:
+            metadata = {}
+
+
+        return Corpus(
+            type = f['data'].attrs['type'],
+            context_frequencies = f['data/context_frequencies'][...],
+            features = _read_features(f),
+            samples = sample_obj,
+            shared_exposures=is_shared,
+            name = f['data'].attrs['name'],
+            metadata=metadata
+        )
+
+
+
+def load_corpus(filename):
+
+    sample_type = _peek_type(filename)
+
+    with h5.File(filename, 'r') as f:
+        samples = InMemorySamples([
+            sample_type.read_h5_dataset(f, f'samples/{i}')
+            for i in range(len(f['samples'].keys()))
+        ])
+
+    return _load_corpus(
+        filename,
+        samples,
+    )
+    
+
+def stream_corpus(filename):
+
+    return _load_corpus(
+        filename,
+        SampleLoader(filename, observation_class=_peek_type(filename)
+)
+    )
+
+
+def train_test_split(corpus, seed = 0, train_size = 0.7,
+                     by_locus = False):
+
+    randomstate = np.random.RandomState(seed)
+
+    N = len(corpus) if not by_locus else corpus.locus_dim
+    subset_fn = corpus.subset_samples if not by_locus else corpus.subset_loci
+
+    train_idx = sorted(randomstate.choice(
+                N, size = int(train_size * N), replace=False
+            ))
+    
+    test_idx = sorted(list( set(range(N)).difference(set(train_idx)) )) 
+
+    return subset_fn(train_idx), subset_fn(test_idx)

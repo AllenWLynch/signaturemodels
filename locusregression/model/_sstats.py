@@ -38,49 +38,48 @@ class CorpusSstats:
 
     def __init__(self, model_state):
 
-        self._mutation_sstats =  np.zeros_like(model_state.omega)
-        self._context_sstats = np.zeros_like(model_state.delta)
-        self._locus_sstats = defaultdict(lambda : np.zeros(model_state.n_components))
+        self.mutation_sstats =  np.zeros_like(model_state.omega)
+        self.context_sstats = np.zeros_like(model_state.delta)
+        self.locus_sstats = defaultdict(lambda : np.zeros(model_state.n_components))
         self._alpha_sstats = []
-        self._beta_sstats = []
-        self._exposures = []
+        self.exposures = []
 
+    
+    def _convert_beta_sstats_to_array(self, k, n_bins):
+        arr = np.zeros(n_bins)
+        for l,v in self.locus_sstats.items():
+            arr[l] = v[k]
+        return arr
+        
         
     def __add__(self, sstats):
 
-        self._mutation_sstats += sstats.mutation_sstats
-        self._context_sstats += sstats.context_sstats
+        self.mutation_sstats += sstats.mutation_sstats
+        self.context_sstats += sstats.context_sstats
         self._alpha_sstats.append(sstats.gamma)
 
         for locus, stat in sstats.locus_sstats.items():
-            self._locus_sstats[locus] += stat
+            self.locus_sstats[locus] += stat
 
         #if not self.corpus.shared_exposures:
         #    self._beta_sstats.append(sstats.locus_sstats)
         #    self._exposures.append(sstats.exposures)
 
         return self
-
-
-    @property
-    def mutation_sstats(self):
-        return self._mutation_sstats
     
-    @property
-    def context_sstats(self):
-        return self._context_sstats
+
+    def beta_sstats(self, k, n_bins):
+        return self._convert_beta_sstats_to_array(k, n_bins)
     
+    def lambda_sstats(self, k):
+        return self.context_sstats[k]
+    
+    def rho_sstats(self, k):
+        return self.mutation_sstats[k]
+
     @property
     def alpha_sstats(self):
-        return self._alpha_sstats
-    
-    @property
-    def beta_sstats(self):
-        return [self._locus_sstats] #if self.corpus.shared_exposures else self._beta_sstats
-    
-    @property
-    def locus_sstats(self):
-        return self._locus_sstats
+        return np.array(self._alpha_sstats)
     
 
 
@@ -95,8 +94,26 @@ class MetaSstats:
     '''
 
     def __init__(self, corpus_sstats):
+
+        first_corpus = list(corpus_sstats.values())[0]
+        self.mutation_sstats =  np.zeros_like(first_corpus.mutation_sstats)
+        self.context_sstats = np.zeros_like(first_corpus.context_sstats)
+
+        for corpus in corpus_sstats.values():
+            self.mutation_sstats += corpus.mutation_sstats
+            self.context_sstats += corpus.context_sstats
+            
+        self.sstats = corpus_sstats
+
+
+    def __getitem__(self, key):
+        return self.sstats[key]
+    
+
+    def rho_sstats(self, k):
+        return self.mutation_sstats[k]
         
-        self.corpus_names = list(corpus_sstats.keys())
+        '''self.corpus_names = list(corpus_sstats.keys())
         self.beta_sstats = [betas for stats in corpus_sstats.values() for betas in stats.beta_sstats]
         
         self.alpha_sstats = {
@@ -104,11 +121,9 @@ class MetaSstats:
             for corpus_name, stats in corpus_sstats.items()
         }
         
-        first_corpus = list(corpus_sstats.values())[0]
-        self.mutation_sstats =  np.zeros_like(first_corpus._mutation_sstats)
-        self.context_sstats = np.zeros_like(first_corpus._context_sstats)
-
-        for corpus in corpus_sstats.values():
-            self.mutation_sstats += corpus.mutation_sstats
-            self.context_sstats += corpus.context_sstats
+        # is shape I x K x C
+        self.context_sstats = np.array([stats.context_sstats for stats in corpus_sstats.values()]) #np.zeros_like(first_corpus.context_sstats)'''
+        
+        
+        #self.context_sstats += corpus.context_sstats
             
