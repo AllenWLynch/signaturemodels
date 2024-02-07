@@ -51,7 +51,7 @@ class SBSCorpusMaker:
             n_jobs = 1,
         ):
 
-        windows = cls.read_windows(regions_file, None, sep = '\t')
+        windows = cls.read_windows(regions_file, sep = '\t')
 
         context_frequencies = cls.get_trinucleotide_distributions(
                     windows, fasta_file, n_jobs=n_jobs
@@ -82,7 +82,7 @@ class SBSCorpusMaker:
                 'If providing exposure files, provide one for the whole corpus, or one per sample.'
             
 
-        windows = cls.read_windows(regions_file, None, sep = '\t')
+        windows = cls.read_windows(regions_file, sep = '\t')
 
         if len(exposure_files) > 0:
             exposures = cls.collect_exposures(exposure_files, windows)
@@ -360,7 +360,7 @@ class SBSCorpusMaker:
     
 
     @staticmethod
-    def read_windows(regions_file, genome_object, sep = '\t'):
+    def read_windows(regions_file, sep = '\t'):
 
         def parse_bed12_line(line):
             chromosome, start, end, name, score, strand, thick_start, thick_end, item_rgb, block_count, block_sizes, block_starts = line.strip().split('\t')
@@ -372,7 +372,7 @@ class SBSCorpusMaker:
                 start=int(start),
                 end=int(end),
                 name=name,
-                score=int(score),
+                score=float(score),
                 strand=strand,
                 thick_start=int(thick_start),
                 thick_end=int(thick_end),
@@ -383,8 +383,6 @@ class SBSCorpusMaker:
             )
 
         check_regions_file(regions_file)
-        
-        logger.info('Reading windows ...')
         
         windows = []
         with open(regions_file, 'r') as f:
@@ -501,7 +499,7 @@ class SBSCorpusMaker:
                     fasta_file,
                     ):
             
-        windows = cls.read_windows(regions_file, None, sep = '\t')
+        windows = cls.read_windows(regions_file, sep = '\t')
 
         if not exposure_file is None:
             exposures = cls.collect_exposures(exposure_file, windows)
