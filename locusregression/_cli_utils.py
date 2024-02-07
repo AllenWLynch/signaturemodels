@@ -40,67 +40,7 @@ def load_corpusstate_cache(model_path, corpus_path):
     return joblib.load(cache_path)
 
 
-def transfer_annotations_to_vcf(
-        annotations_df,*,
-        vcf_file,
-        description, 
-        output, 
-        chr_prefix=''
-    ):
 
-    annotations_df = annotations_df.copy()
-
-    assert 'CHROM' in annotations_df.columns, 'Annotations must have a column named "CHROM".'
-    assert 'POS' in annotations_df.columns, 'Annotations must have a column named "POS".'
-
-    annotations_df['CHROM'] = annotations_df.CHROM.str.removeprefix(chr_prefix)
-    annotations_df['POS'] = annotations_df.POS + 1 #switch to 1-based from 0-based indexing
-    annotations_df = annotations_df.sort_values(['CHROM','POS'])
-
-    transfer_columns = ','.join(['CHROM','POS'] + ['INFO/' + c for c in annotations_df.columns if not c in ['CHROM','POS']])
-
-    with NamedTemporaryFile() as header, \
-        NamedTemporaryFile(delete=False) as dataframe:
-
-        with open(header.name, 'w') as f:
-            for col in annotations_df.columns:
-                
-                if col in ['CHROM','POS']:
-                    continue
-                
-                dtype = str(annotations_df[col].dtype)
-                if dtype.startswith('int'):
-                    dtype = 'Integer'
-                elif dtype.startswith('float'):
-                    dtype = 'Float'
-                else:
-                    dtype = 'String'
-
-                print(
-                    f'##INFO=<ID={col},Number=1,Type={dtype},Description="{description}">',
-                    file = f,
-                    sep = '\n',
-                )
-
-            annotations_df.to_csv(dataframe.name, index = None, sep = '\t', header = None)
-
-        try:    
-            subprocess.check_output(['bgzip','-f',dataframe.name])
-            subprocess.check_output(['tabix','-s1','-b2','-e2', '-f', dataframe.name + '.gz'])
-
-            subprocess.check_output(
-                ['bcftools','annotate',
-                '-a',  dataframe.name + '.gz',
-                '-h', header.name,
-                '-c', transfer_columns,
-                '-o', output,
-                vcf_file,
-                ]
-            )
-        
-        finally:
-            os.remove(dataframe.name + '.gz')
-            os.remove(dataframe.name + '.gz.tbi')
 
 
 def posint(x):

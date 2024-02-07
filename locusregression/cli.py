@@ -1,6 +1,7 @@
 from ._cli_utils import *
 from .corpus import *
 from .corpus import logger as reader_logger
+from .mutation_preprocessing import get_rainfall_statistic
 from .model import load_model, logger
 from .model._importance_sampling import get_posterior_sample
 from .tuning import run_trial, create_study, load_study
