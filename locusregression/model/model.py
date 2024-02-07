@@ -687,7 +687,7 @@ class LocusRegressor:
         return np.log( self.model_state.delta @ corpus.trinuc_distributions )
 
 
-    def get_log_component_mutation_rate(self, corpus):
+    def get_log_component_mutation_rate(self, corpus, use_context=True):
         '''
         For a sample, calculate the psi matrix - For each component, the distribution over loci.
 
@@ -709,7 +709,7 @@ class LocusRegressor:
         new_state.update_mutation_rate(self.model_state, from_scratch = True)
 
         return new_state.get_log_component_effect_rate(
-                    self.model_state, new_state.exposures
+                    self.model_state, new_state.exposures, use_context=use_context,
                 )
 
 
