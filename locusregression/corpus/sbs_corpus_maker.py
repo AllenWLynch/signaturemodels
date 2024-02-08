@@ -7,7 +7,7 @@ import logging
 import tqdm
 from .sbs_observation_config import SBSSample, MUTATIONS_IDX, CONTEXT_IDX, CONTEXTS
 import subprocess
-import tempfile
+import sys
 from .make_windows import check_regions_file
 import os
 from joblib import Parallel, delayed
@@ -16,6 +16,39 @@ from dataclasses import dataclass
 from dataclasses import dataclass
 logger = logging.getLogger('DataReader')
 logger.setLevel(logging.INFO)
+
+
+def get_passed_SNVs(vcf_file, query_string, 
+                    output=subprocess.PIPE,
+                    sample=None,):
+    
+    filter_basecmd = [
+        'bcftools','view',
+        '-f','PASS',
+        '-v','snps'
+    ]
+    
+    if not sample is None:
+        filter_basecmd += ['-s', sample]
+
+    filter_process = subprocess.Popen(
+                filter_basecmd + [vcf_file],
+                stdout = subprocess.PIPE,
+                universal_newlines=True,
+                bufsize=10000,
+                stderr = sys.stderr,
+            )
+        
+    query_process = subprocess.Popen(
+        ['bcftools','query','-f', query_string],
+        stdin = filter_process.stdout,
+        stdout = output,
+        stderr = sys.stderr,
+        universal_newlines=True,
+        bufsize=10000,
+    )
+
+    return query_process
 
    
 @dataclass
@@ -175,23 +208,13 @@ class SBSCorpusMaker:
                 'weight' : float(weight),
                 'pos' : int(pos),
             }
+        
 
-        filter_process = subprocess.Popen(
-            ['bcftools','view','-f','PASS','-v','snps', vcf_file],
-            stdout = subprocess.PIPE,
-            universal_newlines=True,
-            bufsize=10000,
-            stderr = subprocess.DEVNULL,
-        )
-            
-        query_process = subprocess.Popen(
-            ['bcftools','query','-f', chr_prefix + '%CHROM\t%POS0\t%POS0\t%POS0|%REF|%ALT|' \
-                + ('1' if weight_col is None else f'%INFO/{weight_col}') + '\n'],
-            stdin = filter_process.stdout,
-            stdout = subprocess.PIPE,
-            universal_newlines=True,
-            bufsize=10000,
-        )
+        query_process = get_passed_SNVs(vcf_file,
+                                        chr_prefix + '%CHROM\t%POS0\t%POS0\t%POS0|%REF|%ALT|' \
+                                            + ('1' if weight_col is None else f'%INFO/{weight_col}') + '\n',
+                                        )
+                                        
 
         intersect_process = subprocess.Popen(
             ['bedtools',
