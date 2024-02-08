@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 
-import sys
 import subprocess
 import tempfile
 import os
 import tqdm
 import pandas as pd
 import logging
-from scipy.stats import expon
-from locusregression.corpus import SBSCorpusMaker
+from scipy.stats import expon, chi2_contingency
+from locusregression.corpus import SBSCorpusMaker, get_passed_SNVs
 import numpy as np
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(' Mutation preprocessing')
@@ -51,7 +50,7 @@ def transfer_annotations_to_vcf(
                     dtype = 'String'
 
                 print(
-                    f'##INFO=<ID={col},Number=1,Type={dtype},Description="{description.set_defaults(col, col)}">',
+                    f'##INFO=<ID={col},Number=1,Type={dtype},Description="{description.setdefault(col, col)}">',
                     file = f,
                     sep = '\n',
                 )
@@ -75,28 +74,6 @@ def transfer_annotations_to_vcf(
         finally:
             os.remove(dataframe.name + '.gz')
             os.remove(dataframe.name + '.gz.tbi')
-
-
-def get_passed_SNVs(vcf_file, query_string, output=subprocess.PIPE):
-
-    filter_process = subprocess.Popen(
-                ['bcftools','view','-f','PASS','-v','snps', vcf_file],
-                stdout = subprocess.PIPE,
-                universal_newlines=True,
-                bufsize=10000,
-                stderr = sys.stderr,
-            )
-        
-    query_process = subprocess.Popen(
-        ['bcftools','query','-f', query_string],
-        stdin = filter_process.stdout,
-        stdout = output,
-        stderr = sys.stderr,
-        universal_newlines=True,
-        bufsize=10000,
-    )
-
-    return query_process
 
 
 def unstack_bed12_file(
@@ -312,11 +289,20 @@ def _cluster_mutations(mutations_df,
         # 2. the distance to the previous mutation is greater than the critical distance
         # 4. the allele frequency is different - this means the mutations occured in different cells or at different times
 
+        def similar_VAF(rd1, vrd1, rd2, vrd2):
+            #return np.abs(vrd1/rd1 - vrd2/rd2) < AF_tol
+            return chi2_contingency([[rd1-vrd1, vrd1], [rd2-vrd2, vrd2]])[1] > 0.01
+        
+        vaf_is_similar = np.array([
+            similar_VAF(rd1, vrd1, rd2, vrd2)
+            for rd1, vrd1, rd2, vrd2 in zip(df.readDepth, df.variantReadDepth, df.readDepth.shift(1), df.variantReadDepth.shift(1))
+        ])
+
         ## TODO - clean up problem where a cluster is split by a variant with a different VAF? ##
         return (
           (df.CHROM.shift(1) != df.CHROM) \
         | (df.POS - df.POS.shift(1) > np.minimum(10000, df.criticalDistance.shift(1))) \
-        | ( np.abs(df.AF.shift(1) - df.AF) > AF_tol ) \
+        | ~vaf_is_similar \
         ).cumsum()
 
 
@@ -350,7 +336,7 @@ def _cluster_mutations(mutations_df,
         .set_index('cluster')\
         .join(cluster_size)\
         .reset_index()\
-        [['CHROM','POS','mutationType','negLog10interMutationDistanceRatio','clusterSize', 'cluster','AF','readDepth']]
+        [['CHROM','POS','mutationType','negLog10interMutationDistanceRatio','clusterSize', 'cluster']]
 
 
 
@@ -359,8 +345,8 @@ def get_mutation_clusters(mutation_rate_bedgraph, vcf_file,
                            chr_prefix='chr',
                            alpha = 0.005,
                            AF_tol = 0.1,
-                           use_mutation_type=True,*,
-                           weight_col
+                           sample=None,
+                           use_mutation_type=False,
                           ):
     '''
     A "cluster" of mutations should be 
@@ -368,6 +354,13 @@ def get_mutation_clusters(mutation_rate_bedgraph, vcf_file,
     2. Of the same type (e.g. C>A)
     3. Of the same allele frequency
     '''
+
+    num_samples = int( subprocess.check_output(f'bcftools query -l {vcf_file} | wc -l | cut -f1', shell=True)\
+                      .decode('utf-8').strip() )
+
+    if num_samples > 1:
+        assert not sample is None, 'The VCF file contains multiple samples. Please specify a sample to analyze.'
+
 
     with tempfile.NamedTemporaryFile() as rainfall_file, \
         tempfile.NamedTemporaryFile() as df:
@@ -385,7 +378,8 @@ def get_mutation_clusters(mutation_rate_bedgraph, vcf_file,
         # 2. get the mutation type and allele frequency
         #    from the VCF file
         query_process = get_passed_SNVs(vcf_file,
-                        f'{chr_prefix}%CHROM\t%POS0\t%POS0\t%REF>%ALT\t[%AF]\t60\n'
+                        f'{chr_prefix}%CHROM\t%POS0\t%POS0\t%REF>%ALT\t[%DP\t%AD{{1}}]\n',
+                        sample=sample,
                         )
         
         # 3. intersect the rainfall statistics with the mutation type and allele frequency
@@ -409,27 +403,38 @@ def get_mutation_clusters(mutation_rate_bedgraph, vcf_file,
         mutations_df = pd.read_csv(df.name, sep='\t', header=None)\
                 .iloc[:, [0,1,3,4,8,9,10]]
 
-        mutations_df.columns = ['CHROM','POS','localMutationRate','rainfallDistance','mutationType','AF','readDepth']
+        mutations_df.columns = ['CHROM','POS','localMutationRate','rainfallDistance','mutationType','readDepth','variantReadDepth']
         mutations_df = mutations_df[mutations_df.localMutationRate > 0]
-
-        mutations_df['AF'] = ('0.' + mutations_df.AF.str.split('.').str.get(1)).astype(float)
 
         mutations_df = _cluster_mutations(mutations_df, 
                                           alpha=alpha, 
                                           AF_tol=AF_tol, 
                                           use_mutation_type=use_mutation_type
-                                        )
+                                         )
         
         return mutations_df
 
 
 if __name__ == "__main__":
 
-    get_mutation_clusters(
-        'marginal_mutation_rate.bedgraph',
+    mutations_df = get_mutation_clusters(
+        'big_marginal_rate.bedgraph',
         'BR001.purple.somatic.filtered.vcf.gz',
         chr_prefix='chr',
-        weight_col='TCF',
         use_mutation_type=False,
-        AF_tol=0.25,
-    ).to_csv('rainfall_annotations.bed', sep = '\t', index=None)
+        AF_tol=0.1,
+        sample = 'BC_BR001_tumor',
+    )
+
+    transfer_annotations_to_vcf(
+        mutations_df,
+        vcf_file='BR001.purple.somatic.filtered.vcf.gz',
+        description = {
+            'mutationType' : 'The type of mutation (e.g. C>A)',
+            'negLog10interMutationDistanceRatio' : 'The negative log10 of the ratio of the inter-mutation distance to the critical distance',
+            'clusterSize' : 'The number of mutations in the cluster',
+            'cluster' : 'The mutation\'s cluster ID',
+        },
+        output = 'BR001.clustered.vcf.gz',
+        chr_prefix='chr',
+    )

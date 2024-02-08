@@ -1,7 +1,7 @@
 from ._cli_utils import *
 from .corpus import *
 from .corpus import logger as reader_logger
-from .mutation_preprocessing import get_rainfall_statistic
+from .mutation_preprocessing import get_marginal_mutation_rate, get_mutation_clusters, transfer_annotations_to_vcf
 from .model import load_model, logger
 from .model._importance_sampling import get_posterior_sample
 from .tuning import run_trial, create_study, load_study
@@ -32,10 +32,44 @@ parser = argparse.ArgumentParser(
 subparsers = parser.add_subparsers(help = 'Commands')
 
 
-rainfall_parser = subparsers.add_parser('get-rainfall', help = 'Calculate the rainfall statistic for a given VCF file.')
-rainfall_parser.add_argument('vcf_file', type = file_exists)
-rainfall_parser.add_argument('--output','-o', type = argparse.FileType('w'), default=sys.stdout)
-rainfall_parser.set_defaults(func = get_rainfall_statistic)
+prep_mutrate_parser = subparsers.add_parser('preprocess-estimate-mutrate', help = 'Calculate the marginal mutation rate across all samples for some corpus.')
+prep_mutrate_parser.add_argument('--vcf-files', '-vcfs', type = file_exists, nargs='+', required=True, help = 'List of VCF files containing SBS mutations.')
+prep_mutrate_parser.add_argument('--chr-prefix', default='', help = 'Prefix to append to chromosome names in VCF files.')
+prep_mutrate_parser.add_argument('--regions-file','-r', type = file_exists, required=True, help = 'Bed file of regions to calculate mutation rate over.')
+prep_mutrate_parser.add_argument('--output','-o', type = argparse.FileType('w'), default=sys.stdout)
+prep_mutrate_parser.set_defaults(func = get_marginal_mutation_rate)
+
+
+
+def get_mutation_clusters_wrapper(*,vcf_file, output, chr_prefix, sample, mutation_rate_bedgraph):
+    
+    mutations_df = get_mutation_clusters(
+        mutation_rate_bedgraph=mutation_rate_bedgraph,
+        vcf_file=vcf_file,
+        chr_prefix=chr_prefix,
+        sample=sample,
+    )
+
+    transfer_annotations_to_vcf(
+        mutations_df,
+        vcf_file=vcf_file,
+        description = {
+            'mutationType' : 'The type of mutation (e.g. C>A)',
+            'negLog10interMutationDistanceRatio' : 'The negative log10 of the ratio of the inter-mutation distance to the critical distance',
+            'clusterSize' : 'The number of mutations in the cluster',
+            'cluster' : 'The mutation\'s cluster ID',
+        },
+        output = output,
+        chr_prefix=chr_prefix,
+    )
+
+cluster_mutations_parser = subparsers.add_parser('preprocess-cluster-mutations', help = 'Cluster mutations in a VCF file.')
+cluster_mutations_parser.add_argument('vcf-file', type = file_exists)
+cluster_mutations_parser.add_argument('--mutation-rate-bedgraph','-m', type = file_exists, required=True, help = 'Bedgraph file of mutation rates.')
+cluster_mutations_parser.add_argument('--output','-o', type = valid_path, required=True, help = 'Where to save clustered VCF file.')
+cluster_mutations_parser.add_argument('--chr-prefix', default='', help = 'Prefix to append to chromosome names in VCF files.')
+cluster_mutations_parser.add_argument('--sample','-s', type = str, default=None, help = 'Sample name to filter mutations by.')
+cluster_mutations_parser.set_defaults(func = get_mutation_clusters_wrapper)
 
 
 def make_windows_wrapper(*,categorical_features, **kw):
@@ -197,7 +231,7 @@ def write_dataset(
     assert len(exposure_files) in [0,1, len(vcf_files)],\
         'User must provide zero, one, or the number of exposure files which matches the number of VCF files.'
 
-    dataset = CorpusReader.create_corpus(
+    dataset = SBSCorpusMaker.create_corpus(
         **shared_args, 
         weight_col = weight_col,
         exposure_files = exposure_files,
