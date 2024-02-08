@@ -1,7 +1,7 @@
 from ._cli_utils import *
 from .corpus import *
 from .corpus import logger as reader_logger
-from .mutation_preprocessing import get_marginal_mutation_rate, get_mutation_clusters, transfer_annotations_to_vcf
+from .corpus.sbs.mutation_preprocessing import get_marginal_mutation_rate, get_mutation_clusters, transfer_annotations_to_vcf
 from .model import load_model, logger
 from .model._importance_sampling import get_posterior_sample
 from .tuning import run_trial, create_study, load_study
@@ -66,9 +66,9 @@ def get_mutation_clusters_wrapper(*,vcf_file, output, chr_prefix, sample, mutati
 cluster_mutations_parser = subparsers.add_parser('preprocess-cluster-mutations', help = 'Cluster mutations in a VCF file.')
 cluster_mutations_parser.add_argument('vcf-file', type = file_exists)
 cluster_mutations_parser.add_argument('--mutation-rate-bedgraph','-m', type = file_exists, required=True, help = 'Bedgraph file of mutation rates.')
-cluster_mutations_parser.add_argument('--output','-o', type = valid_path, required=True, help = 'Where to save clustered VCF file.')
+cluster_mutations_parser.add_argument('--output','-o', type = argparse.FileType('w'), help = 'Where to save clustered VCF file.')
 cluster_mutations_parser.add_argument('--chr-prefix', default='', help = 'Prefix to append to chromosome names in VCF files.')
-cluster_mutations_parser.add_argument('--sample','-s', type = str, default=None, help = 'Sample name to filter mutations by.')
+cluster_mutations_parser.add_argument('--sample','-s', type = str, default=sys.stdout, help = 'Sample name to filter mutations by.')
 cluster_mutations_parser.set_defaults(func = get_mutation_clusters_wrapper)
 
 

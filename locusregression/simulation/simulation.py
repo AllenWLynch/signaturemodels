@@ -1,6 +1,6 @@
 import numpy as np
-from locusregression.corpus.sbs_observation_config import SBSSample, CONTEXT_IDX, MUTATIONS_IDX
-from locusregression.corpus.corpus import Corpus, InMemorySamples
+from ..corpus.sbs.observation_config import SBSSample, CONTEXT_IDX, MUTATIONS_IDX
+from ..corpus.corpus import Corpus, InMemorySamples
 import json
 import os
 import tqdm

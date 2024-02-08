@@ -7,7 +7,7 @@ import tqdm
 import pandas as pd
 import logging
 from scipy.stats import expon, chi2_contingency
-from locusregression.corpus import SBSCorpusMaker, get_passed_SNVs
+from .corpus_maker import SBSCorpusMaker, get_passed_SNVs
 import numpy as np
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(' Mutation preprocessing')
@@ -17,7 +17,7 @@ def transfer_annotations_to_vcf(
         annotations_df,*,
         vcf_file,
         description, 
-        output, 
+        output=subprocess.PIPE, 
         chr_prefix=''
     ):
 
@@ -66,9 +66,10 @@ def transfer_annotations_to_vcf(
                 '-a',  dataframe.name + '.gz',
                 '-h', header.name,
                 '-c', transfer_columns,
-                '-o', output,
                 vcf_file,
-                ]
+                ],
+                stdout = output,
+                universal_newlines=True,
             )
         
         finally:
@@ -289,20 +290,20 @@ def _cluster_mutations(mutations_df,
         # 2. the distance to the previous mutation is greater than the critical distance
         # 4. the allele frequency is different - this means the mutations occured in different cells or at different times
 
-        def similar_VAF(rd1, vrd1, rd2, vrd2):
+        '''def similar_VAF(rd1, vrd1, rd2, vrd2):
             #return np.abs(vrd1/rd1 - vrd2/rd2) < AF_tol
             return chi2_contingency([[rd1-vrd1, vrd1], [rd2-vrd2, vrd2]])[1] > 0.01
         
         vaf_is_similar = np.array([
             similar_VAF(rd1, vrd1, rd2, vrd2)
             for rd1, vrd1, rd2, vrd2 in zip(df.readDepth, df.variantReadDepth, df.readDepth.shift(1), df.variantReadDepth.shift(1))
-        ])
+        ])'''
 
         ## TODO - clean up problem where a cluster is split by a variant with a different VAF? ##
         return (
           (df.CHROM.shift(1) != df.CHROM) \
-        | (df.POS - df.POS.shift(1) > np.minimum(10000, df.criticalDistance.shift(1))) \
-        | ~vaf_is_similar \
+        | (df.POS - df.POS.shift(1) > np.minimum(10000, df.criticalDistance.shift(1))) 
+        #| ~vaf_is_similar \
         ).cumsum()
 
 
@@ -355,8 +356,8 @@ def get_mutation_clusters(mutation_rate_bedgraph, vcf_file,
     3. Of the same allele frequency
     '''
 
-    num_samples = int( subprocess.check_output(f'bcftools query -l {vcf_file} | wc -l | cut -f1', shell=True)\
-                      .decode('utf-8').strip() )
+    #num_samples = int( subprocess.check_output(f'bcftools query -l {vcf_file} | wc -l | cut -f1', shell=True)\
+    #                  .decode('utf-8').strip() )
 
     if num_samples > 1:
         assert not sample is None, 'The VCF file contains multiple samples. Please specify a sample to analyze.'
@@ -414,27 +415,3 @@ def get_mutation_clusters(mutation_rate_bedgraph, vcf_file,
         
         return mutations_df
 
-
-if __name__ == "__main__":
-
-    mutations_df = get_mutation_clusters(
-        'big_marginal_rate.bedgraph',
-        'BR001.purple.somatic.filtered.vcf.gz',
-        chr_prefix='chr',
-        use_mutation_type=False,
-        AF_tol=0.1,
-        sample = 'BC_BR001_tumor',
-    )
-
-    transfer_annotations_to_vcf(
-        mutations_df,
-        vcf_file='BR001.purple.somatic.filtered.vcf.gz',
-        description = {
-            'mutationType' : 'The type of mutation (e.g. C>A)',
-            'negLog10interMutationDistanceRatio' : 'The negative log10 of the ratio of the inter-mutation distance to the critical distance',
-            'clusterSize' : 'The number of mutations in the cluster',
-            'cluster' : 'The mutation\'s cluster ID',
-        },
-        output = 'BR001.clustered.vcf.gz',
-        chr_prefix='chr',
-    )

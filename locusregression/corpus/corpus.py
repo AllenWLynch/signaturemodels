@@ -3,8 +3,8 @@ from abc import ABC, abstractmethod
 from collections import defaultdict
 import h5py as h5
 import logging
-from .sample import Sample, SampleLoader, InMemorySamples
-from .sbs_observation_config import SBSSample
+from .sample import SampleLoader, InMemorySamples
+from .sbs.observation_config import SBSSample
 from tqdm import trange
 logger = logging.getLogger('Corpus')
 

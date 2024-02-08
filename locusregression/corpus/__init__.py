@@ -1,4 +1,4 @@
-from .sbs_corpus_maker import SBSCorpusMaker, logger, get_passed_SNVs
+from .sbs.corpus_maker import SBSCorpusMaker, logger
 from .corpus import load_corpus, save_corpus, train_test_split, stream_corpus, \
         Corpus, MetaCorpus
 from .ingest_tracks import make_continous_features, make_distance_features, make_discrete_features

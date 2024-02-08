@@ -1,24 +1,25 @@
 
-from .corpus import Corpus, InMemorySamples
+from ..corpus import Corpus, InMemorySamples
 from pyfaidx import Fasta
 import numpy as np
 from collections import Counter, defaultdict
 import logging
 import tqdm
-from .sbs_observation_config import SBSSample, MUTATIONS_IDX, CONTEXT_IDX, CONTEXTS
+from .observation_config import SBSSample, MUTATIONS_IDX, CONTEXT_IDX, CONTEXTS
 import subprocess
-import sys
-from .make_windows import check_regions_file
+from ..make_windows import check_regions_file
 import os
 from joblib import Parallel, delayed
 from functools import partial
+import tempfile
 from dataclasses import dataclass
-from dataclasses import dataclass
+import sys
 logger = logging.getLogger('DataReader')
 logger.setLevel(logging.INFO)
 
 
 def get_passed_SNVs(vcf_file, query_string, 
+                    filter_string=None,
                     output=subprocess.PIPE,
                     sample=None,):
     
@@ -30,6 +31,10 @@ def get_passed_SNVs(vcf_file, query_string,
     
     if not sample is None:
         filter_basecmd += ['-s', sample]
+
+    if not filter_string is None:
+        filter_basecmd += ['-i', filter_string]
+
 
     filter_process = subprocess.Popen(
                 filter_basecmd + [vcf_file],
@@ -49,6 +54,7 @@ def get_passed_SNVs(vcf_file, query_string,
     )
 
     return query_process
+
 
    
 @dataclass
@@ -72,6 +78,9 @@ class BED12Record:
         
     def __len__(self):
         return sum(self.block_sizes)
+    
+
+    
 
 
 class SBSCorpusMaker:
@@ -175,8 +184,12 @@ class SBSCorpusMaker:
         )
     
     @classmethod
-    def featurize_mutations(cls, vcf_file, regions_file, fasta_file, exposures,
-                        chr_prefix = '', weight_col = None):
+    def featurize_mutations(cls, 
+                        vcf_file, regions_file, fasta_file, exposures,
+                        chr_prefix = '', 
+                        weight_col = None, 
+                        mutation_rate_file=None):
+
 
         def process_line(line, fasta_object):
 
@@ -209,10 +222,36 @@ class SBSCorpusMaker:
                 'pos' : int(pos),
             }
         
+        '''if not mutation_rate_file is None:
+            
+            cluster_process = subprocess.Popen(
+                ['locusregression','preprocess-cluster-mutations',
+                 vcf_file,
+                 '-m', mutation_rate_file,
+                 '--chr-prefix', chr_prefix,
+                ],
+                stdout=subprocess.PIPE,
+                stderr=sys.stderr,
+                universal_newlines=True,
+                bufsize=10000,
+            )
+
+            subprocess.Popen(
+                ['bcftools','view',
+                 '-f','PASS',
+                 '-v','snps',
+                 '-i','%clusterSize<3',
+                ],
+                stdin=cluster_process.stdout,
+                stdout=subprocess.PIPE,
+            )
+
+        else:'''
 
         query_process = get_passed_SNVs(vcf_file,
                                         chr_prefix + '%CHROM\t%POS0\t%POS0\t%POS0|%REF|%ALT|' \
-                                            + ('1' if weight_col is None else f'%INFO/{weight_col}') + '\n',
+                                            + ('1\n' if weight_col is None else f'%INFO/{weight_col}\n'),
+                                        filter_string = '%chromSize < 3',
                                         )
                                         
 
@@ -450,12 +489,25 @@ class SBSCorpusMaker:
             assert len(_exposures) == len(vcf_files), \
                 'If providing exposures, provide one for the whole corpus, or one per sample.'
 
+
+        '''with tempfile.NamedTemporaryFile() as mutrate_file:
+            
+            subprocess.check_call(
+                ['locusregression','preprocess-estimate-mutrate',
+                '--vcf-files', *vcf_files,
+                '--chr-prefix', chr_prefix,
+                '--regions-file',regions_file,
+                '-o', mutrate_file.name,
+                ]
+            )'''
+
         read_vcf_fn = partial(
             cls.featurize_mutations,
             regions_file = regions_file, 
             fasta_file = fasta_file,
             chr_prefix = chr_prefix, 
-            weight_col = weight_col
+            weight_col = weight_col,
+            #mutation_rate_file = mutrate_file.name,
         )
 
         samples = Parallel(

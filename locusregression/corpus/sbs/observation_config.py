@@ -1,5 +1,5 @@
 from itertools import product
-from .sample import Sample
+from ..sample import Sample
 import numpy as np
 import matplotlib.pyplot as plt
 
