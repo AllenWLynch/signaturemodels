@@ -112,7 +112,7 @@ def get_marginal_mutation_rate(regions_file, output,*vcf_files, chr_prefix=''):
         with tempfile.TemporaryDirectory() as tempdir:
             for vcf_file in tqdm.tqdm(vcf_files, desc='Filtering VCFs', ncols = 100):
                 with open(os.path.join(tempdir, os.path.basename(vcf_file)), 'w') as f:
-                        get_passed_SNVs(vcf_file, query_str, f).communicate()
+                        get_passed_SNVs(vcf_file, query_str, output=f).communicate()
 
             processed_vcfs = [os.path.join(tempdir, v) for v in os.listdir(tempdir)]
 
@@ -359,8 +359,8 @@ def get_mutation_clusters(mutation_rate_bedgraph, vcf_file,
     #num_samples = int( subprocess.check_output(f'bcftools query -l {vcf_file} | wc -l | cut -f1', shell=True)\
     #                  .decode('utf-8').strip() )
 
-    if num_samples > 1:
-        assert not sample is None, 'The VCF file contains multiple samples. Please specify a sample to analyze.'
+    #if num_samples > 1:
+    #    assert not sample is None, 'The VCF file contains multiple samples. Please specify a sample to analyze.'
 
 
     with tempfile.NamedTemporaryFile() as rainfall_file, \
@@ -380,7 +380,6 @@ def get_mutation_clusters(mutation_rate_bedgraph, vcf_file,
         #    from the VCF file
         query_process = get_passed_SNVs(vcf_file,
                         f'{chr_prefix}%CHROM\t%POS0\t%POS0\t%REF>%ALT\t[%DP\t%AD{{1}}]\n',
-                        sample=sample,
                         )
         
         # 3. intersect the rainfall statistics with the mutation type and allele frequency

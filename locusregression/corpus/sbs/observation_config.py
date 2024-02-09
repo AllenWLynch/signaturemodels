@@ -152,7 +152,7 @@ class SBSSample(Sample):
     N_ATTRIBUTES=1
 
 
-    def plot(self, ax=None, figsize=(5,3), **kwargs):
+    def plot(self, ax=None, figsize=(5,3), show_strand=True,**kwargs):
         
         context_dist = np.zeros((self.N_CONTEXTS,))
         mutation_dist = np.zeros((self.N_CONTEXTS, self.N_MUTATIONS,))
@@ -165,13 +165,14 @@ class SBSSample(Sample):
 
         return self.plot_factorized(context_dist, mutation_dist, None, 
                                    ax=ax, 
-                                   figsize=figsize, 
+                                   figsize=figsize,
+                                   show_strand=show_strand, 
                                    **kwargs)
         
 
     @staticmethod
     def plot_factorized(context_dist, mutation_dist, attribute_dist, 
-                        ax=None, figsize=(5,3), **kwargs):
+                        ax=None, figsize=(5,3), show_strand=True,**kwargs):
 
         def to_cosmic_str(context, mutation):
             return f'{context[0]}[{context[1]}>{mutation}]{context[2]}'
@@ -190,8 +191,7 @@ class SBSSample(Sample):
         if ax is None:
             _, ax = plt.subplots(1,1,figsize= figsize)
 
-        ax.bar(
-            height = fwd_events,
+        plot_kw = dict(
             x = COSMIC_SORT_ORDER,
             color = MUTATION_PALETTE,
             width = 1,
@@ -199,25 +199,24 @@ class SBSSample(Sample):
             linewidth = 0.5,
             error_kw = {'alpha' : 0.5, 'linewidth' : 0.5}
         )
+        extent = max(joint_prob)
 
-        ax.bar(
-            height = -rev_events,
-            x = COSMIC_SORT_ORDER,
-            color = MUTATION_PALETTE,
-            width = 1,
-            edgecolor = 'white',
-            linewidth = 0.5,
-            error_kw = {'alpha' : 0.5, 'linewidth' : 0.5}
-        )
+        if show_strand:
+            ax.bar(height = fwd_events, **plot_kw)
+            ax.bar(height = -rev_events, **plot_kw)
+            
+            ax.set(yticks = [-extent,0,extent], xticks = [], 
+               xlim = (-1,96), ylim = (-1.1*extent, 1.1*extent)
+            )  
+        else:
+            ax.bar(height = fwd_events + rev_events, **plot_kw)
+            ax.set(yticks = [0,extent], xticks = [], 
+               xlim = (-1,96), ylim = (0, 1.1*extent)
+            )
 
         ax.axhline(0, color = 'lightgrey', linewidth = 0.25)
 
         for s in ['left','right','top','bottom']:
             ax.spines[s].set_visible(False)
-
-        ax.set(yticks = [], xticks = [], 
-               xlim = (-1,96), ylim = (-1.1*max(joint_prob), 1.1* max(joint_prob))
-            )  
-        #ax.set_title(self.component_names[component], fontsize = fontsize)
 
         return ax

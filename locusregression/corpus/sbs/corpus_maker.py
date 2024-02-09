@@ -19,8 +19,8 @@ logger.setLevel(logging.INFO)
 
 
 def get_passed_SNVs(vcf_file, query_string, 
-                    filter_string=None,
                     output=subprocess.PIPE,
+                    filter_string=None,
                     sample=None,):
     
     filter_basecmd = [
@@ -34,7 +34,6 @@ def get_passed_SNVs(vcf_file, query_string,
 
     if not filter_string is None:
         filter_basecmd += ['-i', filter_string]
-
 
     filter_process = subprocess.Popen(
                 filter_basecmd + [vcf_file],
@@ -251,7 +250,7 @@ class SBSCorpusMaker:
         query_process = get_passed_SNVs(vcf_file,
                                         chr_prefix + '%CHROM\t%POS0\t%POS0\t%POS0|%REF|%ALT|' \
                                             + ('1\n' if weight_col is None else f'%INFO/{weight_col}\n'),
-                                        filter_string = '%chromSize < 3',
+                                        #filter_string = 'clusterSize<3',
                                         )
                                         
 
