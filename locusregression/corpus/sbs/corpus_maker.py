@@ -187,7 +187,8 @@ class SBSCorpusMaker:
                         vcf_file, regions_file, fasta_file, exposures,
                         chr_prefix = '', 
                         weight_col = None, 
-                        mutation_rate_file=None):
+                        mutation_rate_file=None
+                    ):
 
 
         def process_line(line, fasta_object):
@@ -221,75 +222,75 @@ class SBSCorpusMaker:
                 'pos' : int(pos),
             }
         
-        '''if not mutation_rate_file is None:
+
+
+        query_statement = chr_prefix + '%CHROM\t%POS0\t%POS0\t%POS0|%REF|%ALT|' \
+                                                    + ('1\n' if weight_col is None else f'%INFO/{weight_col}\n')
+        
+        try:
             
-            cluster_process = subprocess.Popen(
-                ['locusregression','preprocess-cluster-mutations',
-                 vcf_file,
-                 '-m', mutation_rate_file,
-                 '--chr-prefix', chr_prefix,
-                ],
+            if not mutation_rate_file is None:
+
+                clustered_vcf = tempfile.NamedTemporaryFile()
+                
+                with open(clustered_vcf.name, 'w') as f:
+                    subprocess.check_call(
+                        ['locusregression','preprocess-cluster-mutations',
+                        vcf_file,
+                        '-m', mutation_rate_file,
+                        '--chr-prefix', chr_prefix],
+                        stdout = f,
+                    )
+
+                query_process = get_passed_SNVs(clustered_vcf.name, query_statement,
+                                                filter_string='clusterSize<3',
+                                               )
+
+            else:
+                query_process = get_passed_SNVs(vcf_file, query_statement)
+                                            
+
+            intersect_process = subprocess.Popen(
+                ['bedtools',
+                'intersect',
+                '-a', regions_file, 
+                '-b', '-', 
+                '-sorted',
+                '-wa','-wb',
+                '-split'],
+                stdin=query_process.stdout,
                 stdout=subprocess.PIPE,
-                stderr=sys.stderr,
                 universal_newlines=True,
                 bufsize=10000,
             )
 
-            subprocess.Popen(
-                ['bcftools','view',
-                 '-f','PASS',
-                 '-v','snps',
-                 '-i','%clusterSize<3',
-                ],
-                stdin=cluster_process.stdout,
-                stdout=subprocess.PIPE,
+            mutations = defaultdict(list)
+            with Fasta(fasta_file) as fa:
+
+                while True:
+                    line = intersect_process.stdout.readline()
+
+                    if not line:
+                        break
+                
+                    for k, v in process_line(line, fa).items():
+                        mutations[k].append(v)
+
+            intersect_process.communicate()
+
+            for k, v in mutations.items():
+                mutations[k] = np.array(v).astype(SBSSample.type_map[k])
+
+            return SBSSample(
+                **mutations,
+                name = os.path.abspath(vcf_file),
+                exposures = np.array(exposures),
             )
+        
+        finally:
+            if not mutation_rate_file is None:
+                clustered_vcf.close()
 
-        else:'''
-
-        query_process = get_passed_SNVs(vcf_file,
-                                        chr_prefix + '%CHROM\t%POS0\t%POS0\t%POS0|%REF|%ALT|' \
-                                            + ('1\n' if weight_col is None else f'%INFO/{weight_col}\n'),
-                                        #filter_string = 'clusterSize<3',
-                                        )
-                                        
-
-        intersect_process = subprocess.Popen(
-            ['bedtools',
-            'intersect',
-            '-a', regions_file, 
-            '-b', '-', 
-            '-sorted',
-            '-wa','-wb',
-            '-split'],
-            stdin=query_process.stdout,
-            stdout=subprocess.PIPE,
-            universal_newlines=True,
-            bufsize=10000,
-        )
-
-        mutations = defaultdict(list)
-        with Fasta(fasta_file) as fa:
-
-            while True:
-                line = intersect_process.stdout.readline()
-
-                if not line:
-                    break
-            
-                for k, v in process_line(line, fa).items():
-                    mutations[k].append(v)
-
-        intersect_process.communicate()
-
-        for k, v in mutations.items():
-            mutations[k] = np.array(v).astype(SBSSample.type_map[k])
-
-        return SBSSample(
-            **mutations,
-            name = os.path.abspath(vcf_file),
-            exposures = np.array(exposures),
-        )
 
 
     @staticmethod
@@ -489,7 +490,7 @@ class SBSCorpusMaker:
                 'If providing exposures, provide one for the whole corpus, or one per sample.'
 
 
-        '''with tempfile.NamedTemporaryFile() as mutrate_file:
+        with tempfile.NamedTemporaryFile() as mutrate_file:
             
             subprocess.check_call(
                 ['locusregression','preprocess-estimate-mutrate',
@@ -498,24 +499,24 @@ class SBSCorpusMaker:
                 '--regions-file',regions_file,
                 '-o', mutrate_file.name,
                 ]
-            )'''
+            )
 
-        read_vcf_fn = partial(
-            cls.featurize_mutations,
-            regions_file = regions_file, 
-            fasta_file = fasta_file,
-            chr_prefix = chr_prefix, 
-            weight_col = weight_col,
-            #mutation_rate_file = mutrate_file.name,
-        )
+            read_vcf_fn = partial(
+                cls.featurize_mutations,
+                regions_file = regions_file, 
+                fasta_file = fasta_file,
+                chr_prefix = chr_prefix, 
+                weight_col = weight_col,
+                mutation_rate_file = mutrate_file.name,
+            )
 
-        samples = Parallel(
-                        n_jobs = n_jobs, 
-                        verbose = 10,
-                    )(
-                        delayed(read_vcf_fn)(vcf, exposures = sample_exposure)
-                        for vcf, sample_exposure in zip(vcf_files, _exposures)
-                    )
+            samples = Parallel(
+                            n_jobs = n_jobs, 
+                            verbose = 10,
+                        )(
+                            delayed(read_vcf_fn)(vcf, exposures = sample_exposure)
+                            for vcf, sample_exposure in zip(vcf_files, _exposures)
+                        )
         
         logger.info('Done reading VCF files.')
         return samples
