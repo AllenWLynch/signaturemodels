@@ -95,12 +95,12 @@ make_windows_parser.add_argument('--output','-o', type = argparse.FileType('w'),
 make_windows_parser.set_defaults(func = make_windows_wrapper)
 
 
-trinuc_sub = subparsers.add_parser('get-trinucs', help = 'Write trinucleotide context file for a given genome.')
-trinuc_sub.add_argument('--fasta-file','-fa', type = file_exists, required = True, help = 'Sequence file, used to find context of mutations.')
-trinuc_sub.add_argument('--regions-file','-r', type = file_exists, required = True)
-trinuc_sub.add_argument('--n-jobs','-j', type = posint, default = 1, help = 'Number of parallel processes to use. Currently does nothing.')
-trinuc_sub.add_argument('--output','-o', type = valid_path, required = True, help = 'Where to save compiled corpus.')
-trinuc_sub.set_defaults(func = SBSCorpusMaker.create_trinuc_file)
+context_sub = subparsers.add_parser('get-contexts', help = 'Write context file for a given genome.')
+context_sub.add_argument('--fasta-file','-fa', type = file_exists, required = True, help = 'Sequence file, used to find context of mutations.')
+context_sub.add_argument('--regions-file','-r', type = file_exists, required = True)
+context_sub.add_argument('--n-jobs','-j', type = posint, default = 1, help = 'Number of parallel processes to use. Currently does nothing.')
+context_sub.add_argument('--output','-o', type = valid_path, required = True, help = 'Where to save compiled corpus.')
+context_sub.set_defaults(func = SBSCorpusMaker.create_context_frequencies_file)
 
 
 def process_bigwig(group='all',
@@ -211,9 +211,10 @@ discrete_sub.set_defaults(func = process_discrete)
 def write_dataset(
         weight_col = None,
         chr_prefix = '',
-        n_jobs=1,*,
+        n_jobs=1,
+        corpus_type='SBS',*,
         fasta_file,
-        trinuc_file,
+        context_file,
         regions_file,
         vcf_files,
         exposure_files,
@@ -224,9 +225,9 @@ def write_dataset(
 
     shared_args = dict(
         fasta_file = fasta_file, 
-        trinuc_file = trinuc_file,
+        context_file = context_file,
         regions_file = regions_file,
-        vcf_files = vcf_files,
+        sample_files = vcf_files,
         chr_prefix = chr_prefix,
     )
 
@@ -238,8 +239,12 @@ def write_dataset(
 
     assert len(exposure_files) in [0,1, len(vcf_files)],\
         'User must provide zero, one, or the number of exposure files which matches the number of VCF files.'
+    
+    corpus_type_map = {
+        'SBS' : SBSCorpusMaker,
+    }
 
-    dataset = SBSCorpusMaker.create_corpus(
+    dataset = corpus_type_map[corpus_type].create_corpus(
         **shared_args, 
         weight_col = weight_col,
         exposure_files = exposure_files,
@@ -257,6 +262,7 @@ dataset_sub = subparsers.add_parser('corpus-make',
     formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
 
+dataset_sub.add_argument('--corpus-type','-t', type = str, default='SBS', choices=['SBS'], help = 'Type of corpus to make.')
 dataset_sub.add_argument('--corpus-name','-n', type = str, required = True, help = 'Name of corpus, must be unique if modeling with other corpuses.')
 dataset_sub.add_argument('--vcf-files', '-vcfs', nargs = '+', type = file_exists, required = True,
     help = 'list of VCF files containing SBS mutations.')
@@ -276,8 +282,8 @@ dataset_sub.add_argument('--exposure-files','-e', type = file_exists, nargs = '+
            'Exposures are positive scalars which the user calculates to reflect technical influences on the number of mutations one expects to '
            'find within each region. The exposures may be proportional to number of reads falling within each region, or some other '
            'metric to quantify sensitivity to call mutations.')
-dataset_sub.add_argument('--trinuc-file','-trinucs', type = file_exists,default=None,
-                         help = 'Pre-calculated trinucleotide context file.')
+dataset_sub.add_argument('--context-file','-contexts', type = file_exists,default=None,
+                         help = 'Pre-calculated context file.')
 dataset_sub.add_argument('--output','-o', type = valid_path, required = True, help = 'Where to save compiled corpus.')
 
 dataset_sub.add_argument('--weight-col','-w', type = str, default=None,
@@ -743,7 +749,7 @@ def _write_posterior_annotated_vcf(
 
 def assign_components_wrapper(*,
         model, 
-        vcf_files, 
+        sample_files, 
         corpus, 
         output_prefix, 
         exposure_file=None, 
@@ -782,7 +788,7 @@ def assign_components_wrapper(*,
             verbose = 10,
         )(
             delayed(annotation_fn)(vcf, output_prefix + os.path.basename(vcf))
-            for vcf in vcf_files
+            for vcf in sample_files
         )
 
     
