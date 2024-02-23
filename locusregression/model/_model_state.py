@@ -6,7 +6,7 @@ from sklearn.linear_model import PoissonRegressor
 from scipy.special import logsumexp
 from sklearn.preprocessing import OneHotEncoder
 from ._feature_transformer import FeatureTransformer
-
+from functools import reduce
 
 def _get_linear_model(*args, **kw):
     return PoissonRegressor(
@@ -183,7 +183,7 @@ class ModelState:
         
         I = len(corpus_states.keys())
         eta = np.concatenate([_get_context_exposure(state) for state in corpus_states.values()]) # I x C -> I*C
-        target = np.concatenate([sstats[name].lambda_sstats(k) for name in corpus_states.keys()])
+        target = np.concatenate([sstats[name].lambda_sstats(k) for name in corpus_states.keys()]) + 1
 
         m = (target/eta).mean()
         sample_weights = eta * m
@@ -205,14 +205,25 @@ class ModelState:
                 self._get_onehot_column(corpus_states, self.n_contexts).toarray()
             ])
 
-        return np.exp(
-            self.context_models[k]\
-            .fit(
-                X, 
-                target/sample_weights,
-                sample_weight=sample_weights/sample_weights.mean()
-            ).coef_[:self.n_contexts]
-        )
+        try:
+            return np.exp(
+                self.context_models[k]\
+                .fit(
+                    X, 
+                    target/sample_weights,
+                    sample_weight=sample_weights/sample_weights.mean()
+                ).coef_[:self.n_contexts]
+            )
+        except ValueError as err:
+            print(
+                target,
+                sample_weights,
+                eta,
+                target.mean(),
+                sample_weights.mean(),
+                eta.mean(),
+            )
+            raise err
 
     
     def _lambda_update(self, k, sstats, corpus_states):
@@ -305,7 +316,7 @@ class ModelState:
         design_matrix = self._get_design_matrix(corpus_states)
         X = self.feature_transformer.transform(corpus_states)
 
-        X = np.hstack([X, design_matrix.toarray()])
+        X = np.hstack([np.nan_to_num(X, nan=0), design_matrix.toarray()])
 
         for k, (y, sample_weights, lograte_prediction) in enumerate(
             self._get_targets(sstats, corpus_states)
@@ -412,6 +423,27 @@ class CorpusState(ModelState):
     def _get_mutation_rate_logits(self, model_state, exposures):
         return np.log(model_state.delta @ self.context_frequencies) + self._logmu + np.log(exposures)
 
+
+    def _log_component_mutation_rate(self, k, model_state, exposures):
+        
+        # Cx1 + CxL -> CxL
+        return np.log(model_state.delta[k])[:,None] \
+            + np.log(self.context_frequencies) \
+            + self._logmu[k][None,:] \
+            + np.log(exposures) \
+            - self._log_denom[k]
+    
+
+    def _get_log_marginal_effect_rate(self, pi, model_state, exposures):
+
+        return np.log(
+            reduce(
+                lambda x, k : x + ( pi[k]*np.exp(self._log_component_mutation_rate(k, model_state, exposures)) ),
+                range(self.n_components),
+                np.zeros_like(self.context_frequencies)
+            )
+        )
+
     
     def get_log_component_effect_rate(self, model_state, exposures, use_context=True):
         '''
@@ -443,7 +475,7 @@ class CorpusState(ModelState):
                                     {self.name : self}
                                 )
 
-        X = np.hstack([X, design_matrix.toarray()])
+        X = np.hstack([np.nan_to_num(X, nan=0), design_matrix.toarray()])
 
         self._logmu = np.array([
             np.log(model_state.rate_models[k].predict(X).T)

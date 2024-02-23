@@ -1,4 +1,3 @@
-import shap
 import logging
 from numpy.random import RandomState
 from numpy import vstack, squeeze
@@ -13,6 +12,7 @@ def explain(
     n_jobs = 1,
     chunk_size = 10000,
 ):
+    import shap
     
     def _calculate_shap_values(tree_explainer, chunk):
         return squeeze(

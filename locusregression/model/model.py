@@ -733,14 +733,19 @@ class LocusRegressor:
         if not self.is_trained:
             logger.warn('This model was not trained to completion, results may be innaccurate')
 
-        corpus_state = self.corpus_states[corpus.name]
-        gamma = corpus_state.alpha/corpus_state.alpha.sum() # use expectation of the prior over components
+        try:
+            corpus_state = self.corpus_states[corpus.name]
+        except KeyError:
+            raise ValueError(f'Corpus {corpus.name} not found in model.')
         
-        psi_tensor = np.exp(self.get_log_component_mutation_rate(corpus)) # n_components x n_contexts x n_loci
-        
-        marginalized = np.squeeze(np.tensordot(gamma, psi_tensor, axes=([0], [0])))
+        new_state = corpus_state.clone_corpusstate(corpus)
+        new_state.update_mutation_rate(self.model_state, from_scratch = True)
 
-        return np.log(marginalized)
+        gamma = new_state.alpha/new_state.alpha.sum()
+
+        return new_state._get_log_marginal_effect_rate(
+            gamma, self.model_state, new_state.exposures,
+        )
     
     
     def get_mutation_rate_r2(self, corpus):
@@ -797,7 +802,8 @@ class LocusRegressor:
     def plot_signature(self, component, ax = None, 
                        figsize = (5.5,3), 
                        normalization = 'global', 
-                       fontsize=7):
+                       fontsize=7,
+                       show_strand=True):
         '''
         Plot signature.
         '''
@@ -810,13 +816,14 @@ class LocusRegressor:
             attribute_dist = None,
             ax = ax,
             figsize = figsize,
-            fontsize = fontsize
+            fontsize = fontsize,
+            show_strand=show_strand,
         )
 
         return ax
 
 
-    def plot_summary(self):
+    def plot_summary(self, show_strand=True):
         """
         Plot the summary of the model.
 
@@ -830,7 +837,7 @@ class LocusRegressor:
                                )
 
         for i in range(self.n_components):
-            self.plot_signature(i, ax=ax[i])
+            self.plot_signature(i, ax=ax[i], show_strand=show_strand)
             ax[i].set_title('')
             ax[i].set_ylabel(self.component_names[i], fontsize=7)
 
@@ -860,7 +867,7 @@ class LocusRegressor:
         )
 
         return np.array([
-            self.model_state._convert_beta_sstats_to_array(k, sstats, corpus.locus_dim).ravel()
+            sstats[corpus.name]._convert_beta_sstats_to_array(k, corpus.locus_dim)
             for k in range(self.n_components)
         ])
 
