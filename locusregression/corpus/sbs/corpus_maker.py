@@ -224,7 +224,7 @@ class SBSCorpusMaker:
         
 
 
-        query_statement = chr_prefix + '%CHROM\t%POS0\t%POS0\t%POS0|%REF|%ALT|' \
+        query_statement = chr_prefix + '%CHROM\t%POS0\t%POS\t%POS0|%REF|%ALT|' \
                                                     + ('1\n' if weight_col is None else f'%INFO/{weight_col}\n')
         
         try:

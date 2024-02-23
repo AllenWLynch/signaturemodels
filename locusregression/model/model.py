@@ -270,9 +270,10 @@ class LocusRegressor:
             for corp in corpus.corpuses
         }
 
+        sample_num = 0
         gammas = []
         for gamma_g, sample in zip(gamma, corpus):
-
+            
             sample_sstats = self._sample_inference(
                         sample = sample,
                         gamma0 = gamma_g, 
@@ -282,6 +283,8 @@ class LocusRegressor:
                         model_state = model_state,
                         corpus_state = corpus_states[sample.corpus_name]
                     )
+            
+            sample_num += 1
 
             sstat_collections[sample.corpus_name] += sample_sstats
             gammas.append(sample_sstats.gamma)
@@ -425,7 +428,7 @@ class LocusRegressor:
 
         
         with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
+            #warnings.simplefilter("ignore")
 
             logger.info('Training model ...')
 
@@ -733,14 +736,19 @@ class LocusRegressor:
         if not self.is_trained:
             logger.warn('This model was not trained to completion, results may be innaccurate')
 
-        corpus_state = self.corpus_states[corpus.name]
-        gamma = corpus_state.alpha/corpus_state.alpha.sum() # use expectation of the prior over components
+        try:
+            corpus_state = self.corpus_states[corpus.name]
+        except KeyError:
+            raise ValueError(f'Corpus {corpus.name} not found in model.')
         
-        psi_tensor = np.exp(self.get_log_component_mutation_rate(corpus)) # n_components x n_contexts x n_loci
-        
-        marginalized = np.squeeze(np.tensordot(gamma, psi_tensor, axes=([0], [0])))
+        new_state = corpus_state.clone_corpusstate(corpus)
+        new_state.update_mutation_rate(self.model_state, from_scratch = True)
 
-        return np.log(marginalized)
+        gamma = new_state.alpha/new_state.alpha.sum()
+
+        return new_state._get_log_marginal_effect_rate(
+            gamma, self.model_state, new_state.exposures,
+        )
     
     
     def get_mutation_rate_r2(self, corpus):

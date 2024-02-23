@@ -6,6 +6,7 @@ from sklearn.linear_model import PoissonRegressor
 from scipy.special import logsumexp
 from sklearn.preprocessing import OneHotEncoder
 from ._feature_transformer import FeatureTransformer
+from functools import reduce
 
 
 def _get_linear_model(*args, **kw):
@@ -411,6 +412,27 @@ class CorpusState(ModelState):
 
     def _get_mutation_rate_logits(self, model_state, exposures):
         return np.log(model_state.delta @ self.context_frequencies) + self._logmu + np.log(exposures)
+    
+
+    def _log_component_mutation_rate(self, k, model_state, exposures):
+        
+        # Cx1 + CxL -> CxL
+        return np.log(model_state.delta[k])[:,None] \
+            + np.log(self.context_frequencies) \
+            + self._logmu[k][None,:] \
+            + np.log(exposures) \
+            - self._log_denom[k]
+    
+
+    def _get_log_marginal_effect_rate(self, pi, model_state, exposures):
+
+        return np.log(
+            reduce(
+                lambda x, k : x + ( pi[k]*np.exp(self._log_component_mutation_rate(k, model_state, exposures)) ),
+                range(self.n_components),
+                np.zeros_like(self.context_frequencies)
+            )
+        )
 
     
     def get_log_component_effect_rate(self, model_state, exposures, use_context=True):

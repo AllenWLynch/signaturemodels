@@ -4,6 +4,11 @@ from numpy import array, log
 from functools import partial
 from sklearn.preprocessing import OrdinalEncoder
 
+
+import numpy as np
+
+
+
 def _get_model_fn(*,
                   design_matrix,
                   features,
@@ -30,7 +35,7 @@ def _get_model_fn(*,
                 early_stopping=True,
                 max_leaf_nodes=max_leaf_nodes,
                 min_samples_leaf=min_samples_leaf,
-                max_features=max_features,
+                #max_features=max_features,
                 validation_fraction=0.2,
                 n_iter_no_change=n_iter_no_change,
                 l2_regularization=l2_regularization,
