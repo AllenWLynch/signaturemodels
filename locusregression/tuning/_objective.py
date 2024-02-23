@@ -69,8 +69,8 @@ def objective(trial,
         trial.set_user_attr(f'test_score_{step}',  test_score)
         trial.set_user_attr(f'train_score_{step}',  train_score)
         
-        test_mutation_r2 = _pseudo_r2(test_empirical, model.get_log_marginal_mutation_rate(test), test_null)
-        train_mutation_r2 = _pseudo_r2(train_empirical, model.get_log_marginal_mutation_rate(train), train_null)
+        test_mutation_r2 = _pseudo_r2(test_empirical, np.exp(model.get_log_marginal_mutation_rate(test)), test_null)
+        train_mutation_r2 = _pseudo_r2(train_empirical, np.exp(model.get_log_marginal_mutation_rate(train)), train_null)
                 
         trial.set_user_attr(f'test_mutation_r2_{step}', test_mutation_r2)
         trial.set_user_attr(f'train_mutation_r2_{step}', train_mutation_r2)

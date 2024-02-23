@@ -149,7 +149,7 @@ def get_marginal_mutation_rate(regions_file, output,*vcf_files, chr_prefix=''):
 
 
 def get_local_mutation_rate(mutation_rate_bedgraph, vcf_file, output, 
-                            smoothing_distance=10000,
+                            smoothing_distance=15000,
                             chr_prefix=''):
     '''
     bedfile : a bed file of genomic regions, and the score column should be the *normalized* mutation rate
@@ -227,7 +227,7 @@ def get_local_mutation_rate(mutation_rate_bedgraph, vcf_file, output,
 
 
 def get_rainfall_statistic(mutation_rate_bedgraph, vcf_file, output, 
-                           smoothing_distance=10000,
+                           smoothing_distance=15000,
                            chr_prefix='chr',
                           ):
 
@@ -342,7 +342,7 @@ def _cluster_mutations(mutations_df,
 
 
 def get_mutation_clusters(mutation_rate_bedgraph, vcf_file,
-                           smoothing_distance=10000,
+                           smoothing_distance=15000,
                            chr_prefix='chr',
                            alpha = 0.005,
                            AF_tol = 0.1,
@@ -404,6 +404,10 @@ def get_mutation_clusters(mutation_rate_bedgraph, vcf_file,
                 .iloc[:, [0,1,3,4,8,9,10]]
 
         mutations_df.columns = ['CHROM','POS','localMutationRate','rainfallDistance','mutationType','readDepth','variantReadDepth']
+
+        mutations_df = mutations_df[ mutations_df.localMutationRate != '.' ]
+        mutations_df['localMutationRate'] = mutations_df.localMutationRate.astype(float)
+
         mutations_df = mutations_df[mutations_df.localMutationRate > 0]
 
         mutations_df = _cluster_mutations(mutations_df, 

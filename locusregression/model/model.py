@@ -805,7 +805,8 @@ class LocusRegressor:
     def plot_signature(self, component, ax = None, 
                        figsize = (5.5,3), 
                        normalization = 'global', 
-                       fontsize=7):
+                       fontsize=7,
+                       show_strand=True):
         '''
         Plot signature.
         '''
@@ -818,13 +819,14 @@ class LocusRegressor:
             attribute_dist = None,
             ax = ax,
             figsize = figsize,
-            fontsize = fontsize
+            fontsize = fontsize,
+            show_strand=show_strand,
         )
 
         return ax
 
 
-    def plot_summary(self):
+    def plot_summary(self, show_strand=True):
         """
         Plot the summary of the model.
 
@@ -838,7 +840,7 @@ class LocusRegressor:
                                )
 
         for i in range(self.n_components):
-            self.plot_signature(i, ax=ax[i])
+            self.plot_signature(i, ax=ax[i], show_strand=show_strand)
             ax[i].set_title('')
             ax[i].set_ylabel(self.component_names[i], fontsize=7)
 
@@ -868,7 +870,7 @@ class LocusRegressor:
         )
 
         return np.array([
-            self.model_state._convert_beta_sstats_to_array(k, sstats, corpus.locus_dim).ravel()
+            sstats[corpus.name]._convert_beta_sstats_to_array(k, corpus.locus_dim)
             for k in range(self.n_components)
         ])
 
