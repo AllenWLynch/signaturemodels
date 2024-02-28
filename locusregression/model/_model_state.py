@@ -5,8 +5,9 @@ from ..simulation import SimulatedCorpus, COSMIC_SIGS
 from sklearn.linear_model import PoissonRegressor
 from scipy.special import logsumexp
 from sklearn.preprocessing import OneHotEncoder
-from ._feature_transformer import FeatureTransformer
+from ._feature_transformer import FeatureTransformer, CardinalityTransformer
 from functools import reduce
+from pandas import DataFrame
 
 def _get_linear_model(*args, **kw):
     return PoissonRegressor(
@@ -30,13 +31,16 @@ class ModelState:
                 fix_signatures = None,
                 pseudocounts = 10000,
                 get_model_fn = _get_linear_model,
-                categorical_encoder = OneHotEncoder(sparse_output=False, drop='first'),*,
+                categorical_encoder = OneHotEncoder(sparse_output=False, drop='first'),
+                signature_reg = 0.,*,
                 corpus_states,
                 n_components,
                 random_state, 
                 empirical_bayes,
                 genome_context_frequencies,
                 feature_dim,
+                cardinality_features_dim,
+                cardinalities_dim,
                 locus_dim,
                 context_dim,
                 mutation_dim,
@@ -48,19 +52,21 @@ class ModelState:
         assert isinstance(n_components, int) and n_components >= 1
         self.n_components = n_components
         self.n_loci = locus_dim
+        self.cardinality_features_dim = cardinality_features_dim
         self.random_state = random_state
         self.empirical_bayes = empirical_bayes
         self.n_contexts = context_dim
 
-        self.tau = np.ones(self.n_components)
-
-        self.delta = self.random_state.gamma(100, 1/100, 
+        self._lambda = self.random_state.gamma(100, 1/100, 
                                                (n_components, context_dim),
                                               ).astype(dtype, copy=False)
         
-        self.omega = self.random_state.gamma(100, 1/100,
+        self._rho = self.random_state.gamma(100, 1/100,
                                                (n_components, context_dim, mutation_dim),
                                               ).astype(dtype, copy = False)
+        
+        self._tau = np.ones((n_components, cardinality_features_dim))\
+            .astype(dtype, copy=False)
         
         # placeholder for when attributes come into play
         #self.psi
@@ -97,35 +103,37 @@ class ModelState:
         self.n_distributions = design_matrix.shape[1]
 
         self.context_models = [
-            PoissonRegressor(alpha = 0, fit_intercept=True, warm_start=True) #, solver='newton-cholesky')
+            PoissonRegressor(alpha = signature_reg, 
+                             fit_intercept=False, 
+                             warm_start=True) #, solver='newton-cholesky')
             for _ in range(n_components)
         ]
 
+        self.cardinality_models = [
+            PoissonRegressor(alpha = 0.,
+                             fit_intercept=False,
+                                warm_start=True)
+            for _ in range(n_components)
+        ]
 
-    def _fit_corpus_encoder(self, corpus_states):
+        if cardinality_features_dim > 0:
+            self.strand_transformer = CardinalityTransformer().fit(corpus_states)
+        else:
+            self.strand_transformer = None
 
-        corpus_names = list(corpus_states.keys())
 
-        self.corpus_intercept_encoder_ = OneHotEncoder(
-                        sparse_output=True,
-                        drop = None,
-                    ).fit(
-                        np.array(corpus_names).reshape((-1,1))
-                    )
+    @property
+    def lambda_(self):
+        return self._lambda
     
-    def _get_onehot_column(self, corpus_states, n_repeats):
-        labels = np.concatenate([[name]*n_repeats for name in corpus_states.keys()])
-        # One-hot encode the labels
-        encoded_labels = self.corpus_intercept_encoder_.transform(
-            labels.reshape((-1,1))
-        )
-        return encoded_labels
-
-
-    def _get_design_matrix(self, corpus_states):
-        n_loci = next(iter(corpus_states.values())).n_loci
-        return self._get_onehot_column(corpus_states, n_loci)
+    @property
+    def rho_(self):
+        return self._rho
     
+    @property
+    def tau_(self):
+        return self._tau
+
 
     def _fix_signatures(self, fix_signatures,*,
                         n_components, 
@@ -146,11 +154,37 @@ class ModelState:
             
             sigmatrix = SimulatedCorpus.cosmic_sig_to_matrix(COSMIC_SIGS[sig])
             
-            self.omega[i] = sigmatrix * pseudocounts + 1.
-            self.delta[i] = sigmatrix.sum(axis = -1) * pseudocounts/genome_context_frequencies.reshape(-1) + 1.
+            self._rho[i] = sigmatrix * pseudocounts + 1.
+            self._lambda[i] = sigmatrix.sum(axis = -1) * pseudocounts/genome_context_frequencies + 1.
 
 
+    def _fit_corpus_encoder(self, corpus_states):
 
+        corpus_names = list(corpus_states.keys())
+
+        self.corpus_intercept_encoder_ = OneHotEncoder(
+                        sparse_output=True,
+                        drop = None,
+                    ).fit(
+                        np.array(corpus_names).reshape((-1,1))
+                    )
+    
+
+    def _get_onehot_column(self, corpus_states, n_repeats):
+        labels = np.concatenate([[name]*n_repeats for name in corpus_states.keys()])
+        # One-hot encode the labels
+        encoded_labels = self.corpus_intercept_encoder_.transform(
+            labels.reshape((-1,1))
+        )
+        return encoded_labels
+
+
+    def _get_design_matrix(self, corpus_states):
+        n_loci = next(iter(corpus_states.values())).n_loci
+        return self._get_onehot_column(corpus_states, n_loci)
+    
+
+    
     @staticmethod
     def _svi_update_fn(old_value, new_value, learning_rate):
         return (1-learning_rate)*old_value + learning_rate*new_value
@@ -172,18 +206,97 @@ class ModelState:
             for k in range(self.n_components)
         ])
 
-        self._svi_update('omega', new_rho, learning_rate)
+        new_rho = new_rho/np.sum(new_rho, axis = -1, keepdims = True)
+
+        self._svi_update('_rho', new_rho, learning_rate)
 
 
-    def _lambda_update_new(self, k, sstats, corpus_states):
+
+    def _get_tau_features(self, corpus_states):
+        
+        n_bins = next(iter(corpus_states.values())).n_loci
+
+        def _get_cardinality_features(corpus_state):
+            strand_features = self.strand_transformer.transform({corpus_state.name : corpus_state})
+            return np.concatenate([strand_features, -1*strand_features], axis=0)
+        
+        X = np.concatenate(
+            [
+                _get_cardinality_features(state)
+                for state in corpus_states.values()
+            ], axis = 0
+        )
+        
+        X = np.hstack([
+            X, self._get_onehot_column(corpus_states, 2*n_bins).toarray()
+        ])
+
+        x_cols = ['X' + str(i) for i in range(X.shape[1])]
+        df = DataFrame(X, columns = x_cols)
+        return df
+
+
+    def _get_tau_targets(self, k, sstats, corpus_states):
+
+        n_bins = next(iter(corpus_states.values())).n_loci
+
+        def _get_cardinality_exposure(corpus_state):
+            # 1xCx1 @ DxCxL --> DxL + 1xL --> DxL --> [L_d1 \+ L_d2]
+            return (
+                (self.lambda_[k][None, :, None] * corpus_state.context_frequencies).sum(1) * \
+                corpus_state.exposures * np.exp(corpus_state.theta_[k])[None,:]
+            ).ravel()
+        
+        eta = np.concatenate([_get_cardinality_exposure(state) for state in corpus_states.values()]) # I x C -> I*C
+        target = np.concatenate([sstats[name].tau_sstats(k, n_bins).ravel() for name in corpus_states.keys()])
+
+        m = (target/eta).mean()
+        sample_weights = eta * m
+
+        return target, sample_weights
+    
+    
+    def _tau_update(self, sstats, corpus_states):
+
+        df = self._get_tau_features(corpus_states)
+        x_cols = list(df.columns.values)
+
+        for k in range(self.n_components):
+            df['target' + str(k)], df['weight' + str(k)] = self._get_tau_targets(k, sstats, corpus_states)
+
+        df = df.groupby(x_cols).sum().reset_index()
+
+        return np.array([
+            np.exp(
+                self.cardinality_models[k]\
+                .fit(
+                    df[x_cols].values,
+                    df['target' + str(k)]/df['weight' + str(k)],
+                    sample_weight=df['weight' + str(k)]/df['weight' + str(k)].mean()
+                ).coef_[:self.cardinality_features_dim]
+            )
+            for k in range(self.n_components)
+        ])
+
+    
+    def update_tau(self, sstats, corpus_states, learning_rate):
+        _tau = self._tau_update(sstats, corpus_states)
+        print(_tau.ravel())
+        self._svi_update('_tau', _tau, learning_rate)
+
+
+    def _lambda_update(self, k, sstats, corpus_states):
 
         def _get_context_exposure(corpus_state):
-            return corpus_state.context_frequencies @ \
-                (corpus_state.exposures.ravel() * np.exp(corpus_state.logmu[k]))
+            # C x L @ L -> D x C --> C
+            return (
+                (np.exp(corpus_state._get_log_strand_effects(k, self))*corpus_state.context_frequencies).sum(0) @ \
+                (corpus_state.exposures.ravel() * np.exp(corpus_state.theta_[k]))
+            )
         
         I = len(corpus_states.keys())
         eta = np.concatenate([_get_context_exposure(state) for state in corpus_states.values()]) # I x C -> I*C
-        target = np.concatenate([sstats[name].lambda_sstats(k) for name in corpus_states.keys()]) + 1
+        target = np.concatenate([sstats[name].lambda_sstats(k) for name in corpus_states.keys()])
 
         m = (target/eta).mean()
         sample_weights = eta * m
@@ -215,49 +328,20 @@ class ModelState:
             ).coef_[:self.n_contexts]
         )
 
-    
-    def _lambda_update(self, k, sstats, corpus_states):
-
-        def _get_context_exposure(corpus_state):
-            return corpus_state.context_frequencies @ \
-                (corpus_state.exposures.ravel() * np.exp(corpus_state.logmu[k]))
-
-        context_exposure = sum(map(_get_context_exposure, corpus_states.values()))
-        target = sstats.context_sstats[k]
-
-        intercept = target.sum()/context_exposure.sum()
-
-        sample_weights = context_exposure*intercept
-        X = np.diag(np.ones_like(target))
-
-        return np.exp(
-            self.context_models[k]\
-            .fit(
-                X, 
-                target/sample_weights,
-                sample_weight=sample_weights/sample_weights.mean()
-            ).coef_
-        )
-
-    
+   
     def update_lambda(self, sstats, corpus_states, learning_rate):
         
-        _delta = np.array([
-            self._lambda_update_new(k, sstats, corpus_states)
+        _lambda = np.array([
+            self._lambda_update(k, sstats, corpus_states)
             for k in range(self.n_components)
         ])
 
-        self._svi_update('delta', _delta, learning_rate)
-
-
-    def _get_nucleotide_effect(self, k, context_frequencies):
-        return self.delta[k] @ context_frequencies
+        self._svi_update('_lambda', _lambda, learning_rate)
     
 
     def _get_targets(self, sstats, corpus_states):
         
-        context_frequencies = next(iter(corpus_states.values())).context_frequencies
-        num_corpuses = len(corpus_states); n_bins=context_frequencies.shape[1]
+        n_bins = next(iter(corpus_states.values())).n_loci
 
         exposures = np.concatenate(
             [state.exposures for state in corpus_states.values()],
@@ -267,15 +351,14 @@ class ModelState:
         for k in range(self.n_components):
 
             current_lograte_prediction = np.array(
-                [state.logmu[k] for state in corpus_states.values()]
+                [state.theta_[k] for state in corpus_states.values()]
             ).ravel()
 
-            context_effect = np.tile(
-                self._get_nucleotide_effect(k, context_frequencies)[None,:],
-                (num_corpuses, 1)
-            )
+            context_effect = np.array(
+                [state.signature_effects_[k].sum(axis = (0,1)) for state in corpus_states.values()]
+            ).ravel()
 
-            target = np.concatenate([sstats[name].beta_sstats(k, n_bins) for name in corpus_states.keys()])
+            target = np.concatenate([sstats[name].theta_sstats(k, n_bins) for name in corpus_states.keys()])
             eta = (exposures * context_effect).ravel()
 
             # rescale the targets to mean 1 so that the learning rate is comparable across components and over epochs
@@ -334,7 +417,7 @@ class ModelState:
 
     def update_state(self, sstats, corpus_states, learning_rate):
         
-        update_params = ['rate_model','lambda','rho']
+        update_params = ['rate_model','lambda','rho', 'tau']
         
         for param in update_params:
             self.__getattribute__('update_' + param)(sstats, corpus_states, learning_rate) # call update function
@@ -364,7 +447,7 @@ class CorpusState(ModelState):
         self.alpha = np.ones(self.n_components)\
             .astype(self.dtype, copy=False)*self.pi_prior
         
-        self._logmu = self._get_baseline_prediction(
+        self._theta = self._get_baseline_prediction(
             self.n_components, self.n_loci, self.dtype
         )
 
@@ -400,56 +483,58 @@ class CorpusState(ModelState):
         )
 
         newstate.alpha = self.alpha.copy()
-        newstate._logmu = self._logmu[:, locus_subset]
-        newstate._log_denom = self._log_denom
+        newstate._theta = self.theta_[:, locus_subset]
+        newstate._log_denom = self.log_denom_
 
         return newstate
     
 
-    def update_log_denom(self, model_state, exposures):
-        self._log_denom = self._calc_log_denom(model_state, exposures)
+    def _get_log_strand_effects(self, k, model_state):
 
-
-    def _get_mutation_rate_logits(self, model_state, exposures):
-        return np.log(model_state.delta @ self.context_frequencies) + self._logmu + np.log(exposures)
-    
-
-    def _log_component_mutation_rate(self, k, model_state, exposures):
+        if self.corpus.cardinality_features_dim == 0:
+            return np.zeros((2, 1, self.n_loci)).astype(self.dtype, copy=False)
         
-        # Cx1 + CxL -> CxL
-        return np.log(model_state.delta[k])[:,None] \
-            + np.log(self.context_frequencies) \
-            + self._logmu[k][None,:] \
-            + np.log(exposures) \
-            - self._log_denom[k]
+        strand_features = model_state.strand_transformer.transform(
+                                    {self.name : self}
+                                )
+        if strand_features.ndim == 1:
+            strand_features = np.expand_dims(strand_features, axis=1)
+
+        strand_factors = strand_features @ np.log(model_state.tau_[k])
+
+        # 2 x L --> 2 x 1 x L
+        strand_effects = np.expand_dims( np.array([strand_factors, -strand_factors]), axis = 1)
+
+        return strand_effects
     
+    
+    def _get_log_signature_effect(self, k, model_state):
 
-    def _get_log_marginal_effect_rate(self, pi, model_state, exposures):
-
-        return np.log(
-            reduce(
-                lambda x, k : x + ( pi[k]*np.exp(self._log_component_mutation_rate(k, model_state, exposures)) ),
-                range(self.n_components),
-                np.zeros_like(self.context_frequencies)
-            )
+        # (2 x 1 x L) + (2 x C x L) + (1 x C x 1) %R% -> (2C x L)
+        return (
+            self._get_log_strand_effects(k, model_state) \
+            + np.log(self.context_frequencies) \
+            + np.log(model_state.lambda_[k][None,:,None])
         )
-
-
-    def _log_component_mutation_rate(self, k, model_state, exposures):
+                
+    
+    def _get_log_component_mutation_rate(self, k, model_state, exposures):
         
         # Cx1 + CxL -> CxL
-        return np.log(model_state.delta[k])[:,None] \
-            + np.log(self.context_frequencies) \
-            + self._logmu[k][None,:] \
-            + np.log(exposures) \
-            - self._log_denom[k]
+        return np.nan_to_num(
+            np.log(self.signature_effects_[k]) + \
+            + self.theta_[k][None,None,:] \
+            + np.log(exposures)[None, :, :] \
+            - self.log_denom_[k],
+            nan = -np.inf
+        )
     
 
     def _get_log_marginal_effect_rate(self, pi, model_state, exposures):
 
         return np.log(
             reduce(
-                lambda x, k : x + ( pi[k]*np.exp(self._log_component_mutation_rate(k, model_state, exposures)) ),
+                lambda x, k : x + ( pi[k]*np.exp(self._get_log_component_mutation_rate(k, model_state, exposures)) ),
                 range(self.n_components),
                 np.zeros_like(self.context_frequencies)
             )
@@ -460,26 +545,37 @@ class CorpusState(ModelState):
         '''
         Returns a (Z x C x L) tensor of the log of the component-wise mutation rate effects
         '''
-        locus_effects = (self._logmu + np.log(exposures))[:,None,:]
-        
-        if not use_context:
-            signature_effects = np.log(model_state.delta @ self.context_frequencies)[:,None,:]
-        else:
-            signature_effects = np.log(model_state.delta)[:,:,None] + np.log(self.context_frequencies)[None,:,:]
+        return np.array([
+            np.nan_to_num(self._get_log_component_mutation_rate(k, model_state, exposures), nan = -np.inf)
+            for k in range(self.n_components)
+        ])
 
-        return np.nan_to_num(
-            locus_effects + signature_effects - self._log_denom[:,None,:],
-            nan = -np.inf
-        )
-    
 
-    def _calc_log_denom(self, model_state, exposures):
+    def _get_log_denom(self):
         # (KxC) @ (CxL) |-> (KxL)
-        logits = self._get_mutation_rate_logits(model_state, exposures)
+        # K x 2 x C x L -> K x L
+        logits = np.log(self.signature_effects_.sum(axis = (1,2))) + self.theta_ + np.log(self.exposures)
         return logsumexp(logits, axis = 1, keepdims = True)
 
+    
+    @property
+    def signature_effects_(self):
+        return self._signature_effects
 
-    def update_mutation_rate(self, model_state, from_scratch=False):
+
+    def _update_stored_params(self, model_state):
+        
+        self._signature_effects = np.array([
+            np.exp(self._get_log_signature_effect(k, model_state))
+            for k in range(self.n_components)
+        ])
+
+        self._log_denom = self._get_log_denom()
+        
+        return self
+    
+
+    def update(self, model_state, from_scratch=False):
         
         design_matrix = model_state._get_design_matrix({self.name : self})
         X = model_state.feature_transformer.transform(
@@ -488,13 +584,12 @@ class CorpusState(ModelState):
 
         X = np.hstack([np.nan_to_num(X, nan=0), design_matrix.toarray()])
 
-        self._logmu = np.array([
+        self._theta = np.array([
             np.log(model_state.rate_models[k].predict(X).T)
             for k in range(self.n_components)
         ])
 
-        if self.corpus.shared_exposures:
-            self._log_denom = self._calc_log_denom(model_state, self.corpus.exposures)
+        self._update_stored_params(model_state)
 
         return self
 
@@ -515,21 +610,17 @@ class CorpusState(ModelState):
 
 
     @property
-    def logmu(self):
-        return self._logmu
+    def theta_(self):
+        return self._theta
     
+    @property
+    def log_denom_(self):
+        return self._log_denom
+
     @property
     def exposures(self):
         assert self.corpus.shared_exposures
-        return self.corpus.exposures
-        
-    
-    def get_log_denom(self, exposures):
-        if self.corpus.shared_correlates:
-            return self._log_denom # already have this calculated
-        else:
-            return self._calc_log_denom(exposures)
-        
+        return self.corpus.exposures        
 
     @property
     def context_frequencies(self):

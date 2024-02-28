@@ -20,7 +20,7 @@ class CorpusMixin(ABC):
         context_frequencies,
         shared_exposures,
     ):
-        self.type=type
+        self.type = type
         self.name = name
         self.samples = samples
         self.features = features
@@ -30,6 +30,10 @@ class CorpusMixin(ABC):
 
         if self._shared_exposures:
             self._exposures = samples[0].exposures
+
+        assert context_frequencies.shape == \
+            (self.cardinalities_dim, self.context_dim, self.locus_dim)
+        
 
     @abstractmethod
     def observation_class(self):
@@ -43,6 +47,8 @@ class CorpusMixin(ABC):
             'attribute_dim' : self.attribute_dim,
             'locus_dim' : self.locus_dim,
             'feature_dim' : self.feature_dim,
+            'cardinality_features_dim' : self.cardinality_features_dim,
+            'cardinalities_dim' : self.cardinalities_dim,
         }
     
     @property
@@ -125,8 +131,15 @@ class Corpus(CorpusMixin):
     
     @property
     def feature_dim(self):
-        return len(self.features)
-
+        return len([f for f in self.features.values() if not f['type'] == 'cardinality'])
+    
+    @property
+    def cardinality_features_dim(self):
+        return len([f for f in self.features.values() if f['type'] == 'cardinality'])
+    
+    @property
+    def cardinalities_dim(self):
+        return self.observation_class.N_CARDINALITY
 
     def __len__(self):
         return len(self.samples)
@@ -265,6 +278,14 @@ class MetaCorpus(CorpusMixin):
     @property
     def feature_dim(self):
         return self.corpuses[0].feature_dim
+    
+    @property
+    def cardinality_features_dim(self):
+        return self.corpuses[0].strand_dim
+    
+    @property
+    def cardinalities_dim(self):
+        return self.corpuses[0].cardinality_dim
     
     @property
     def locus_dim(self):

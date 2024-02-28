@@ -1,7 +1,7 @@
 import pandas as pd
 from collections import defaultdict
 from sklearn.preprocessing import OneHotEncoder, PowerTransformer, MinMaxScaler, \
-    QuantileTransformer, StandardScaler, RobustScaler
+    QuantileTransformer, StandardScaler, RobustScaler, LabelEncoder
 from sklearn.compose import ColumnTransformer
 from sklearn.base import clone, BaseEstimator
 from sklearn import set_config
@@ -9,6 +9,8 @@ import logging
 from numpy import array
 logger = logging.getLogger(' LocusRegressor')
 set_config(enable_metadata_routing=True)
+
+
 
 class ClassStratifiedTransformer(BaseEstimator):
 
@@ -26,30 +28,28 @@ class ClassStratifiedTransformer(BaseEstimator):
         return self.transformer.fit_transform(X, y)
 
 
+def _assemble_matrix(feature_names, corpus_states):
+        
+    feature_matrix = pd.concat([
+        pd.DataFrame(
+            {feature_name : state.features[feature_name]['values'] for feature_name in feature_names}
+        )
+        for state in corpus_states.values()
+    ])
+
+    corpus_labels = array([
+        name
+        for name, state in corpus_states.items()
+        for _ in  range(len(state.features[feature_names[0]]['values']))
+    ]).astype(str)
+
+    return feature_matrix, corpus_labels
+
 
 class FeatureTransformer:
 
     def __init__(self, categorical_encoder = OneHotEncoder(sparse_output=False, drop='first')):
         self.categorical_encoder = clone(categorical_encoder)
-
-
-    def _assemble_matrix(self, corpus_states):
-        
-        feature_matrix = pd.concat([
-            pd.DataFrame(
-                {feature_name : state.features[feature_name]['values'] for feature_name in self.feature_names_}
-            )
-            for state in corpus_states.values()
-        ])
-
-        corpus_labels = array([
-            name
-            for name, state in corpus_states.items()
-            for _ in  range(len(state.features[self.feature_names_[0]]['values']))
-        ]).astype(str)
-
-        return feature_matrix, corpus_labels
-
 
 
     def list_feature_groups(self):
@@ -87,7 +87,7 @@ class FeatureTransformer:
         
         example_features = next(iter(corpus_states.values())).features
         
-        self.feature_names_ = list(example_features.keys())
+        self.feature_names_ = list([f for f in example_features.keys() if example_features[f]['type'] != 'cardinality'])
         self.feature_types_ = [example_features[feature]['type'] for feature in self.feature_names_]
         self.groups_ = [example_features[feature]['group'].split(',') for feature in self.feature_names_]
         
@@ -106,7 +106,8 @@ class FeatureTransformer:
             verbose_feature_names_out=False,
         )
 
-        matrix, labels = self._assemble_matrix(corpus_states)
+        matrix, labels = _assemble_matrix(self.feature_names_, corpus_states)
+
         self.transformer_.fit(matrix, y=labels)
 
         if len(feature_type_dict_['categorical']) > 0:
@@ -126,10 +127,43 @@ class FeatureTransformer:
     def transform(self, corpus_states):
 
         for corpus_state in corpus_states.values():
-            assert corpus_state.feature_names == self.feature_names_
+            assert all([f in corpus_state.feature_names for f in self.feature_names_])
 
-        matrix, labels = self._assemble_matrix(corpus_states)
+        matrix, labels = _assemble_matrix(self.feature_names_, corpus_states)
         transformed_matrix = self.transformer_.transform(matrix)#, y=labels)
 
         return transformed_matrix
     
+
+
+class CardinalityTransformer(BaseEstimator):
+
+    def fit(self, corpus_states):
+        
+        example_features = next(iter(corpus_states.values())).features
+        
+        self.feature_names_ = list([f for f in example_features.keys() if example_features[f]['type'] == 'cardinality'])
+
+        logger.info(
+            f'Found cardinality features: {", ".join(self.feature_names_)}'
+        )
+        
+        self.transformer_ = LabelEncoder().fit(['-','.','+'])
+        
+        return self
+    
+
+    def transform(self, corpus_states):
+
+        for corpus_state in corpus_states.values():
+            assert all([f in corpus_state.feature_names for f in self.feature_names_])
+
+        matrix, _ = _assemble_matrix(self.feature_names_, corpus_states)
+        matrix = matrix.values
+        
+        transformed_matrix = array([
+            self.transformer_.transform(matrix[:,col]) - 1
+            for col in range(matrix.shape[1])
+        ]).T
+
+        return transformed_matrix

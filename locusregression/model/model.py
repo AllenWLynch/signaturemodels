@@ -26,16 +26,22 @@ def _get_observation_likelihood(*,model_state, sample, corpus_state):
     Flattened phi is the probability of a mutation and locus for each signature given the current modelstate.
     Shape: N_sigs x N_mutations
     '''
-    rho = model_state.omega/model_state.omega.sum(axis = -1, keepdims = True)
-    
-    flattend_phi = (
+
+    '''rho = model_state.rho_/model_state.rho_.sum(axis = -1, keepdims = True)
+    (
             np.log(rho) + \
             np.log(model_state.delta)[:,:,None]
         )[:, sample.context, sample.mutation]\
-        + np.log(sample.exposures[:, sample.locus]) \
         + np.log(corpus_state.context_frequencies[sample.context, sample.locus]) \
-        + corpus_state.logmu[:, sample.locus] \
-        - corpus_state.get_log_denom(sample.exposures)\
+    '''
+    
+    flattend_phi = (
+            np.log(model_state.rho_)[:, sample.context, sample.mutation] + \
+            np.log(corpus_state.signature_effects_[:, sample.cardinality, sample.context, sample.locus])
+        ) \
+        + np.log(sample.exposures[:, sample.locus]) \
+        + corpus_state.theta_[:, sample.locus] \
+        - corpus_state.log_denom_
     
     exp_phi = np.nan_to_num(np.exp(flattend_phi), nan=0)
 
@@ -292,9 +298,9 @@ class LocusRegressor:
         return self.SSTATS.MetaSstats(sstat_collections), np.vstack(gammas)
         
 
-    def _update_mutation_rates(self):
+    def _update_corpus_states(self):
         for corpusstate in self.corpus_states.values():
-            corpusstate.update_mutation_rate(self.model_state)
+            corpusstate.update(self.model_state)
 
 
     def _init_doc_variables(self, n_samples, is_bound = False):
@@ -370,7 +376,7 @@ class LocusRegressor:
         self._gamma = self._init_doc_variables(self.n_samples)
 
         for state in self.corpus_states.values():
-            state.update_log_denom(self.model_state, state.exposures)
+            state._update_stored_params(self.model_state)
 
 
     def _subsample_corpus(self,*,corpus, batch_svi, locus_svi, n_subsample_loci):
@@ -467,7 +473,7 @@ class LocusRegressor:
                         for corpus_state in self.corpus_states.values():
                             corpus_state.update_alpha(sstats, learning_rate_fn(epoch))
 
-                self._update_mutation_rates()
+                self._update_corpus_states()
 
                 elapsed_time = time.time() - start_time
                 self.elapsed_times.append(elapsed_time)
@@ -558,7 +564,7 @@ class LocusRegressor:
         }
         
         for clone in corpus_state_clones.values():
-            clone.update_mutation_rate(self.model_state, from_scratch = True)
+            clone.update(self.model_state, from_scratch = True)
             clone.as_dummy()
 
         return corpus_state_clones
@@ -670,20 +676,10 @@ class LocusRegressor:
 
         _genome_context_frequencies = np.sum(
             corpus.context_frequencies,
-            -1, keepdims= True
+            (0,-1),
         )
 
         self._genome_context_frequencies = _genome_context_frequencies/_genome_context_frequencies.sum()
-
-
-    def get_log_nucleotide_effect(self, corpus):
-
-        try:
-            self.corpus_states[corpus.name]
-        except KeyError:
-            raise ValueError(f'Corpus {corpus.name} not found in model.')
-        
-        return np.log( self.model_state.delta @ corpus.context_frequencies )
 
 
     def get_log_component_mutation_rate(self, corpus, use_context=True):
@@ -705,7 +701,7 @@ class LocusRegressor:
             raise ValueError(f'Corpus {corpus.name} not found in model.')
         
         new_state = corpus_state.clone_corpusstate(corpus)
-        new_state.update_mutation_rate(self.model_state, from_scratch = True)
+        new_state.update(self.model_state, from_scratch = True)
 
         return new_state.get_log_component_effect_rate(
                     self.model_state, new_state.exposures, use_context=use_context,
@@ -742,7 +738,7 @@ class LocusRegressor:
             raise ValueError(f'Corpus {corpus.name} not found in model.')
         
         new_state = corpus_state.clone_corpusstate(corpus)
-        new_state.update_mutation_rate(self.model_state, from_scratch = True)
+        new_state.update(self.model_state, from_scratch = True)
 
         gamma = new_state.alpha/new_state.alpha.sum()
 
@@ -814,14 +810,46 @@ class LocusRegressor:
         component = self._get_signature_idx(component)
 
         self.observation_class.plot_factorized(
-            context_dist = self.model_state.delta[component]/self._genome_context_frequencies.ravel(),
-            mutation_dist = self.model_state.omega[component],
+            context_dist = self.model_state.lambda_[component]/self._genome_context_frequencies.ravel(),
+            mutation_dist = self.model_state.rho_[component],
             attribute_dist = None,
             ax = ax,
             figsize = figsize,
             fontsize = fontsize,
             show_strand=show_strand,
         )
+
+        return ax
+    
+
+    def plot_cardinality_bias(self, component, ax = None, figsize = (1,2), fontsize=7):
+        
+        component = self._get_signature_idx(component)
+
+        if ax is None:
+            fig, ax = plt.subplots(1,1, figsize = figsize)
+
+        xticks = self.model_state.strand_transformer.feature_names_
+        bar = np.log2(self.model_state.tau_[component])
+        ax.bar(
+            xticks,
+            bar,
+            color = ['lightgrey' if b > 0 else 'darkred' for b in bar],
+            edgecolor = 'black',
+            linewidth = 0.5,
+            width = 0.5,
+        )
+
+        ax.set_ylabel('log2 Bias', fontsize = fontsize)
+            
+        ax.set_xticklabels(xticks, rotation = 45, fontsize = fontsize)
+        bound = round(max(1, np.abs(bar).max() + 0.1) * 4) / 4
+        ax.set(ylim = (-bound,bound))
+        ax.set_yticks([-bound,0,bound])
+        ax.set_yticklabels([-bound,0,bound], fontsize = fontsize)
+
+        for spine in ax.spines.values():
+            spine.set_visible(False)
 
         return ax
 
@@ -834,15 +862,24 @@ class LocusRegressor:
             ax (matplotlib.axes.Axes): The axes object containing the plot.
         """
 
-        fig, ax = plt.subplots(self.n_components, 1, 
-                               figsize=(5.5, 1.25*self.n_components), 
-                               sharex=True
+        n_card_features = len(self.model_state.strand_transformer.feature_names_)
+
+        fig, ax = plt.subplots(self.n_components, 2, 
+                               figsize=(5.5 + 1*n_card_features, 1.25*self.n_components), 
+                               sharex='col',
+                               gridspec_kw={
+                                   'width_ratios': [5.5, 1*n_card_features],
+                                   'hspace': 1,
+                                   'wspace': 0.5,
+                                   }
                                )
 
         for i in range(self.n_components):
-            self.plot_signature(i, ax=ax[i], show_strand=show_strand)
-            ax[i].set_title('')
-            ax[i].set_ylabel(self.component_names[i], fontsize=7)
+            self.plot_signature(i, ax=ax[i,0], show_strand=show_strand)
+            ax[i,0].set_title('')
+            ax[i,0].set_ylabel(self.component_names[i], fontsize=7)
+
+            self.plot_cardinality_bias(i, ax=ax[i,1], fontsize=7)
 
         return ax
     

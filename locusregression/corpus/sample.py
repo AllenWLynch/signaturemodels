@@ -26,6 +26,7 @@ class Sample:
     context : np.ndarray
     locus : np.ndarray
     exposures : np.ndarray
+    cardinality : np.ndarray
     name : str
     corpus_name : str
     corpus_name : str = None
@@ -40,6 +41,7 @@ class Sample:
         'context' : np.uint8,
         'locus' : np.uint32,
         'exposures' : np.float32,
+        'cardinality' : np.uint8,
         'chrom' : 'S',
         'pos' : np.uint32,
         'weight' : np.float32,
@@ -47,10 +49,11 @@ class Sample:
         'corpus_name' : 'S',
     }
 
-    data_attrs = ['attribute','mutation','context','locus','exposures','weight','chrom','pos']
-    required = ['attribute', 'mutation','context','locus','exposures']
+    data_attrs = ['attribute','mutation','context','locus','exposures','cardinality','weight','chrom','pos']
+    required = ['attribute', 'mutation','context','locus','exposures','cardinality']
 
-    N_CONTEXTS=64
+    N_CARDINALITY=2
+    N_CONTEXTS=32
     N_MUTATIONS=3
     N_ATTRIBUTES=1
 

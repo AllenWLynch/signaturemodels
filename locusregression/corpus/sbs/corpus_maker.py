@@ -5,7 +5,8 @@ import numpy as np
 from collections import Counter, defaultdict
 import logging
 import tqdm
-from .observation_config import SBSSample, MUTATIONS_IDX, CONTEXT_IDX, CONTEXTS
+from .observation_config import SBSSample, MUTATIONS_IDX, CONTEXT_IDX, CONTEXTS, \
+            convert_to_cosmic, revcomp
 import subprocess
 import os
 from joblib import Parallel, delayed
@@ -89,11 +90,14 @@ class SBSCorpusMaker(CorpusMaker):
                 chrom, str(pos), oldnuc, ref 
             )
 
+            context, alt, cardinality = convert_to_cosmic(context, alt)
+
             return {
                 'chrom' : chrom,
                 'locus' : locus_idx,
                 'mutation' : MUTATIONS_IDX[context][alt],
                 'context' : CONTEXT_IDX[context],
+                'cardinality' : int(cardinality),
                 'attribute' : 0, # placeholder for now
                 'weight' : float(weight),
                 'pos' : int(pos),
@@ -245,7 +249,12 @@ class SBSCorpusMaker(CorpusMaker):
                     trinuc for trinuc in rolling(window_sequence) if not 'N' in trinuc
                 ])
 
-            return [trinuc_counts[context] for context in CONTEXTS]
+
+
+            return [
+                [trinuc_counts[context] for context in CONTEXTS],
+                [trinuc_counts[revcomp(context)] for context in CONTEXTS]
+            ]
         
         with Fasta(fasta_file) as fasta_object:
             trinuc_matrix = [
@@ -253,7 +262,8 @@ class SBSCorpusMaker(CorpusMaker):
                 for w in tqdm.tqdm(window_set, nrows=100, desc = 'Aggregating trinucleotide content')
             ]
 
-        trinuc_matrix = np.array(trinuc_matrix) # DON'T (!) add a pseudocount
+        # L, D, C
+        trinuc_matrix = np.array(trinuc_matrix).transpose(((1,2,0))) # DON'T (!) add a pseudocount
 
         return trinuc_matrix # DON'T (!) normalize, the number of contexts in a window is part of the likelihood
 

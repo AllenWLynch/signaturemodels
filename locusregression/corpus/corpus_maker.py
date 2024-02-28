@@ -119,7 +119,7 @@ class CorpusMaker:
             type=cls.corpus_type,
             samples = InMemorySamples(samples),
             features = correlates_dict,
-            context_frequencies = context_frequencies.T,
+            context_frequencies = context_frequencies,
             shared_exposures = shared,
             name = corpus_name,
             metadata={

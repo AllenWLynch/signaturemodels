@@ -180,6 +180,7 @@ def process_discrete(
         null='.',
         class_priority=None,
         column=4,
+        feature_type='categorical',
 ):
 
     discrete_features = make_discrete_features(
@@ -191,7 +192,7 @@ def process_discrete(
     )
 
     print(f'#feature={feature_name}', file=output)
-    print('#type=categorical', file=output)
+    print(f'#type={feature_type}', file=output)
     print(f'#group={group}', file = output)
     print(*discrete_features, sep = '\n', file = output)
 
@@ -206,6 +207,21 @@ discrete_sub.add_argument('--null','-null', type = str, default='None', help = '
 discrete_sub.add_argument('--class-priority','-p', type = str, nargs = '+', default=None, help = 'Priority for resolving multiple classes for a single region.')
 discrete_sub.add_argument('--column','-c', type = posint, default=4, help = 'Column in bed file to use for feature.')
 discrete_sub.set_defaults(func = process_discrete)
+
+
+cardinality_sub = subparsers.add_parser('ingest-cardinality', help = 'Summarize discrete genomic features for some genomic elements.')
+cardinality_sub.add_argument('bed-file', type = file_exists, help = 'Bed file of genomic features. The provided column must contain +/-/., all other columns are ignored.')
+cardinality_sub.add_argument('--regions-file','-r', type = file_exists, required=True,)
+cardinality_sub.add_argument('--feature-name','-name', type = str, required=True,)
+cardinality_sub.add_argument('--output','-o', type = argparse.FileType('w'), default=sys.stdout)
+cardinality_sub.add_argument('--column','-c', type = posint, default=4, help = 'Column in bed file to use for feature.')
+cardinality_sub.set_defaults(func = partial(process_discrete, 
+                                         group = 'cardinality', 
+                                         null = '.', 
+                                         class_priority = ['+','-','.'],
+                                         feature_type = 'cardinality',
+                                        )
+                          )
 
 
 def write_dataset(

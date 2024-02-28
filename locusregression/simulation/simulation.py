@@ -51,10 +51,7 @@ class SimulatedCorpus:
             context = key[0] + key[2] + key[6]
             mutation = key[4]
 
-            sigmatrix[CONTEXT_IDX[context], MUTATIONS_IDX[context][mutation]] += p/2
-
-            context = revcomp(context); mutation = complement[mutation]
-            sigmatrix[CONTEXT_IDX[context], MUTATIONS_IDX[context][mutation]] += p/2
+            sigmatrix[CONTEXT_IDX[context], MUTATIONS_IDX[context][mutation]] += p
 
         return sigmatrix
 
@@ -77,6 +74,7 @@ class SimulatedCorpus:
         signal_std = SIGNAL_STD.copy(),
         exposures = None,*,
         cosmic_sigs,
+        cardinality_effects,
     ):
 
         signatures = np.vstack([
@@ -114,18 +112,25 @@ class SimulatedCorpus:
         randomstate = np.random.RandomState(seed)
 
         states = SimulatedCorpus.get_genomic_states(randomstate, 
-            n_loci=n_loci, transition_matrix=state_transition_matrix)
+            n_loci=n_loci, transition_matrix=state_transition_matrix
+        )
+
+        cardinality_states = SimulatedCorpus.get_genomic_states(randomstate, 
+            n_loci=n_loci, transition_matrix=state_transition_matrix
+        )
 
         signals = SimulatedCorpus.get_signals(randomstate, state = states, 
-            signal_means=signal_means, signal_std=signal_std)
+            signal_means=signal_means, signal_std=signal_std
+        )
 
+        # 2 x C x L
         context_frequencies = np.vstack([
-            randomstate.dirichlet(trinucleotide_priors[state])[None,:]
+            randomstate.dirichlet(np.tile(trinucleotide_priors[state], 2))[None,:]
             for state in states
-        ]).T
+        ]).T.reshape(2, -1, n_loci)
 
         omega = signatures
-        delta = signatures.sum(axis=-1)/context_frequencies.sum(axis=1)
+        delta = signatures.sum(axis=-1)/context_frequencies.sum(axis=(0,2))
 
         cell_pi = randomstate.dirichlet(np.ones(num_signatures) * pi_prior, size = n_cells)
         cell_n_mutations = randomstate.lognormal(log_mean_mutations, log_std_mutations, size = n_cells).astype(int)
@@ -144,6 +149,8 @@ class SimulatedCorpus:
             context_frequencies = context_frequencies,
             delta = delta,
             locus_effects = locus_effects,
+            cardinality_states = cardinality_states,
+            cardinality_effects = cardinality_effects
         )
 
         samples = []
@@ -162,13 +169,7 @@ class SimulatedCorpus:
                 )
             )
 
-        corpus = Corpus(
-                type='SBS',
-                name = corpus_name,
-                samples = InMemorySamples(samples),
-                context_frequencies = context_frequencies,
-                shared_exposures = shared_exposures,
-                features = {
+        feature_dict = {
                     'feature' + str(k) : {
                         'type' : 'continuous',
                         'values' : signal,
@@ -176,6 +177,21 @@ class SimulatedCorpus:
                     }
                     for k, signal in enumerate(signals)
                 }
+        
+        card_map = ['-','.','+']
+        feature_dict['cardinality'] = {
+            'type' : 'cardinality',
+            'values' : np.array([card_map[c] for c in cardinality_states]),
+            'group' : 'all'
+        }
+
+        corpus = Corpus(
+                type='SBS',
+                name = corpus_name,
+                samples = InMemorySamples(samples),
+                context_frequencies = context_frequencies,
+                shared_exposures = shared_exposures,
+                features = feature_dict
         )
 
         generative_parameters = {
@@ -243,14 +259,17 @@ class SimulatedCorpus:
 
 
     @staticmethod
-    def _get_psi_matrix(*, exposures, context_frequencies, delta, locus_effects):
+    def _get_psi_matrix(*, exposures, context_frequencies, delta, locus_effects, cardinality_effects, cardinality_states):
 
-        locus_effects = (np.log(locus_effects) + np.log(exposures))[:,None,:] # KxL + 1xL -> Kx1xL
-        signature_effects = np.log(delta)[:,:,None] + np.log(context_frequencies)[None,:,:] + np.log(10000) # KxCx1 + 1xCxL -> KxCxL
+        locus_effects = (np.log(locus_effects) + np.log(exposures)) # KxL + 1xL -> KxL
 
-        logits = locus_effects + signature_effects # KxCxL
+         # Kx1xCx1 + 1x2xCxL -> Kx2xCxL
+        signature_effects = np.log(delta)[:,None,:,None] + np.log(context_frequencies)[None,:,:,:] + np.log(10000) \
+                                + cardinality_states[None,None,None,:]*np.log(cardinality_effects)[:,None,None,None]*np.array([-1,1])[None,:,None,None]
 
-        logdenom = np.logaddexp.reduce(logits, axis = (1,2), keepdims = True) # KxL
+        logits = locus_effects[:, None, None, :] + signature_effects # Kx2xCxL
+
+        logdenom = np.logaddexp.reduce(logits, axis = (1,2,3), keepdims = True) # Kx1x1x1
 
         return np.exp(
             np.nan_to_num(
@@ -275,16 +294,21 @@ class SimulatedCorpus:
         if randomstate is None:
             randomstate = np.random.RandomState(seed)
         
-        loci, contexts, mutations = [],[],[]
-        p_l = psi_matrix.sum(axis = 1)
+        loci, contexts, mutations, cardinalities = [],[],[],[]
+        # KxDxCxL --> KxL
+        p_l = psi_matrix.sum(axis = (1,2))
+
+        # KxDxCxL --> KxDxL
+        p_card_given_l = psi_matrix.sum(axis = 2)/p_l[:,None,:]
         
         for i in range(n_mutations):
 
             sig = randomstate.choice(len(pi), p = pi)
 
             locus = randomstate.choice(p_l.shape[1], p = p_l[sig,:])
+            cardinality = randomstate.choice([0,1], p = p_card_given_l[sig,:,locus])
 
-            context_dist = psi_matrix[sig,:,locus]/psi_matrix[sig,:,locus].sum()
+            context_dist = psi_matrix[sig,cardinality,:,locus]/psi_matrix[sig,cardinality,:,locus].sum()
             
             context = randomstate.choice(len(CONTEXT_IDX), p = context_dist)
 
@@ -294,6 +318,7 @@ class SimulatedCorpus:
             loci.append(locus)
             contexts.append(context)
             mutations.append(mutation)
+            cardinalities.append(cardinality)
 
 
         elements = dict(
@@ -301,6 +326,7 @@ class SimulatedCorpus:
             context=np.array(contexts), 
             locus=np.array(loci), 
             weight=np.ones_like(loci).astype(float),
+            cardinality=np.array(cardinalities),
             pos = np.array(loci),
             chrom = np.array(['chr1']*len(loci)),
             attribute = np.zeros_like(loci),

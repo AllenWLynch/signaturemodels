@@ -11,14 +11,18 @@ def revcomp(seq):
 
 def convert_to_cosmic(context, alt):
 
+    cardinality = 0
     if not context[1] in 'CT': 
+        cardinality = 1
         context, alt = revcomp(context), complement[alt]
 
-    return context, alt
+    return context, alt, cardinality
 
+
+nucleotide_order = ['C','T','A','G']
 
 CONTEXTS = sorted(
-    map(lambda x : ''.join(x), product('ATCG','ATCG','ATCG')), 
+    map(lambda x : ''.join(x), product('ATCG','TC','ATCG')), 
     key = lambda x : (x[1], x[0], x[2])
     )
 
@@ -147,12 +151,13 @@ MUTATION_PALETTE = [color for color in _transition_palette.values() for i in ran
 
 class SBSSample(Sample):
 
-    N_CONTEXTS=64
+    N_CARDINALITY=2
+    N_CONTEXTS=32
     N_MUTATIONS=3
     N_ATTRIBUTES=1
 
 
-    def plot(self, ax=None, figsize=(5,3), show_strand=True,**kwargs):
+    def plot(self, ax=None, figsize=(5.5,1.25), show_strand=False,**kwargs):
         
         context_dist = np.zeros((self.N_CONTEXTS,))
         mutation_dist = np.zeros((self.N_CONTEXTS, self.N_MUTATIONS,))
@@ -172,7 +177,7 @@ class SBSSample(Sample):
 
     @staticmethod
     def plot_factorized(context_dist, mutation_dist, attribute_dist, 
-                        ax=None, figsize=(5,3), show_strand=True,**kwargs):
+                        ax=None, figsize=(5.5,1.25), show_strand=False,**kwargs):
 
         def to_cosmic_str(context, mutation):
             return f'{context[0]}[{context[1]}>{mutation}]{context[2]}'
@@ -185,7 +190,7 @@ class SBSSample(Sample):
         event_prob = dict(zip(event_name, joint_prob))
 
         fwd_events = np.array([event_prob[(event, 'f')] for event in COSMIC_SORT_ORDER])
-        rev_events = np.array([event_prob[(event, 'r')] for event in COSMIC_SORT_ORDER])
+        #rev_events = np.array([event_prob[(event, 'r')] for event in COSMIC_SORT_ORDER])
 
         
         if ax is None:
@@ -201,18 +206,10 @@ class SBSSample(Sample):
         )
         extent = max(joint_prob)
 
-        if show_strand:
-            ax.bar(height = fwd_events, **plot_kw)
-            ax.bar(height = -rev_events, **plot_kw)
-            
-            ax.set(yticks = [-extent,0,extent], xticks = [], 
-               xlim = (-1,96), ylim = (-1.1*extent, 1.1*extent)
-            )  
-        else:
-            ax.bar(height = fwd_events + rev_events, **plot_kw)
-            ax.set(yticks = [0,extent], xticks = [], 
-               xlim = (-1,96), ylim = (0, 1.1*extent)
-            )
+        ax.bar(height = fwd_events, **plot_kw)
+        ax.set(yticks = [], xticks = [], 
+            xlim = (-1,96), ylim = (0, 1.1*extent)
+        )
 
         ax.axhline(0, color = 'lightgrey', linewidth = 0.25)
 
