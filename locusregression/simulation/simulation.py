@@ -178,7 +178,7 @@ class SimulatedCorpus:
                     for k, signal in enumerate(signals)
                 }
         
-        card_map = ['-','.','+']
+        card_map = ['-','nan','+']
         feature_dict['cardinality'] = {
             'type' : 'cardinality',
             'values' : np.array([card_map[c] for c in cardinality_states]),

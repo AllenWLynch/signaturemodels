@@ -156,6 +156,8 @@ class ModelState:
             sigmatrix = SimulatedCorpus.cosmic_sig_to_matrix(COSMIC_SIGS[sig])
             
             self._rho[i] = sigmatrix * pseudocounts + 1.
+            self._rho[i] = self._rho[i]/self._rho[i].sum(axis = -1, keepdims = True)
+
             self._lambda[i] = sigmatrix.sum(axis = -1) * pseudocounts/genome_context_frequencies + 1.
 
 
@@ -282,7 +284,6 @@ class ModelState:
     
     def update_tau(self, sstats, corpus_states, learning_rate):
         _tau = self._tau_update(sstats, corpus_states)
-        print(_tau.ravel())
         self._svi_update('_tau', _tau, learning_rate)
 
 
@@ -419,7 +420,6 @@ class ModelState:
     def update_state(self, sstats, corpus_states, learning_rate):
         
         update_params = ['rate_model','lambda','rho', 'tau']
-        
         for param in update_params:
             self.__getattribute__('update_' + param)(sstats, corpus_states, learning_rate) # call update function
 
@@ -482,10 +482,11 @@ class CorpusState(ModelState):
             random_state = self.random_state,
             subset_sample=len(locus_subset)/self.n_loci
         )
-
+        
         newstate.alpha = self.alpha.copy()
         newstate._theta = self.theta_[:, locus_subset]
         newstate._log_denom = self.log_denom_
+        newstate._signature_effects = self.signature_effects_[:, :, :, locus_subset]
 
         return newstate
     

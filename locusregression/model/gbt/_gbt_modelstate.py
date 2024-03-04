@@ -143,7 +143,7 @@ class GBTCorpusState(CorpusState):
             for k in range(self.n_components)
         ])
 
-        self._log_denom = self._get_log_denom()
+        self._update_stored_params(model_state)
 
         return self
     
