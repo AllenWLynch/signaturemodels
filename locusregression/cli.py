@@ -154,7 +154,7 @@ def process_distance_feature(
     )
 
     print(f'#feature={feature_name}_progressBetween\t#feature={feature_name}_interFeatureDistance', file=output)
-    print(f'#type=none\t#type={normalization}', file=output)
+    print(f'#type={normalization}\t#type={normalization}', file=output)
     print(f'#group={group}\t#group={group}', file = output)
     print(*map(lambda x : '\t'.join(map(str, x)), zip(upstream, downstream)), sep = '\n', file = output)
 
@@ -218,7 +218,7 @@ cardinality_sub.add_argument('--column','-c', type = posint, default=4, help = '
 cardinality_sub.set_defaults(func = partial(process_discrete, 
                                          group = 'cardinality', 
                                          null = '.', 
-                                         class_priority = ['+','-','.'],
+                                         class_priority = ['+','-'],
                                          feature_type = 'cardinality',
                                         )
                           )

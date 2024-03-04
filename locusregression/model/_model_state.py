@@ -8,6 +8,7 @@ from sklearn.preprocessing import OneHotEncoder
 from ._feature_transformer import FeatureTransformer, CardinalityTransformer
 from functools import reduce
 from pandas import DataFrame
+import warnings
 
 def _get_linear_model(*args, **kw):
     return PoissonRegressor(
@@ -511,11 +512,14 @@ class CorpusState(ModelState):
     def _get_log_signature_effect(self, k, model_state):
 
         # (2 x 1 x L) + (2 x C x L) + (1 x C x 1) %R% -> (2C x L)
-        return (
-            self._get_log_strand_effects(k, model_state) \
-            + np.log(self.context_frequencies) \
-            + np.log(model_state.lambda_[k][None,:,None])
-        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+
+            return (
+                self._get_log_strand_effects(k, model_state) \
+                + np.log(self.context_frequencies) \
+                + np.log(model_state.lambda_[k][None,:,None])
+            )
                 
     
     def _get_log_component_mutation_rate(self, k, model_state, exposures):

@@ -131,7 +131,7 @@ def _get_endpoints(allowed_chroms, *bedfiles):
     )
 
 
-def _endpoints_to_regions(endpoints, min_windowsize = 5):
+def _endpoints_to_regions(endpoints, min_windowsize = 0):
 
     active_features = Counter()
     feature_combination_ids = dict()

@@ -200,6 +200,7 @@ class Corpus(CorpusMixin):
                 'mutation' : sample.mutation[mask],
                 'context' : sample.context[mask],
                 'weight' : sample.weight[mask],
+                'cardinality' : sample.cardinality[mask],
                 'locus' : np.array([subsample_lookup[locus] for locus in sample.locus[mask]]).astype(int),
                 'chrom' : sample.chrom[mask],
                 'pos' : sample.pos[mask],
@@ -219,7 +220,7 @@ class Corpus(CorpusMixin):
                 }
                 for feature_name, v in self.features.items()
             },
-            context_frequencies = self.context_frequencies[:,loci],
+            context_frequencies = self.context_frequencies[:,:,loci],
             shared_exposures = self.shared_exposures,
             name = self.name,
         )
@@ -414,11 +415,18 @@ def _read_features(data):
     feature_groups = data['data/features']
     
     for feature_name in feature_groups.keys():
+
         feature_group = feature_groups[feature_name]
+
+        vals = feature_group['values'][...]
+
+        if isinstance(vals.dtype, np.dtypes.BytesDType):
+            vals = np.char.decode(vals, 'utf-8')
+
         features[feature_name] = {
             'type' : feature_group.attrs['type'],
             'group' : feature_group.attrs['group'],
-            'values' : feature_group['values'][...],
+            'values' : vals,
         }
 
     return features

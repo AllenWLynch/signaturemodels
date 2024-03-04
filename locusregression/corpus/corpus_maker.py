@@ -108,7 +108,7 @@ class CorpusMaker:
         else:
             context_frequencies = cls.read_context_frequencies(context_file)
 
-            assert context_frequencies.shape[0] == len(windows), \
+            assert context_frequencies.shape[-1] == len(windows), \
                 'The number of trinucleotide distributions provided in {} does not match the number of specified windows.\n'\
 
         shared = exposures.shape[0] == 1
@@ -205,7 +205,8 @@ class CorpusMaker:
         logger.info('Reading genomic features ...')
 
         type_map = {
-            'categorical' : str
+            'categorical' : str,
+            'cardinality' : str,
         }
         
         correlates = []
@@ -261,14 +262,17 @@ class CorpusMaker:
                 assert len(line) == numcols, 'Record {}\non line {} has inconsistent number of columns. Expected {} columns, got {}.'.format(
                         txt, lineno, numcols, len(line)
                     )
-                    
-                if any([f == '.' and not t=='categorical' for f,t in zip(line, feature_types)]):
-                    logger.warn('A value was not recorded for window {}: {} for a continous feature.'
+                
+                null_values = [f == '.' and not t in ['categorical','cardinality'] for f,t in zip(line, feature_types)]
+
+                if any(null_values):
+                    logger.info('A value was not recorded for window {}: {} for a continous feature: {}'
                                         'If this entry was made by "bedtools map", this means that the genomic feature file did not cover all'
                                         ' of the windows.'.format(
-                                            lineno, txt
+                                            lineno, txt, feature_names[null_values.index(True)]
                                         )
                                     )
+                    
                 try:
                     # convert each feature in the line to the appropriate type
                     # if the feature is categorical, it will be left as a string
