@@ -7,7 +7,8 @@ from scipy.special import logsumexp
 from sklearn.preprocessing import OneHotEncoder
 from ._feature_transformer import FeatureTransformer, CardinalityTransformer
 from functools import reduce
-from pandas import DataFrame
+from itertools import product
+from scipy.sparse import csc_matrix
 import warnings
 
 def _get_linear_model(*args, **kw):
@@ -69,6 +70,7 @@ class ModelState:
         self._tau = np.ones((n_components, cardinality_features_dim))\
             .astype(dtype, copy=False)
         
+        
         # placeholder for when attributes come into play
         #self.psi
         
@@ -123,6 +125,16 @@ class ModelState:
             self.strand_transformer = None
 
 
+        X_tau_combinations = list(product(
+            *[[-1,0,1]*self.cardinality_features_dim], 
+            list(range(self.n_distributions))
+        ))
+
+        self._tau_combinations_map = dict(zip(X_tau_combinations, range(len(X_tau_combinations))))
+
+        self._tau_features = np.array(list(self._tau_combinations_map.keys()))
+
+
     @property
     def lambda_(self):
         return self._lambda
@@ -173,8 +185,19 @@ class ModelState:
                     )
     
 
+    def _get_label_vector(self, corpus_states, n_repeats):
+        return np.concatenate([[name]*n_repeats for name in corpus_states.keys()])
+    
+
+    def _get_label_idx_vector(self, corpus_states, n_repeats):
+        labels = self._get_label_vector(corpus_states, n_repeats)
+        return self.corpus_intercept_encoder_.transform(
+            labels.reshape((-1,1))
+        ).indices
+    
+
     def _get_onehot_column(self, corpus_states, n_repeats):
-        labels = np.concatenate([[name]*n_repeats for name in corpus_states.keys()])
+        labels = self._get_label_vector(corpus_states, n_repeats)
         # One-hot encode the labels
         encoded_labels = self.corpus_intercept_encoder_.transform(
             labels.reshape((-1,1))
@@ -230,16 +253,22 @@ class ModelState:
             ], axis = 0
         )
         
+        # add a column for the corpus intercept
         X = np.hstack([
-            X, self._get_onehot_column(corpus_states, 2*n_bins).toarray()
+            X, self._get_label_idx_vector(corpus_states, 2*n_bins)[:,None]
         ])
 
-        x_cols = ['X' + str(i) for i in range(X.shape[1])]
-        df = DataFrame(X, columns = x_cols)
-        return df
+        indices = np.array([self._tau_combinations_map[tuple(row)] for row in X])
+
+        aggregation_matrix = csc_matrix(
+            (np.ones(len(indices)), (np.arange(len(indices)), indices)), 
+            shape=(len(indices), len(self._tau_combinations_map.keys()))
+        ).T
+
+        return self._tau_features, aggregation_matrix
 
 
-    def _get_tau_targets(self, k, sstats, corpus_states):
+    def _get_tau_targets(self, k, sstats, corpus_states, design_matrix):
 
         n_bins = next(iter(corpus_states.values())).n_loci
 
@@ -253,46 +282,45 @@ class ModelState:
         eta = np.concatenate([_get_cardinality_exposure(state) for state in corpus_states.values()]) # I x C -> I*C
         target = np.concatenate([sstats[name].tau_sstats(k, n_bins).ravel() for name in corpus_states.keys()])
 
+        eta = design_matrix.dot(eta); target = design_matrix.dot(target)
+
         m = (target/eta).mean()
         sample_weights = eta * m
 
         return target, sample_weights
-    
-    
-    def _tau_update(self, sstats, corpus_states):
-
-        df = self._get_tau_features(corpus_states)
-        x_cols = list(df.columns.values)
-
-        for k in range(self.n_components):
-            df['target' + str(k)], df['weight' + str(k)] = self._get_tau_targets(k, sstats, corpus_states)
-
-        df = df.groupby(x_cols).sum().reset_index()
-
-        return np.array([
-            np.exp(
-                self.cardinality_models[k]\
-                .fit(
-                    df[x_cols].values,
-                    df['target' + str(k)]/df['weight' + str(k)],
-                    sample_weight=df['weight' + str(k)]/df['weight' + str(k)].mean()
-                ).coef_[:self.cardinality_features_dim]
-            )
-            for k in range(self.n_components)
-        ])
 
     
     def update_tau(self, sstats, corpus_states, learning_rate):
-        _tau = self._tau_update(sstats, corpus_states)
+
+        X, design_matrix = self._get_tau_features(corpus_states)
+
+        _tau = np.zeros_like(self.tau_)
+
+        for k in range(self.n_components):
+
+            target, sample_weights = self._get_tau_targets(k, sstats, corpus_states, design_matrix)
+
+            _tau[k] = np.exp(
+                self.cardinality_models[k]\
+                .fit(
+                    X,
+                    target/sample_weights,
+                    sample_weight=sample_weights/sample_weights.mean()
+                ).coef_[:self.cardinality_features_dim]
+            )
+
         self._svi_update('_tau', _tau, learning_rate)
+
 
 
     def _lambda_update(self, k, sstats, corpus_states):
 
         def _get_context_exposure(corpus_state):
             # C x L @ L -> D x C --> C
+
+            #np.exp(corpus_state._get_log_strand_effects(k, self))
             return (
-                (np.exp(corpus_state._get_log_strand_effects(k, self))*corpus_state.context_frequencies).sum(0) @ \
+                (np.exp(corpus_state.cardinality_effects_[k])*corpus_state.context_frequencies).sum(0) @ \
                 (corpus_state.exposures.ravel() * np.exp(corpus_state.theta_[k]))
             )
         
@@ -347,8 +375,8 @@ class ModelState:
 
         exposures = np.concatenate(
             [state.exposures for state in corpus_states.values()],
-            axis = 0,
-        )
+            axis = 1,
+        ).ravel()
 
         for k in range(self.n_components):
 
@@ -357,7 +385,10 @@ class ModelState:
             ).ravel()
 
             context_effect = np.array(
-                [state.signature_effects_[k].sum(axis = (0,1)) for state in corpus_states.values()]
+                [
+                 np.exp(state._get_log_signature_effect(k, self)).sum(axis=(0,1))
+                 for state in corpus_states.values()
+                ]
             ).ravel()
 
             target = np.concatenate([sstats[name].theta_sstats(k, n_bins) for name in corpus_states.keys()])
@@ -486,7 +517,7 @@ class CorpusState(ModelState):
         newstate.alpha = self.alpha.copy()
         newstate._theta = self.theta_[:, locus_subset]
         newstate._log_denom = self.log_denom_
-        newstate._signature_effects = self.signature_effects_[:, :, :, locus_subset]
+        newstate._cardinality_effects = self._cardinality_effects[:, :, :, locus_subset]
 
         return newstate
     
@@ -517,7 +548,7 @@ class CorpusState(ModelState):
             warnings.simplefilter("ignore")
 
             return (
-                self._get_log_strand_effects(k, model_state) \
+                self.cardinality_effects_[k] + \
                 + np.log(self.context_frequencies) \
                 + np.log(model_state.lambda_[k][None,:,None])
             )
@@ -527,7 +558,7 @@ class CorpusState(ModelState):
         
         # Cx1 + CxL -> CxL
         return np.nan_to_num(
-            np.log(self.signature_effects_[k]) + \
+            self._get_log_signature_effect(k, model_state) + \
             + self.theta_[k][None,None,:] \
             + np.log(exposures)[None, :, :] \
             - self.log_denom_[k],
@@ -556,26 +587,37 @@ class CorpusState(ModelState):
         ])
 
 
-    def _get_log_denom(self):
+    def _get_log_denom(self, model_state):
         # (KxC) @ (CxL) |-> (KxL)
         # K x 2 x C x L -> K x L
-        logits = np.log(self.signature_effects_.sum(axis = (1,2))) + self.theta_ + np.log(self.exposures)
-        return logsumexp(logits, axis = 1, keepdims = True)
+        signature_effects = np.log(
+            np.array([
+                np.exp(self._get_log_signature_effect(k, model_state)).sum(axis = (0,1))
+                for k in range(self.n_components)
+            ])
+        )
+        #signature_effects = np.log(self.signature_effects_.sum(axis = (1,2)))
+        logits = signature_effects + self.theta_ + np.log(self.exposures)
+        return logsumexp(logits, axis = 1, keepdims = True)    
 
-    
+
     @property
-    def signature_effects_(self):
-        return self._signature_effects
+    def cardinality_effects_(self):
+        return self._cardinality_effects
 
 
     def _update_stored_params(self, model_state):
         
-        self._signature_effects = np.array([
-            np.exp(self._get_log_signature_effect(k, model_state))
+        #self._signature_effects = np.array([
+        #    np.exp(self._get_log_signature_effect(k, model_state))
+        #    for k in range(self.n_components)
+        #])
+        self._cardinality_effects = np.array([
+            self._get_log_strand_effects(k, model_state)
             for k in range(self.n_components)
         ])
 
-        self._log_denom = self._get_log_denom()
+        self._log_denom = self._get_log_denom(model_state)
         
         return self
     
