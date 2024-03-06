@@ -51,6 +51,7 @@ class Sample:
 
     data_attrs = ['attribute','mutation','context','locus','exposures','cardinality','weight','chrom','pos']
     required = ['attribute', 'mutation','context','locus','exposures','cardinality']
+    mutation_attrs = ['attribute','mutation','context','locus','cardinality','weight','chrom','pos']
 
     N_CARDINALITY=2
     N_CONTEXTS=32
@@ -59,6 +60,12 @@ class Sample:
 
     def __len__(self):
         return len(self.locus)
+    
+    def __getitem__(self, i):
+        return {
+            k : getattr(self, k)[i]
+            for k in self.mutation_attrs if hasattr(self, k)
+        }
     
     @property
     def n_mutations(self):
@@ -114,14 +121,18 @@ class Sample:
             scipy.sparse.dok_matrix: The empirical mutation rate.
         """
         n_loci = self.exposures.shape[1]
+
+        mutations = np.zeros((self.N_CARDINALITY, self.N_CONTEXTS, n_loci), dtype = float if use_weight else np.uint32)
+
+        for mutation in self:
+            mutations[mutation['cardinality'], mutation['context'], mutation['locus']] += mutation['weight'] if use_weight else 1
         
-        mutations = coo_matrix(
-            (self.weight if use_weight else np.ones_like(self.weight), (self.context, self.locus)),
-            shape = (self.N_CONTEXTS, n_loci),
+        '''mutations = coo_matrix(
+            (self.weight if use_weight else np.ones_like(self.weight), (self.context * (self.cardinality + 1), self.locus)),
+            shape = (self.N_CONTEXTS * self.N_CARDINALITY, n_loci),
             dtype = np.uint16 if not use_weight else float
-        )
-        
-        return mutations.todok()
+        )'''
+        return mutations
 
 
     def plot_factorized(self, context_dist, mutation_dist, attribute_dist, ax=None, **kwargs):

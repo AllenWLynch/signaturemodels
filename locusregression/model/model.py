@@ -253,7 +253,7 @@ class LocusRegressor:
         gamma = (1 - learning_rate)*gamma0 + learning_rate*gamma
 
         phi_matrix = _calc_local_variables(gamma = gamma, flattend_phi=flattend_phi)
-        weighted_phi = phi_matrix * count_g.T #/(locus_subsample_rate * batch_subsample_rate)
+        weighted_phi = phi_matrix * count_g.T/(locus_subsample_rate * batch_subsample_rate)
 
         return self.SSTATS.SampleSstats(
             model_state=model_state,
