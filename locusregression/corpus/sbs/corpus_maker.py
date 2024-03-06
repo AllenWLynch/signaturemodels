@@ -177,7 +177,7 @@ class SBSCorpusMaker(CorpusMaker):
                      weight_col = None, 
                      chr_prefix = '',
                      n_jobs=1,*,
-                     fasta_file, regions_file, exposures):
+                     genome_file, fasta_file, regions_file, exposures):
         
         logger.info('Reading VCF files ...')
         samples = []
@@ -197,13 +197,18 @@ class SBSCorpusMaker(CorpusMaker):
                 'If providing exposures, provide one for the whole corpus, or one per sample.'
 
 
-        with tempfile.NamedTemporaryFile() as mutrate_file:
+        with tempfile.NamedTemporaryFile() as mutrate_file, \
+            tempfile.NamedTemporaryFile() as genome_file:
+
+            subprocess.check_call(
+                ['faidx', fasta_file, '-i', 'chromsizes', '-o', genome_file.name]
+            )
             
             subprocess.check_call(
                 ['locusregression','preprocess-estimate-mutrate',
                 '--vcf-files', *sample_files,
                 '--chr-prefix', chr_prefix,
-                '--regions-file',regions_file,
+                '--genome-file',genome_file.name,
                 '-o', mutrate_file.name,
                 ]
             )
@@ -248,8 +253,6 @@ class SBSCorpusMaker(CorpusMaker):
                 trinuc_counts += Counter([
                     trinuc for trinuc in rolling(window_sequence) if not 'N' in trinuc
                 ])
-
-
 
             return [
                 [trinuc_counts[context] for context in CONTEXTS],

@@ -6,8 +6,9 @@ import os
 import tqdm
 import pandas as pd
 import logging
-from scipy.stats import expon, chi2_contingency
+from scipy.stats import expon
 from .corpus_maker import SBSCorpusMaker, get_passed_SNVs
+from ..make_windows import _make_fixed_size_windows
 import numpy as np
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(' Mutation preprocessing')
@@ -102,12 +103,23 @@ def unstack_bed12_file(
         )
 
 
-def get_marginal_mutation_rate(regions_file, output,*vcf_files, chr_prefix=''):
+def get_marginal_mutation_rate(genome_file, output, *vcf_files, 
+                               smoothing_size=20000,
+                               chr_prefix=''
+                              ):
     
     query_str = f'{chr_prefix}%CHROM\t%POS0\t%POS0\n'
 
     with tempfile.NamedTemporaryFile() as coverage_file, \
+        tempfile.NamedTemporaryFile() as regions_file, \
         tempfile.NamedTemporaryFile() as bed12:
+
+        with open(regions_file.name, 'w') as f:
+            _make_fixed_size_windows(
+                genome_file=genome_file,
+                window_size=smoothing_size,
+                output=f,
+            )      
 
         with tempfile.TemporaryDirectory() as tempdir:
             for vcf_file in tqdm.tqdm(vcf_files, desc='Filtering VCFs', ncols = 100):
@@ -120,7 +132,7 @@ def get_marginal_mutation_rate(regions_file, output,*vcf_files, chr_prefix=''):
             with open(coverage_file.name, 'w') as f:
                 subprocess.check_call(
                     ['bedtools','coverage',
-                    '-a',regions_file,
+                    '-a',regions_file.name,
                     '-b', *processed_vcfs,
                     '-sorted',
                     '-split',

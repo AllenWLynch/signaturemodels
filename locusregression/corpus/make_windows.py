@@ -54,7 +54,8 @@ def _make_fixed_size_windows(*,
                             genome_file, 
                             window_size,
                             blacklist_file=None,
-                            output = sys.stdout):
+                            output = sys.stdout
+                        ):
     
     process_kw = dict(
         universal_newlines=True,

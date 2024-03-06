@@ -253,7 +253,7 @@ class LocusRegressor:
         gamma = (1 - learning_rate)*gamma0 + learning_rate*gamma
 
         phi_matrix = _calc_local_variables(gamma = gamma, flattend_phi=flattend_phi)
-        weighted_phi = phi_matrix * count_g.T/(locus_subsample_rate * batch_subsample_rate)
+        weighted_phi = phi_matrix * count_g.T #/(locus_subsample_rate * batch_subsample_rate)
 
         return self.SSTATS.SampleSstats(
             model_state=model_state,
@@ -475,7 +475,7 @@ class LocusRegressor:
                         for corpus_state in self.corpus_states.values():
                             corpus_state.update_alpha(sstats, learning_rate_fn(epoch))
 
-                self._update_corpus_states()
+                    self._update_corpus_states()
 
                 elapsed_time = time.time() - start_time
                 self.elapsed_times.append(elapsed_time)
@@ -812,7 +812,7 @@ class LocusRegressor:
         component = self._get_signature_idx(component)
 
         self.observation_class.plot_factorized(
-            context_dist = self.model_state.lambda_[component]/self._genome_context_frequencies.ravel(),
+            context_dist = self.model_state.lambda_[component]*self._genome_context_frequencies.ravel(),
             mutation_dist = self.model_state.rho_[component],
             attribute_dist = None,
             ax = ax,
@@ -843,8 +843,8 @@ class LocusRegressor:
         )
 
         ax.set_ylabel('log2 Bias', fontsize = fontsize)
-            
-        ax.set_xticklabels(xticks, rotation = 45, fontsize = fontsize)
+        ax.tick_params(axis='x', rotation=45)
+        
         bound = round(max(1, np.abs(bar).max() + 0.25) * 4) / 4
         ax.set(ylim = (-bound,bound))
         ax.set_yticks([-bound,0,bound])

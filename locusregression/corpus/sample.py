@@ -118,7 +118,7 @@ class Sample:
         mutations = coo_matrix(
             (self.weight if use_weight else np.ones_like(self.weight), (self.context, self.locus)),
             shape = (self.N_CONTEXTS, n_loci),
-            dtype = np.uint8
+            dtype = np.uint16 if not use_weight else float
         )
         
         return mutations.todok()

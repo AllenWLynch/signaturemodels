@@ -157,7 +157,8 @@ class SBSSample(Sample):
     N_ATTRIBUTES=1
 
 
-    def plot(self, ax=None, figsize=(5.5,1.25), show_strand=False,**kwargs):
+    def plot(self, ax=None, figsize=(5.5,1.25), show_strand=False,
+             normalizer = None, **kwargs):
         
         context_dist = np.zeros((self.N_CONTEXTS,))
         mutation_dist = np.zeros((self.N_CONTEXTS, self.N_MUTATIONS,))
@@ -167,6 +168,9 @@ class SBSSample(Sample):
         ):
             context_dist[context_idx] += weight
             mutation_dist[context_idx, mutation_idx] += weight
+
+        if not normalizer is None:
+            context_dist = context_dist/normalizer
 
         return self.plot_factorized(context_dist, mutation_dist, None, 
                                    ax=ax, 

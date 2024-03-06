@@ -126,7 +126,7 @@ class ModelState:
 
 
         X_tau_combinations = list(product(
-            *[[-1,0,1]*self.cardinality_features_dim], 
+            *[[-1,0,1] for _ in range(self.cardinality_features_dim)], 
             list(range(self.n_distributions))
         ))
 
@@ -170,7 +170,7 @@ class ModelState:
             self._rho[i] = sigmatrix * pseudocounts + 1.
             self._rho[i] = self._rho[i]/self._rho[i].sum(axis = -1, keepdims = True)
 
-            self._lambda[i] = sigmatrix.sum(axis = -1) * pseudocounts/genome_context_frequencies + 1.
+            self._lambda[i] = (sigmatrix.sum(axis = -1) * pseudocounts + 1)/genome_context_frequencies
 
 
     def _fit_corpus_encoder(self, corpus_states):
@@ -413,7 +413,7 @@ class ModelState:
             yield (
                 y_tild,
                 sample_weights/sample_weights.mean(), # rescale the weights to mean 1 so that the learning rate is comparable across components and over epochs
-                current_lograte_prediction
+                current_lograte_prediction,
             )
 
 
@@ -450,7 +450,7 @@ class ModelState:
 
     def update_state(self, sstats, corpus_states, learning_rate):
         
-        update_params = ['rate_model','lambda','rho', 'tau']
+        update_params = ['rate_model','lambda','rho','tau']
         for param in update_params:
             self.__getattribute__('update_' + param)(sstats, corpus_states, learning_rate) # call update function
 

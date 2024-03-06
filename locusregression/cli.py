@@ -32,18 +32,27 @@ parser = argparse.ArgumentParser(
 subparsers = parser.add_subparsers(help = 'Commands')
 
 
-def get_marginal_mutation_rate_wrapper(*,vcf_files, chr_prefix, regions_file, output):    
+def get_marginal_mutation_rate_wrapper(*,
+            vcf_files, 
+            chr_prefix, 
+            genome_file, 
+            output,
+            smoothing_size,
+        ):
+    
     get_marginal_mutation_rate(
-        regions_file,
+        genome_file,
         output,
         *vcf_files,
+        smoothing_size=smoothing_size,
         chr_prefix=chr_prefix
     )
 
 prep_mutrate_parser = subparsers.add_parser('preprocess-estimate-mutrate', help = 'Calculate the marginal mutation rate across all samples for some corpus.')
 prep_mutrate_parser.add_argument('--vcf-files', '-vcfs', type = file_exists, nargs='+', required=True, help = 'List of VCF files containing SBS mutations.')
 prep_mutrate_parser.add_argument('--chr-prefix', default='', help = 'Prefix to append to chromosome names in VCF files.')
-prep_mutrate_parser.add_argument('--regions-file','-r', type = file_exists, required=True, help = 'Bed file of regions to calculate mutation rate over.')
+prep_mutrate_parser.add_argument('--smoothing-size', type = posint, default=20000, help = 'Size of window to smooth mutation rate over.')
+prep_mutrate_parser.add_argument('--genome-file','-g', type = file_exists, required=True, help = 'Also known as a "Chrom sizes" file.')
 prep_mutrate_parser.add_argument('--output','-o', type = argparse.FileType('w'), default=sys.stdout)
 prep_mutrate_parser.set_defaults(func = get_marginal_mutation_rate_wrapper)
 
