@@ -234,13 +234,15 @@ class Corpus(CorpusMixin):
     def get_empirical_mutation_rate(self, use_weight=True):
 
         # returns the ln mutation rate for each locus in the first sample
-        mutation_rate = self.samples[0].get_empirical_mutation_rate(use_weight = use_weight).toarray()
+        mutation_rate = self.samples[0].get_empirical_mutation_rate(use_weight = use_weight)
 
         # loop through the rest of the samples and add the mutation rate using logsumexp
         for i in trange(1, len(self), desc = 'Piling up mutations', ncols=100):
-            mutation_rate = mutation_rate + self.samples[i].get_empirical_mutation_rate(use_weight = use_weight).toarray()
+            mutation_rate = mutation_rate + self.samples[i].get_empirical_mutation_rate(use_weight = use_weight)
 
-        return mutation_rate #.tocsr()
+        newshape = self.observation_class.N_CARDINALITY, self.observation_class.N_CONTEXTS, self.locus_dim
+        
+        return mutation_rate #.reshape(newshape)
 
 
 

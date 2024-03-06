@@ -138,11 +138,6 @@ class GBTCorpusState(CorpusState):
                 for k in range(self.n_components)
             ])
 
-        self._signature_effects = np.array([
-            np.exp(self._get_log_signature_effect(k, model_state))
-            for k in range(self.n_components)
-        ])
-
         self._update_stored_params(model_state)
 
         return self

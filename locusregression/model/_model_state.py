@@ -566,14 +566,20 @@ class CorpusState(ModelState):
     
 
     def _get_log_marginal_effect_rate(self, pi, model_state, exposures):
+        
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
 
-        return np.log(
-            reduce(
-                lambda x, k : x + ( pi[k]*np.exp(self._get_log_component_mutation_rate(k, model_state, exposures)) ),
-                range(self.n_components),
-                np.zeros_like(self.context_frequencies)
+            return np.nan_to_num(
+                np.log(
+                    reduce(
+                        lambda x, k : x + ( pi[k]*np.exp(self._get_log_component_mutation_rate(k, model_state, exposures)) ),
+                        range(self.n_components),
+                        np.zeros_like(self.context_frequencies)
+                    )
+                ),
+                nan = -np.inf
             )
-        )
 
     
     def get_log_component_effect_rate(self, model_state, exposures, use_context=True):
