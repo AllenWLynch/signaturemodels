@@ -126,9 +126,14 @@ class SBSCorpusMaker(CorpusMaker):
                                                 filter_string='clusterSize<3',
                                                )
 
+                clustered_mutations_vcf, _ = get_passed_SNVs(clustered_vcf.name, query_statement,
+                                                filter_string='clusterSize>=3',
+                                               ).communicate()
+                n_cluster_mutations = len(clustered_mutations_vcf.split("\n"))
+
             else:
                 query_process = get_passed_SNVs(vcf_file, query_statement)
-                                            
+                n_cluster_mutations = 0
 
             intersect_process = subprocess.Popen(
                 ['bedtools',
@@ -161,6 +166,13 @@ class SBSCorpusMaker(CorpusMaker):
             for k, v in mutations.items():
                 mutations[k] = np.array(v).astype(SBSSample.type_map[k])
 
+            if n_cluster_mutations > 0:
+                total_mutations = n_cluster_mutations + len(mutations[k])
+                logger.info(
+                    f'Filtered {n_cluster_mutations} cluster mutations (out of {total_mutations}).'
+                )
+        
+
             return SBSSample(
                 **mutations,
                 name = os.path.abspath(vcf_file),
@@ -177,7 +189,7 @@ class SBSCorpusMaker(CorpusMaker):
                      weight_col = None, 
                      chr_prefix = '',
                      n_jobs=1,*,
-                     genome_file, fasta_file, regions_file, exposures):
+                     fasta_file, regions_file, exposures):
         
         logger.info('Reading VCF files ...')
         samples = []

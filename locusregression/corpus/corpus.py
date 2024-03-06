@@ -420,7 +420,7 @@ def _read_features(data):
 
         vals = feature_group['values'][...]
 
-        if isinstance(vals.dtype, np.dtypes.BytesDType):
+        if vals.dtype.kind == 'S':
             vals = np.char.decode(vals, 'utf-8')
 
         features[feature_name] = {

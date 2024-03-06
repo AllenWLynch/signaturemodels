@@ -318,7 +318,6 @@ class ModelState:
         def _get_context_exposure(corpus_state):
             # C x L @ L -> D x C --> C
 
-            #np.exp(corpus_state._get_log_strand_effects(k, self))
             return (
                 (np.exp(corpus_state.cardinality_effects_[k])*corpus_state.context_frequencies).sum(0) @ \
                 (corpus_state.exposures.ravel() * np.exp(corpus_state.theta_[k]))

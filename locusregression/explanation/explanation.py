@@ -2,7 +2,7 @@ import logging
 from numpy.random import RandomState
 from numpy import vstack, squeeze
 from joblib import Parallel, delayed
-
+import shap
 logger = logging.getLogger(__name__)
 
 def explain(
@@ -12,7 +12,6 @@ def explain(
     n_jobs = 1,
     chunk_size = 10000,
 ):
-    import shap
     
     def _calculate_shap_values(tree_explainer, chunk):
         return squeeze(

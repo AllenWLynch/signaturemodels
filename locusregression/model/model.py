@@ -253,7 +253,7 @@ class LocusRegressor:
         gamma = (1 - learning_rate)*gamma0 + learning_rate*gamma
 
         phi_matrix = _calc_local_variables(gamma = gamma, flattend_phi=flattend_phi)
-        weighted_phi = phi_matrix * count_g.T #/(locus_subsample_rate * batch_subsample_rate)
+        weighted_phi = phi_matrix * count_g.T/(locus_subsample_rate * batch_subsample_rate)
 
         return self.SSTATS.SampleSstats(
             model_state=model_state,
@@ -838,14 +838,15 @@ class LocusRegressor:
             bar,
             color = ['lightgrey' if b > 0 else 'darkred' for b in bar],
             edgecolor = 'black',
-            linewidth = 0.5,
+            linewidth = 0.1,
             width = 0.5,
         )
 
         ax.set_ylabel('log2 Bias', fontsize = fontsize)
         ax.tick_params(axis='x', rotation=45)
+        ax.axhline(y=0.,linewidth=0.5, color='black')
         
-        bound = round(max(1, np.abs(bar).max() + 0.25) * 4) / 4
+        bound = round(max(0.25, np.abs(bar).max() + 0.25) * 4) / 4
         ax.set(ylim = (-bound,bound))
         ax.set_yticks([-bound,0,bound])
         ax.set_yticklabels([-bound,0,bound], fontsize = fontsize)

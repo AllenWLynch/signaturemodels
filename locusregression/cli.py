@@ -672,6 +672,16 @@ list_corpuses_parser.add_argument('model', type = file_exists)
 list_corpuses_parser.set_defaults(func = list_corpuses)
 
 
+def list_components(*,model):
+    model = load_model(model)
+    print(*model.component_names, sep = '\n', file = sys.stdout)
+
+list_components_parser = subparsers.add_parser('model-list-components',
+                                             help = 'List the names of corpuses used to train a model.')
+list_components_parser.add_argument('model', type = file_exists)
+list_components_parser.set_defaults(func = list_components)
+
+
 def get_mutation_rate_r2(*, model, corpuses):
 
     model = load_model(model)
@@ -698,7 +708,7 @@ def explain_wrapper(n_jobs=1,*,signature, model, corpuses, output):
     results = explain(signature,
             model = model,
             corpus = dataset,
-            n_jobs = n_jobs
+            n_jobs = n_jobs,
             )
     
     print(*results['feature_names'], sep=',', file = output)

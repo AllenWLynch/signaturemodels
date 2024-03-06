@@ -51,6 +51,7 @@ class Sample:
 
     data_attrs = ['attribute','mutation','context','locus','exposures','cardinality','weight','chrom','pos']
     required = ['attribute', 'mutation','context','locus','exposures','cardinality']
+    mutation_attrs = ['attribute','mutation','context','locus','cardinality','weight','chrom','pos']
 
     N_CARDINALITY=2
     N_CONTEXTS=32
@@ -137,6 +138,14 @@ class Sample:
     
     def plot(self):
         pass
+
+    
+    def __getitem__(self, i):
+        return {
+            k : getattr(self, k)[i]
+            for k in self.mutation_attrs if hasattr(self, k)
+        }
+
 
 
 
