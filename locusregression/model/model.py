@@ -1,7 +1,7 @@
-
 from ._dirichlet_update import log_dirichlet_expectation, dirichlet_bound
 import locusregression.model._sstats as _sstats
 from ._model_state import ModelState, CorpusState
+from ..explanation.explanation import explain
 from pandas import DataFrame
 import numpy as np
 import time
@@ -10,6 +10,8 @@ import matplotlib.pyplot as plt
 import pickle
 import logging
 from scipy.special import xlogy
+from shap import Explanation
+from seaborn import stripplot, violinplot
 logger = logging.getLogger(' LocusRegressor')
 
 
@@ -544,6 +546,7 @@ class LocusRegressor:
                 subset_by_loci = subset_by_loci
             ):
                 pass
+            
         except KeyboardInterrupt:
             logger.info('Training interrupted by user.')
             pass
@@ -842,13 +845,14 @@ class LocusRegressor:
             width = 0.5,
         )
 
-        ax.set_ylabel('log2 Bias', fontsize = fontsize)
-        ax.tick_params(axis='x', rotation=45)
+        ax.set_ylabel('log2 Bias', fontsize=fontsize)
+        ax.tick_params(axis='x', rotation=90, labelsize=fontsize)
         
-        bound = round(max(1, np.abs(bar).max() + 0.25) * 4) / 4
+        bound = round(max(0.25, np.abs(bar).max() + 0.25) * 4) / 4
         ax.set(ylim = (-bound,bound))
         ax.set_yticks([-bound,0,bound])
         ax.set_yticklabels([-bound,0,bound], fontsize = fontsize)
+        ax.axhline(0, color='black', linewidth=0.5)
 
         for spine in ax.spines.values():
             spine.set_visible(False)
@@ -856,7 +860,7 @@ class LocusRegressor:
         return ax
 
 
-    def plot_summary(self, show_strand=True):
+    def plot_summary(self,*components):
         """
         Plot the summary of the model.
 
@@ -864,25 +868,44 @@ class LocusRegressor:
             ax (matplotlib.axes.Axes): The axes object containing the plot.
         """
 
-        n_card_features = len(self.model_state.strand_transformer.feature_names_)
+        if len(components) == 0:
+            components = self.component_names
 
-        fig, ax = plt.subplots(self.n_components, 2, 
-                               figsize=(5.5 + 1*n_card_features, 1.25*self.n_components), 
+        n_card_features = len(self.model_state.strand_transformer.feature_names_)
+        n_locus_features = len(self.model_state.feature_transformer.feature_names_out)
+
+        fig, ax = plt.subplots(len(components), 3, 
+                               figsize=(5.5 + 0.5*n_card_features + 0.35*n_locus_features, 1.75*len(components)), 
                                sharex='col',
                                gridspec_kw={
-                                   'width_ratios': [5.5, 1*n_card_features],
-                                   'hspace': 1,
-                                   'wspace': 0.5,
+                                   'width_ratios': [5.5, 0.5*n_card_features, 0.35*n_locus_features],
+                                   'hspace': 0.5,
+                                   'wspace': 0.25,
                                    }
                                )
+        
+        ax = np.atleast_2d(ax)
 
-        for i in range(self.n_components):
-            self.plot_signature(i, ax=ax[i,0], show_strand=show_strand)
+        for i, comp in enumerate(components):
+            self.plot_signature(comp, ax=ax[i,0])
             ax[i,0].set_title('')
-            ax[i,0].set_ylabel(self.component_names[i], fontsize=7)
+            ax[i,0].set_ylabel(comp, fontsize=7)
 
-            self.plot_cardinality_bias(i, ax=ax[i,1], fontsize=7)
+            if self.model_state.fit_cardinality_:
+                self.plot_cardinality_bias(comp, ax=ax[i,1], fontsize=7)
 
+            try:
+                self.explanation_shap_values_[comp]
+                self.plot_explanation(comp, ax=ax[i,2])
+            except AttributeError:
+                logger.warn(f'No explanations have been calculated for {comp}.')
+                ax[i, 2].axis('off')
+            
+            if i < len(components) - 1:
+                ax[i,1].tick_params(axis='x', bottom=False)
+                ax[i,2].tick_params(axis='x', bottom=False)
+
+        plt.tight_layout()
         return ax
     
 
@@ -909,9 +932,139 @@ class LocusRegressor:
         )
 
         return np.array([
-            sstats[corpus.name]._convert_beta_sstats_to_array(k, corpus.locus_dim)
+            sstats[corpus.name].theta_sstats(k, corpus.locus_dim)
             for k in range(self.n_components)
         ])
+    
+
+    def calc_locus_explanations(self, corpus, subsample=10000, n_jobs=1):
+
+        if not self.is_trained:
+            logger.warn('This model was not trained to completion, results may be innaccurate')
+
+        if not subsample is None:
+
+            logger.info(
+                'Subsampling loci for explanation ...'
+            )
+
+            subsample = min(subsample, corpus.locus_dim)
+
+            subsample_idx = self.random_state.choice(corpus.locus_dim, size = subsample, replace = False)
+            corpus = corpus.subset_loci(subsample_idx)
+
+        self.explanation_shap_values_ = {}
+        self.explanation_interaction_values_ = {}
+        self.explanation_features_ = None
+
+        for component in self.component_names:
+            
+            logger.info(
+                'Calculating SHAP values for component ' + component + ' ...'
+            )
+            
+            self.explanation_shap_values_[component], \
+                self.explanation_features_, \
+                self.explanation_feature_names_ = \
+                    explain(
+                        component,
+                        model = self,
+                        corpus = corpus,
+                        n_jobs = n_jobs,
+                        chunk_size=max(10000, subsample + 1)
+                    )
+            
+    
+    def explanation(self, component):
+        """
+        Get the explanation for a given component.
+
+        Parameters:
+        component (str): The component for which to get the explanation.
+
+        Returns:
+        tuple: A tuple containing the SHAP values, features, and feature names.
+        """
+
+        component = self.component_names[self._get_signature_idx(component)]
+
+        try:
+            self.explanation_shap_values_[component]
+        except AttributeError:
+            raise ValueError('No explanations have been calculated for this model.')
+
+        return Explanation(
+            self.explanation_shap_values_[component],
+            data = self.explanation_features_,
+            feature_names = self.explanation_feature_names_,
+        )
+    
+
+    def plot_explanation(self, component, ax=None, height=2, fontsize=7):
+        
+        expl = self.explanation(component)
+
+        expl_df = DataFrame(expl.values, columns=expl.feature_names)\
+            .melt(ignore_index=False, var_name='feature', value_name='shap_value')\
+            .reset_index()\
+            .merge(
+                DataFrame(expl.data, columns=expl.feature_names)\
+                .melt(ignore_index=False, var_name='feature', value_name='value')\
+                .reset_index(),
+                on=['index', 'feature']
+            )
+        
+        bound_max, bound_min = expl_df.shap_value.max(), expl_df.shap_value.min()
+        
+        if ax is None:
+            _, ax = plt.subplots(1,1,figsize=(len(expl.feature_names)*0.35,height))
+
+        violinplot(
+            data = expl_df,
+            x = 'feature',
+            y = 'shap_value',
+            color = 'lightgrey',
+            alpha =0.,
+            linewidth=0.5,
+            ax = ax,
+            legend=False,
+            zorder=1,
+        )
+
+        stripplot(
+            data = expl_df,
+            x = 'feature',
+            y = 'shap_value',
+            hue = 'value',
+            s = 0.5,
+            alpha = 0.5,
+            palette='coolwarm',
+            ax = ax,
+            legend=False,
+            zorder=0,
+        )
+        ax.axhline(0, color='black', linewidth=0.5, alpha =0.2)
+        ax.tick_params(axis='x', rotation=90, labelsize=fontsize)
+        ax.tick_params(axis='y', labelsize=fontsize)
+
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.spines['bottom'].set_visible(False)
+        ax.spines['left'].set_visible(False)
+        ax.set_ylabel('SHAP value', fontsize=fontsize)
+        ax.set_xlabel('Feature', fontsize=fontsize)
+
+        bound_max = max(np.ceil(bound_max * 4) / 4, 1.5)
+        bound_min = min(np.floor(bound_min * 4) / 4, -1.5)
+        ax.set_ylim(bound_min, bound_max)
+        ax.set_yticks([bound_min, 0, bound_max])
+
+        return ax
+
+         
+        
+        
+
 
 
    

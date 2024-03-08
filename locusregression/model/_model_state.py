@@ -25,6 +25,7 @@ class DummyCorpus:
     def __init__(self, corpus):
         self.context_frequencies = corpus.context_frequencies
         self.shared_correlates = corpus.shared_correlates
+        self.features = corpus.features
 
 
 class ModelState:
@@ -65,11 +66,7 @@ class ModelState:
         
         self._rho = self.random_state.gamma(100, 1/100,
                                                (n_components, context_dim, mutation_dim),
-                                              ).astype(dtype, copy = False)
-        
-        self._tau = np.ones((n_components, cardinality_features_dim))\
-            .astype(dtype, copy=False)
-        
+                                              ).astype(dtype, copy = False)       
         
         # placeholder for when attributes come into play
         #self.psi
@@ -119,20 +116,27 @@ class ModelState:
             for _ in range(n_components)
         ]
 
-        if cardinality_features_dim > 0:
+        self.fit_cardinality_ = cardinality_features_dim > 0
+
+        if self.fit_cardinality_:
+
             self.strand_transformer = CardinalityTransformer().fit(corpus_states)
+
+            self._tau = np.ones((n_components, cardinality_features_dim))\
+                            .astype(dtype, copy=False)
+            
+            X_tau_combinations = list(product(
+                *[[-1,0,1] for _ in range(self.cardinality_features_dim)], 
+                list(range(self.n_distributions))
+            ))
+
+            self._tau_combinations_map = dict(zip(X_tau_combinations, range(len(X_tau_combinations))))
+
+            self._tau_features = np.array(list(self._tau_combinations_map.keys()))
+            
         else:
             self.strand_transformer = None
 
-
-        X_tau_combinations = list(product(
-            *[[-1,0,1] for _ in range(self.cardinality_features_dim)], 
-            list(range(self.n_distributions))
-        ))
-
-        self._tau_combinations_map = dict(zip(X_tau_combinations, range(len(X_tau_combinations))))
-
-        self._tau_features = np.array(list(self._tau_combinations_map.keys()))
 
 
     @property
@@ -317,8 +321,6 @@ class ModelState:
 
         def _get_context_exposure(corpus_state):
             # C x L @ L -> D x C --> C
-
-            #np.exp(corpus_state._get_log_strand_effects(k, self))
             return (
                 (np.exp(corpus_state.cardinality_effects_[k])*corpus_state.context_frequencies).sum(0) @ \
                 (corpus_state.exposures.ravel() * np.exp(corpus_state.theta_[k]))
@@ -450,7 +452,10 @@ class ModelState:
 
     def update_state(self, sstats, corpus_states, learning_rate):
         
-        update_params = ['rate_model','lambda','rho','tau']
+        update_params = ['rate_model','lambda','rho']
+        if self.fit_cardinality_:
+            update_params.append('tau')
+            
         for param in update_params:
             self.__getattribute__('update_' + param)(sstats, corpus_states, learning_rate) # call update function
 
@@ -524,7 +529,7 @@ class CorpusState(ModelState):
 
     def _get_log_strand_effects(self, k, model_state):
 
-        if self.corpus.cardinality_features_dim == 0:
+        if not model_state.fit_cardinality_:
             return np.zeros((2, 1, self.n_loci)).astype(self.dtype, copy=False)
         
         strand_features = model_state.strand_transformer.transform(
@@ -614,10 +619,6 @@ class CorpusState(ModelState):
 
     def _update_stored_params(self, model_state):
         
-        #self._signature_effects = np.array([
-        #    np.exp(self._get_log_signature_effect(k, model_state))
-        #    for k in range(self.n_components)
-        #])
         self._cardinality_effects = np.array([
             self._get_log_strand_effects(k, model_state)
             for k in range(self.n_components)

@@ -1,9 +1,7 @@
 
 from .model import GBTRegressor, LocusRegressor
-from .corpus import stream_corpus, MetaCorpus
-from tempfile import NamedTemporaryFile
+from .corpus import stream_corpus, MetaCorpus, SBSCorpusMaker
 from argparse import ArgumentTypeError
-import subprocess
 import os
 import joblib
 
@@ -102,3 +100,42 @@ def get_basemodel(model_type):
 
     return basemodel
 
+
+
+def bed12_matrix_to_bedgraph(
+    normalize_to_windowlength = False,
+    header=True,*,
+    regions_file, 
+    matrix,
+    feature_names,
+    output,
+):
+
+    assert len(feature_names) == matrix.shape[1], 'Number of feature names does not match number of columns in matrix.'
+    regions = SBSCorpusMaker.read_windows(regions_file)
+    assert len(regions) == matrix.shape[0], 'Number of regions in BED12 file does not match number of rows in matrix.'
+    
+    segments = []
+    for region, matrix_row in zip(regions, matrix):
+        
+        total_region_length = sum([end-start for (_, start, end) in region.segments()])
+        
+        for chr, start, end in region.segments():
+            if normalize_to_windowlength:
+                segments.append((chr, start, end, matrix_row/total_region_length*(end-start)))
+            else:
+                segments.append((chr, start, end, matrix_row))
+    
+    segments = sorted(segments, key=lambda x: (x[0], x[1]))
+
+    if header:
+        print(
+            '#chrom','#start','#end',*['#' + name for name in feature_names],
+            sep='\t', file=output,
+        )
+
+    for chrom, start, end, matrix_row in segments:
+        print(
+            chrom, start, end, *matrix_row, 
+            sep='\t', file=output
+        )

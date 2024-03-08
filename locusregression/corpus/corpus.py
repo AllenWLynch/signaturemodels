@@ -5,6 +5,7 @@ import h5py as h5
 import logging
 from .sample import SampleLoader, InMemorySamples
 from .sbs.observation_config import SBSSample
+from pandas import DataFrame
 from tqdm import trange
 logger = logging.getLogger('Corpus')
 
@@ -239,10 +240,27 @@ class Corpus(CorpusMixin):
         # loop through the rest of the samples and add the mutation rate using logsumexp
         for i in trange(1, len(self), desc = 'Piling up mutations', ncols=100):
             mutation_rate = mutation_rate + self.samples[i].get_empirical_mutation_rate(use_weight = use_weight)
-
-        newshape = self.observation_class.N_CARDINALITY, self.observation_class.N_CONTEXTS, self.locus_dim
         
-        return mutation_rate #.reshape(newshape)
+        return mutation_rate
+    
+
+    def get_features_df(self):
+        return DataFrame(
+            {
+                feature_name : feature['values']
+                for feature_name, feature in self.features.items()
+                if not feature['type'] == 'cardinality'
+            }
+        )
+    
+    def get_cardinality_features_df(self):
+        return DataFrame(
+            {
+                feature_name : feature['values']
+                for feature_name, feature in self.features.items()
+                if feature['type'] == 'cardinality'
+            }
+        )
 
 
 
