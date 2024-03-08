@@ -21,9 +21,7 @@ class SampleSstats:
     ):
         
         self.mutation_sstats =  np.zeros_like(model_state.rho_)
-        self.context_sstats = np.zeros_like(model_state.lambda_)
-        self.cardinality_sstats = np.zeros_like(model_state.tau_)
-        
+        self.context_sstats = np.zeros_like(model_state.lambda_)        
         self.locus_sstats = defaultdict(
                 lambda : defaultdict(lambda : np.zeros(model_state.n_components))
             )
