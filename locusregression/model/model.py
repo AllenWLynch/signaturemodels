@@ -346,7 +346,7 @@ class LocusRegressor:
 
         
         fix_strs = list(self.fix_signatures) if not self.fix_signatures is None else []
-        self.component_names = fix_strs + ['Component ' + str(i) for i in range(self.n_components - len(fix_strs))]
+        self.component_names = fix_strs + ['Component_' + str(i) for i in range(self.n_components - len(fix_strs))]
 
         self.training_bounds_ = []; self.testing_bounds_ = []
         self.elapsed_times = []
