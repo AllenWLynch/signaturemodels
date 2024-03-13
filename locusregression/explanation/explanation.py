@@ -3,6 +3,7 @@ from numpy.random import RandomState
 from numpy import vstack, squeeze
 from joblib import Parallel, delayed
 import shap
+import pandas as pd
 logger = logging.getLogger(__name__)
 
 def explain(
@@ -49,7 +50,6 @@ def explain(
         tree_model,
         X_tild[background_idx],
         check_additivity=False,
-        #feature_perturbation='internal'
     )
 
     num_chunks = corpus.locus_dim // chunk_size + 1
@@ -61,10 +61,11 @@ def explain(
         )
     )
 
-    #interaction_values = explainer.shap_interaction_values(X_tild)
+    feature_names = model.model_state.feature_transformer.feature_names_out
 
     return (
         shap_values,
         X_tild, 
-        model.model_state.feature_transformer.feature_names_out,
+        feature_names,
+        model.model_state.feature_transformer.assemble_matrix(corpus_states)[0][feature_names].values,
     )
