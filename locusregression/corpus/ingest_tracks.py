@@ -55,48 +55,70 @@ def make_continous_features(*,
 def make_continous_features_bedgraph(*,
                 bedgraph_file,
                 regions_file,
+                genome_file,
                 extend=None,
                 null = 'nan',
             ):
     
-    raise NotImplementedError('This function is not implemented yet')
-    
     check_regions_file(regions_file)
 
     if extend is not None:
-        #raise NotImplementedError('Extend not implemented for bedgraph files')
-        extend_process = subprocess.Popen(
+
+        center_process = subprocess.Popen(
             ['awk','-v','OFS=\t',
-            f'{{ center=$2+($3-$2)/2; {{print $1,center-{extend},center+{extend},$4 }} }}', 
-            bedgraph_file],
+            '{ center=$2+($3-$2)/2; print $1,center,center+1,$4 }', 
+            regions_file],
             stdout = subprocess.PIPE,
         )
 
+        slop_process = subprocess.Popen(
+            ['bedtools','slop','-i','-','-g',genome_file,'-b', str(extend)],
+            stdin=center_process.stdout,
+            stdout=subprocess.PIPE,
+        )
+
         input_process = subprocess.Popen(
-            ['sort', '-k1,1n', '-k2,2n'],
-            stdin = extend_process.stdout,
+            ['sort', '-k1,1', '-k2,2n'],
+            stdin = slop_process.stdout,
             stdout = subprocess.PIPE,
         )
     else:
         input_process = subprocess.Popen(
-            ['sort', '-k1,1n', '-k2,2n', bedgraph_file],
+            ['sort', '-k1,1', '-k2,2n', bedgraph_file],
             stdout = subprocess.PIPE,
         )
 
-    mapped_bedgraph = subprocess.check_output(
+    map_process = subprocess.Popen(
                     ['bedtools','map',
-                        '-a', regions_file,
-                        '-b', '-',
+                        '-a', '-',
+                        '-b', bedgraph_file,
                         '-c', '4',
                         '-o', 'mean',
                         '-null', null,
-                        '-delim', '\t',
-                        '-F', '0.5',
-                        '-split',
                     ],
                     stdin=input_process.stdout,
+                    stdout=subprocess.PIPE,
                 )
-    input_process.wait()
+
+    resort_process = subprocess.Popen(
+        ['sort','-k4,4n'],
+        stdin = map_process.stdout,
+        stdout = subprocess.PIPE
+    )
+
+    cut_output = subprocess.check_output(
+        ['cut','-f','5'],
+        stdin=resort_process.stdout
+    )
+
+    vals = array(list(map(
+            lambda x : float(x.strip()),
+            cut_output.decode().strip().split('\n')
+        )))
+
+    assert len(vals) > 1
+
+    return vals
 
 
 

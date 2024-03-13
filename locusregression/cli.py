@@ -97,7 +97,7 @@ make_windows_parser = subparsers.add_parser('get-regions', help = 'Make windows 
 make_windows_parser.add_argument('--genome-file','-g', type = file_exists, required = True, help = 'Also known as a "Chrom sizes" file.')    
 make_windows_parser.add_argument('--blacklist-file','-v', type = file_exists, required=True, help = 'Bed file of regions to exclude from windows.')
 make_windows_parser.add_argument('--window-size','-w', type = posint, required = True, help = 'Size of windows to make.')
-make_windows_parser.add_argument('--categorical-features','-cf', nargs='+', type = str, default = [], 
+make_windows_parser.add_argument('--categorical-features','-cf', nargs='+', type = file_exists, default = [], 
                                  help = 'List of categorical feature bedfiles to account for while making windows.')
 make_windows_parser.add_argument('--output','-o', type = argparse.FileType('w'), default=sys.stdout, 
                                  help = 'Where to save windows.')
@@ -110,6 +110,46 @@ context_sub.add_argument('--regions-file','-r', type = file_exists, required = T
 context_sub.add_argument('--n-jobs','-j', type = posint, default = 1, help = 'Number of parallel processes to use. Currently does nothing.')
 context_sub.add_argument('--output','-o', type = valid_path, required = True, help = 'Where to save compiled corpus.')
 context_sub.set_defaults(func = SBSCorpusMaker.create_context_frequencies_file)
+
+
+def process_bedgraph(
+    group='all',
+    normalization='power',
+    extend=0,*,
+    genome_file,
+    bedgraph_file,
+    regions_file,
+    feature_name,
+    output,
+):
+
+    feature_vals = make_continous_features_bedgraph(
+        bedgraph_file=bedgraph_file,
+        regions_file=regions_file,
+        genome_file=genome_file,
+        extend=extend,
+        null='nan',
+    )
+
+    print('#feature=' + feature_name, file=output)
+    print(f'#type={normalization}', file=output)
+    print('#group=' + group, file = output)
+    print(*feature_vals, sep = '\n', file = output)
+
+
+bedgraph_sub = subparsers.add_parser('ingest-bedgraph', help = 'Summarize bigwig file for a given cell type.')
+bedgraph_sub.add_argument('bedgraph-file', type = file_exists)
+bedgraph_sub.add_argument('--genome-file','-gf', type = file_exists, required=True)
+bedgraph_sub.add_argument('--regions-file','-r', type = file_exists, required=True,)
+bedgraph_sub.add_argument('--feature-name','-name', type = str, required=True,)
+bedgraph_sub.add_argument('--group','-g', type = str, default='all', help = 'Group name for feature.')
+bedgraph_sub.add_argument('--extend','-e', type = posint, default=0, help = 'Extend each region by this many basepairs.')
+bedgraph_sub.add_argument('--normalization','-norm', type = str, choices=['power','minmax','quantile','standardize'], 
+                        default='power', 
+                        help = 'Normalization to apply to feature.'
+                        )
+bedgraph_sub.add_argument('--output','-o', type = argparse.FileType('w'), default=sys.stdout)
+bedgraph_sub.set_defaults(func = process_bedgraph)
 
 
 def process_bigwig(group='all',
@@ -600,19 +640,20 @@ trainer_sub.set_defaults(func = train_model)
 
 
 
-def score(*,model, corpuses):
+def score(subset_by_loci=False,*,model, corpuses):
 
     dataset = load_dataset(corpuses)
 
     model = load_model(model)
 
-    print(model.score(dataset))
+    print(model.score(dataset, subset_by_loci=subset_by_loci))
 
 
 score_parser = subparsers.add_parser('model-score', help='Score a model on a corpus.')
 score_parser.add_argument('model', type = file_exists)
 score_parser.add_argument('--corpuses', '-d', type = file_exists, nargs = '+', required=True,
     help = 'Path to compiled corpus file/files.')
+score_parser.add_argument('--subset-by-loci', action = 'store_true', default=False)
 score_parser.set_defaults(func = score)
 
 
