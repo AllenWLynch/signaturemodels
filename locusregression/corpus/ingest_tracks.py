@@ -140,7 +140,7 @@ def make_distance_features(
 
     nan_mask = (upstream < 0.) | (downstream < 0.) | (upstream + downstream <= 0.)
 
-    progress = upstream/(upstream + downstream) 
+    progress = upstream/(upstream + downstream + 1) 
     progress = np.minimum(progress, 1-progress)
     
     #progress = 1. - progress if reverse else progress
@@ -157,7 +157,6 @@ def make_distance_features(
 def make_discrete_features(
         column=4,
         null='none',
-        
         class_priority = None,*,
         regions_file, 
         genomic_features,

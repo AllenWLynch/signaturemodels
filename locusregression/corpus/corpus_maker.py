@@ -29,7 +29,18 @@ class BED12Record:
         
     def __len__(self):
         return sum(self.block_sizes)
-
+    
+    def __str__(self):
+        return '\t'.join(
+            map(str, [self.chromosome, self.start, self.end, 
+                      self.name, self.score, self.strand, 
+                      self.thick_start, self.thick_end, 
+                      self.item_rgb, self.block_count, 
+                      ','.join(map(str, self.block_sizes)), 
+                      ','.join(map(str, self.block_starts))
+                    ]
+            )
+        )
 
 
 class CorpusMaker:
@@ -349,7 +360,8 @@ class CorpusMaker:
     def ingest_sample(cls, vcf_file, 
                     chr_prefix = '',
                     weight_col = None,
-                    exposure_file = None,*,
+                    exposure_file = None,
+                    mutation_rate_file=None,*,
                     regions_file,
                     fasta_file,
                     ):

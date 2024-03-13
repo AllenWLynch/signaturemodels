@@ -189,13 +189,18 @@ class SampleLoader:
 
             subset_idx = list(range(n_samples))
 
+        with h5.File(self.filename, 'r') as f:
+            all_sample_names = sorted(list(f['samples'].keys()))
+        
+        self.sample_names = [all_sample_names[i] for i in subset_idx]
         self.subset_idx = subset_idx
+        
 
     def __len__(self):
         return len(self.subset_idx)
 
     def _read_item(self, h5, idx):
-        return self.observation_class.read_h5_dataset(h5, f'samples/{idx}')
+        return self.observation_class.read_h5_dataset(h5, f'samples/{self.sample_names[idx]}')
 
     def __iter__(self):
         with h5.File(self.filename, 'r') as f:
