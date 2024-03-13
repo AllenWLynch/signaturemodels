@@ -122,6 +122,9 @@ class FeatureTransformer:
                 )
 
         return self
+    
+    def assemble_matrix(self, corpus_states):
+        return _assemble_matrix(self.feature_names_, corpus_states)
 
 
     def transform(self, corpus_states):
@@ -129,7 +132,7 @@ class FeatureTransformer:
         for corpus_state in corpus_states.values():
             assert all([f in corpus_state.feature_names for f in self.feature_names_])
 
-        matrix, labels = _assemble_matrix(self.feature_names_, corpus_states)
+        matrix, labels = self.assemble_matrix(corpus_states)
         transformed_matrix = self.transformer_.transform(matrix)#, y=labels)
 
         return transformed_matrix

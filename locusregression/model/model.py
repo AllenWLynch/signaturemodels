@@ -956,6 +956,7 @@ class LocusRegressor:
         self.explanation_shap_values_ = {}
         self.explanation_interaction_values_ = {}
         self.explanation_features_ = None
+        self.explanation_display_features_ = None
 
         for component in self.component_names:
             
@@ -965,7 +966,8 @@ class LocusRegressor:
             
             self.explanation_shap_values_[component], \
                 self.explanation_features_, \
-                self.explanation_feature_names_ = \
+                self.explanation_feature_names_, \
+                self.explanation_display_features_ = \
                     explain(
                         component,
                         model = self,
@@ -997,6 +999,7 @@ class LocusRegressor:
             self.explanation_shap_values_[component],
             data = self.explanation_features_,
             feature_names = self.explanation_feature_names_,
+            display_data = self.explanation_display_features_,
         )
     
 
