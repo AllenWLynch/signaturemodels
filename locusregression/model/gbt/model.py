@@ -20,6 +20,8 @@ class GBTRegressor(LocusRegressor):
                  l2_regularization=1e-3,
                  n_iter_no_change=3,
                  use_groups=True,
+                 signature_reg = 0.,
+                 cardinality_reg = 0.,
                   **kw, 
                 ):
         super().__init__(**kw)
@@ -32,6 +34,8 @@ class GBTRegressor(LocusRegressor):
         self.max_leaf_nodes = max_leaf_nodes
         self.min_samples_leaf = min_samples_leaf
         self.max_features = max_features
+        self.cardinality_reg = cardinality_reg
+        self.signature_reg = signature_reg
 
     
     def _get_rate_model_parameters(self):
@@ -45,6 +49,8 @@ class GBTRegressor(LocusRegressor):
             'max_leaf_nodes' : self.max_leaf_nodes,
             'min_samples_leaf' : self.min_samples_leaf,
             'max_features' : self.max_features,
+            'cardinality_reg' : self.cardinality_reg,
+            'signature_reg' : self.signature_reg,
         }
     
     @classmethod
@@ -55,6 +61,8 @@ class GBTRegressor(LocusRegressor):
             'max_trees_per_iter' : trial.suggest_int('max_trees_per_iter', 10, 100),
             'n_iter_no_change' : trial.suggest_int('n_iter_no_change', 1, 5),
             'l2_regularization': trial.suggest_loguniform('l2_regularization', 1e-10, 1e-1),
+            'signature_reg': trial.suggest_loguniform('signature_reg', 1e-7, 1e-1),
+            'cardinality_reg': trial.suggest_loguniform('cardinality_reg', 1e-7, 1e-1),
             'max_leaf_nodes' : trial.suggest_int('max_leaf_nodes', 10, 50),
             'min_samples_leaf' : trial.suggest_int('min_samples_leaf', 5, 50),
             'max_features' : trial.suggest_categorical('max_features', [0.25, 0.5, 0.75, 1.0]),

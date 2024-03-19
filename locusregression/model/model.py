@@ -894,12 +894,12 @@ class LocusRegressor:
             if self.model_state.fit_cardinality_:
                 self.plot_cardinality_bias(comp, ax=ax[i,1], fontsize=7)
 
-            try:
-                self.explanation_shap_values_[comp]
-                self.plot_explanation(comp, ax=ax[i,2])
-            except AttributeError:
-                logger.warn(f'No explanations have been calculated for {comp}.')
-                ax[i, 2].axis('off')
+            #try:
+            self.explanation_shap_values_[comp]
+            self.plot_explanation(comp, ax=ax[i,2])
+            #except AttributeError:
+            #    logger.warn(f'No explanations have been calculated for {comp}.')
+            #    ax[i, 2].axis('off')
             
             if i < len(components) - 1:
                 ax[i,1].tick_params(axis='x', bottom=False)
@@ -956,6 +956,7 @@ class LocusRegressor:
         self.explanation_shap_values_ = {}
         self.explanation_interaction_values_ = {}
         self.explanation_features_ = None
+        self.explanation_display_features_ = None
 
         for component in self.component_names:
             
@@ -965,13 +966,14 @@ class LocusRegressor:
             
             self.explanation_shap_values_[component], \
                 self.explanation_features_, \
-                self.explanation_feature_names_ = \
+                self.explanation_feature_names_, \
+                self.explanation_display_features_ = \
                     explain(
                         component,
                         model = self,
                         corpus = corpus,
                         n_jobs = n_jobs,
-                        chunk_size=max(10000, subsample + 1)
+                        chunk_size=10000, #max(10000, subsample + 1)
                     )
             
     
@@ -997,6 +999,7 @@ class LocusRegressor:
             self.explanation_shap_values_[component],
             data = self.explanation_features_,
             feature_names = self.explanation_feature_names_,
+            display_data = self.explanation_display_features_,
         )
     
 
