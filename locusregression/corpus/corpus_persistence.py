@@ -93,34 +93,49 @@ def write_regions(h5_object, bed12_regions):
     if not 'regions' in h5_object:
         h5_object.create_group('regions')
     regions_group = h5_object['regions']
-    
-    for _id, region in enumerate(bed12_regions):
-        region_container = regions_group.create_group(str(_id))
-        for key in ['chromosome','start','end','name','block_count','block_sizes','block_starts']:
-            region_container.attrs[key] = getattr(region, key)
         
+    save_attrs = ['chromosome','start','end','name','block_count','block_sizes','block_starts']
+    for attribute in save_attrs:
+        vals = [getattr(region, attribute) for region in bed12_regions]
+        if type(vals[0]) == str:
+            vals = np.array(vals).astype('S')
+        elif type(vals[0]) == list:
+            vals = np.array(list(map(lambda x : ','.join(map(str, x)), vals))).astype('S')
+        else:
+            vals = np.array(vals)
+
+        regions_group.create_dataset(attribute, data = vals)
+
 
 def read_regions(h5_object):
 
     regions = []
+    read_attrs = ['chromosome','start','end','name','block_count','block_sizes','block_starts']
+
+    def convert_dtype(key, val):
+        if val.dtype.kind == 'S':
+            val = list(np.char.decode(val, 'utf-8'))
+
+        if key in ['block_sizes', 'block_starts']:
+            val = list(
+                map(lambda x : map(int, x.split(',')), val)
+            )
+        
+        return val
+        
+    data = {key: convert_dtype(key, h5_object['regions'][key][...]) for key in read_attrs}
     
-    for _id in map(str, range(len(h5_object['regions'].keys()))):
-        region = h5_object['regions'][_id]
+    for i in range(len(data['chromosome'])):
+        region_dict = {key: data[key][i] for key in read_attrs}
         ## asserts _id is in order
         regions.append(
             BED12Record(
-                chromosome = region.attrs['chromosome'],
-                start = region.attrs['start'],
-                end = region.attrs['end'],
-                name = region.attrs['name'],
+                **region_dict,
                 score=0,
                 strand='+',
                 thick_end=0,
                 thick_start=0,
                 item_rgb='0,0,0',
-                block_count= region.attrs['block_count'],
-                block_sizes= region.attrs['block_sizes'],
-                block_starts= region.attrs['block_starts'],
             )
         )
 
