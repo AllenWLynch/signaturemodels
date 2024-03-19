@@ -215,7 +215,7 @@ class CorpusMaker:
             cols = next(f).strip().split(sep)
             assert len(cols) > 0
             numcols = len(cols)
-            
+
             if not all(col.startswith('#feature=') for col in cols):
                 raise ValueError('The first line of the tsv file must be columns of "#feature=" followed by the feature name.\n'
                                     'e.g. #feature=H3K27ac\n'

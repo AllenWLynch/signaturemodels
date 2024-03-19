@@ -894,12 +894,12 @@ class LocusRegressor:
             if self.model_state.fit_cardinality_:
                 self.plot_cardinality_bias(comp, ax=ax[i,1], fontsize=7)
 
-            try:
-                self.explanation_shap_values_[comp]
-                self.plot_explanation(comp, ax=ax[i,2])
-            except AttributeError:
-                logger.warn(f'No explanations have been calculated for {comp}.')
-                ax[i, 2].axis('off')
+            #try:
+            self.explanation_shap_values_[comp]
+            self.plot_explanation(comp, ax=ax[i,2])
+            #except AttributeError:
+            #    logger.warn(f'No explanations have been calculated for {comp}.')
+            #    ax[i, 2].axis('off')
             
             if i < len(components) - 1:
                 ax[i,1].tick_params(axis='x', bottom=False)
@@ -973,7 +973,7 @@ class LocusRegressor:
                         model = self,
                         corpus = corpus,
                         n_jobs = n_jobs,
-                        chunk_size=max(10000, subsample + 1)
+                        chunk_size=10000, #max(10000, subsample + 1)
                     )
             
     

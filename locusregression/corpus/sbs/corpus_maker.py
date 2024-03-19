@@ -257,18 +257,23 @@ class SBSCorpusMaker(CorpusMaker):
                     yield seq[ i : i+w]
 
             trinuc_counts = Counter()
+            N_counts=0
 
             for chrom, start, end in bed12_region.segments():
 
                 window_sequence = fasta_object[chrom][max(start-1,0) : end+1].seq.upper()
-                    
-                trinuc_counts += Counter([
-                    trinuc for trinuc in rolling(window_sequence) if not 'N' in trinuc
-                ])
+                
+                for trinuc in rolling(window_sequence):
+                    if not 'N' in trinuc:
+                        trinuc_counts[trinuc]+=1
+                    else:
+                        N_counts+=1
+
+            pseudocount = N_counts/(2*32)
 
             return [
-                [trinuc_counts[context] for context in CONTEXTS],
-                [trinuc_counts[revcomp(context)] for context in CONTEXTS]
+                [trinuc_counts[context]+pseudocount for context in CONTEXTS],
+                [trinuc_counts[revcomp(context)]+pseudocount for context in CONTEXTS]
             ]
         
         with Fasta(fasta_file) as fasta_object:

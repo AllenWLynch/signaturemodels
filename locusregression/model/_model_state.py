@@ -35,7 +35,8 @@ class ModelState:
                 pseudocounts = 10000,
                 get_model_fn = _get_linear_model,
                 categorical_encoder = OneHotEncoder(sparse_output=False, drop='first'),
-                signature_reg = 0.,*,
+                signature_reg = 0.,
+                cardinality_reg=0.,*,
                 corpus_states,
                 n_components,
                 random_state, 
@@ -110,9 +111,9 @@ class ModelState:
         ]
 
         self.cardinality_models = [
-            PoissonRegressor(alpha = 0.,
+            PoissonRegressor(alpha = cardinality_reg,
                              fit_intercept=False,
-                                warm_start=True)
+                             warm_start=True)
             for _ in range(n_components)
         ]
 
