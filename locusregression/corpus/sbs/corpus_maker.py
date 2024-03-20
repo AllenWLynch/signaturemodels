@@ -54,6 +54,9 @@ def get_passed_SNVs(vcf_file, query_string,
     return query_process
 
 
+class WeirdMutationError(Exception):
+    pass
+
 
 class SBSCorpusMaker(CorpusMaker):
 
@@ -86,6 +89,11 @@ class SBSCorpusMaker(CorpusMaker):
 
             oldnuc = context[1]
 
+            if not ref.upper() in 'ATCG' or not alt.upper() in 'ATCG':
+                raise WeirdMutationError('\tWeird mutation found at {}:{} {}->{}'.format(
+                    chrom, str(pos), ref, alt
+                ))
+
             assert oldnuc == ref, '\tLooks like the vcf file was constructed with a different reference genome, different ref allele found at {}:{}, found {} instead of {}'.format(
                 chrom, str(pos), oldnuc, ref 
             )
@@ -103,6 +111,7 @@ class SBSCorpusMaker(CorpusMaker):
                 'pos' : int(pos),
             }
         
+
 
         query_statement = chr_prefix + '%CHROM\t%POS0\t%POS\t%POS0|%REF|%ALT|' \
                                                     + ('1\n' if weight_col is None else f'%INFO/{weight_col}\n')
@@ -157,9 +166,13 @@ class SBSCorpusMaker(CorpusMaker):
 
                     if not line:
                         break
-                
-                    for k, v in process_line(line, fa).items():
-                        mutations[k].append(v)
+                    
+                    try:
+                        for k, v in process_line(line, fa).items():
+                            mutations[k].append(v)
+                    except WeirdMutationError as err:
+                        logger.warning(err)
+                        continue
 
             intersect_process.communicate()
 
