@@ -352,6 +352,7 @@ class CorpusMaker:
                     exposure_file = None,*,
                     regions_file,
                     fasta_file,
+                    mutation_rate_file=None,
                     ):
             
         windows = cls.read_windows(regions_file, sep = '\t')
@@ -368,4 +369,5 @@ class CorpusMaker:
             exposures,
             chr_prefix = chr_prefix,
             weight_col = weight_col,
+            mutation_rate_file=mutation_rate_file,
         )

@@ -345,10 +345,13 @@ def _cluster_mutations(mutations_df,
 
     mutations_df['negLog10interMutationDistanceRatio'] = -np.log10(mutations_df.rainfallDistance/mutations_df.criticalDistance)
 
-    return mutations_df\
+    mutations_df = mutations_df\
         .set_index('cluster')\
-        .join(cluster_size)\
-        .reset_index()\
+        .join(cluster_size)
+    
+    mutations_df.index.name = 'cluster'
+
+    return mutations_df.reset_index()\
         [['CHROM','POS','mutationType','negLog10interMutationDistanceRatio','clusterSize', 'cluster']]
 
 
@@ -391,7 +394,7 @@ def get_mutation_clusters(mutation_rate_bedgraph, vcf_file,
         # 2. get the mutation type and allele frequency
         #    from the VCF file
         query_process = get_passed_SNVs(vcf_file,
-                        f'{chr_prefix}%CHROM\t%POS0\t%POS0\t%REF>%ALT\t[%DP\t%AD{{1}}]\n',
+                        f'{chr_prefix}%CHROM\t%POS0\t%POS0\t%REF>%ALT\n',
                         )
         
         # 3. intersect the rainfall statistics with the mutation type and allele frequency
@@ -413,9 +416,10 @@ def get_mutation_clusters(mutation_rate_bedgraph, vcf_file,
             )
 
         mutations_df = pd.read_csv(df.name, sep='\t', header=None)\
-                .iloc[:, [0,1,3,4,8,9,10]]
-
-        mutations_df.columns = ['CHROM','POS','localMutationRate','rainfallDistance','mutationType','readDepth','variantReadDepth']
+                .iloc[:, [0,1,3,4,8]]
+        
+    
+        mutations_df.columns = ['CHROM','POS','localMutationRate','rainfallDistance','mutationType']
 
         mutations_df = mutations_df[ mutations_df.localMutationRate != '.' ]
         mutations_df['localMutationRate'] = mutations_df.localMutationRate.astype(float)
