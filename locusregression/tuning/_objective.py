@@ -13,7 +13,7 @@ def objective(trial,
             max_components = 10,
             model_params = {},
             tune_subsample = True,
-            locus_subsample_rates = [0.125, 0.25, None],
+            locus_subsample_rates = [0.125, 0.25, None, None],
             model_type = 'regression',
             subset_by_loci=True,
             no_improvement=5,*,
@@ -35,7 +35,7 @@ def objective(trial,
 
     if tune_subsample:
         sample_params['locus_subsample'] = trial.suggest_categorical('locus_subsample', locus_subsample_rates)
-        sample_params['batch_size'] = trial.suggest_categorical('batch_size', [64,128,None])
+        sample_params['batch_size'] = trial.suggest_categorical('batch_size', [128,256,None,None])
 
     model_params.update(sample_params)
 
@@ -57,7 +57,7 @@ def objective(trial,
     
     scores = []
 
-    eval_r2_test = [partial(_pseudo_r2, 
+    '''eval_r2_test = [partial(_pseudo_r2, 
                                 y = subcorpus.get_empirical_mutation_rate(),
                                 y_null=test.context_frequencies
                             )
@@ -69,7 +69,7 @@ def objective(trial,
                                 y_null=train.context_frequencies
                             )
                         for subcorpus in train.corpuses
-                    ]
+                    ]'''
     
     for train_score, test_score in model._fit(
         train, test_corpus=test, subset_by_loci=subset_by_loci,
@@ -81,9 +81,9 @@ def objective(trial,
         trial.set_user_attr(f'test_score_{step}',  test_score)
         trial.set_user_attr(f'train_score_{step}',  train_score)
         
-        for train_, test_ in zip(train.corpuses, test.corpuses):
-            trial.set_user_attr(f'test_mutationR2_{step}_{test_.name}', eval_r2_test(y_hat=exp(model.get_log_marginal_mutation_rate(test_))))
-            trial.set_user_attr(f'train_mutationR2_{step}_{train_.name}', eval_r2_test(y_hat=exp(model.get_log_marginal_mutation_rate(train_))))
+        '''for train_, test_, train_fn, test_fn in zip(train.corpuses, test.corpuses, eval_r2_train, eval_r2_test):
+            trial.set_user_attr(f'test_mutationR2_{step}_{test_.name}', test_fn(y_hat=exp(model.get_log_marginal_mutation_rate(test_))))
+            trial.set_user_attr(f'train_mutationR2_{step}_{train_.name}', train_fn(y_hat=exp(model.get_log_marginal_mutation_rate(train_))))'''
 
         if trial.should_prune():
             raise optuna.TrialPruned()
@@ -91,8 +91,8 @@ def objective(trial,
         if len(scores) > no_improvement and not (min(scores) in scores[-no_improvement:]):
             break
     
-    for train_, test_ in zip(train.corpuses, test.corpuses):
-        trial.set_user_attr(f'test_mutationR2_{test_.name}', eval_r2_test(y_hat=exp(model.get_log_marginal_mutation_rate(test_))))
-        trial.set_user_attr(f'train_mutationR2_{train_.name}', eval_r2_test(y_hat=exp(model.get_log_marginal_mutation_rate(train_))))
+    #for train_, test_ in zip(train.corpuses, test.corpuses):
+    #    trial.set_user_attr(f'test_mutationR2_{test_.name}', eval_r2_test(y_hat=exp(model.get_log_marginal_mutation_rate(test_))))
+    #    trial.set_user_attr(f'train_mutationR2_{train_.name}', eval_r2_test(y_hat=exp(model.get_log_marginal_mutation_rate(train_))))
 
     return model.score(test, subset_by_loci=subset_by_loci) 

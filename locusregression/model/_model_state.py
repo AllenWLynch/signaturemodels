@@ -26,6 +26,7 @@ class DummyCorpus:
         self.context_frequencies = corpus.context_frequencies
         self.shared_correlates = corpus.shared_correlates
         self.shared_exposures = corpus.shared_exposures
+        self.exposures = corpus.exposures
         self.features = corpus.features
 
 
