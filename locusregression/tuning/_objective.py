@@ -6,6 +6,7 @@ import optuna
 from tqdm import trange
 import sys
 from numpy import exp
+from functools import partial
 
 def objective(trial,
             min_components = 2, 
@@ -21,7 +22,7 @@ def objective(trial,
             ):
     
     
-    if model_type == 'regression':
+    if model_type == 'linear':
         basemodel = LocusRegressor
     elif model_type == 'gbt':
         basemodel = GBTRegressor
@@ -56,9 +57,20 @@ def objective(trial,
     
     scores = []
 
-    train_empirical = train.get_empirical_mutation_rate(); train_null = train.context_frequencies
-    test_empirical = test.get_empirical_mutation_rate(); test_null = test.context_frequencies
+    eval_r2_test = [partial(_pseudo_r2, 
+                                y = subcorpus.get_empirical_mutation_rate(),
+                                y_null=test.context_frequencies
+                            )
+                        for subcorpus in test.corpuses
+                    ]
 
+    eval_r2_train = [partial(_pseudo_r2, 
+                                y = subcorpus.get_empirical_mutation_rate(),
+                                y_null=train.context_frequencies
+                            )
+                        for subcorpus in train.corpuses
+                    ]
+    
     for train_score, test_score in model._fit(
         train, test_corpus=test, subset_by_loci=subset_by_loci,
     ):
@@ -69,11 +81,9 @@ def objective(trial,
         trial.set_user_attr(f'test_score_{step}',  test_score)
         trial.set_user_attr(f'train_score_{step}',  train_score)
         
-        test_mutation_r2 = _pseudo_r2(test_empirical, exp(model.get_log_marginal_mutation_rate(test)), test_null)
-        train_mutation_r2 = _pseudo_r2(train_empirical, exp(model.get_log_marginal_mutation_rate(train)), train_null)
-                
-        trial.set_user_attr(f'test_mutation_r2_{step}', test_mutation_r2)
-        trial.set_user_attr(f'train_mutation_r2_{step}', train_mutation_r2)
+        for train_, test_ in zip(train.corpuses, test.corpuses):
+            trial.set_user_attr(f'test_mutationR2_{step}_{test_.name}', eval_r2_test(y_hat=exp(model.get_log_marginal_mutation_rate(test_))))
+            trial.set_user_attr(f'train_mutationR2_{step}_{train_.name}', eval_r2_test(y_hat=exp(model.get_log_marginal_mutation_rate(train_))))
 
         if trial.should_prune():
             raise optuna.TrialPruned()
@@ -81,7 +91,8 @@ def objective(trial,
         if len(scores) > no_improvement and not (min(scores) in scores[-no_improvement:]):
             break
     
-    trial.set_user_attr('test_mutation_r2', model.get_mutation_rate_r2(test))
-    trial.set_user_attr('train_mutation_r2', model.get_mutation_rate_r2(train))
+    for train_, test_ in zip(train.corpuses, test.corpuses):
+        trial.set_user_attr(f'test_mutationR2_{test_.name}', eval_r2_test(y_hat=exp(model.get_log_marginal_mutation_rate(test_))))
+        trial.set_user_attr(f'train_mutationR2_{train_.name}', eval_r2_test(y_hat=exp(model.get_log_marginal_mutation_rate(train_))))
 
     return model.score(test, subset_by_loci=subset_by_loci) 

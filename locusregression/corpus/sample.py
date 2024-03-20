@@ -14,7 +14,6 @@ class Sample:
         mutation (np.ndarray): Array of mutations.
         context (np.ndarray): Array of contexts.
         locus (np.ndarray): Array of loci.
-        exposures (np.ndarray): Array of exposures.
         name (str): Name of the sample.
         chrom (np.ndarray, optional): Array of chromosomes. Defaults to None.
         pos (np.ndarray, optional): Array of positions. Defaults to None.
@@ -25,7 +24,6 @@ class Sample:
     mutation : np.ndarray
     context : np.ndarray
     locus : np.ndarray
-    exposures : np.ndarray
     cardinality : np.ndarray
     name : str
     corpus_name : str
@@ -40,7 +38,6 @@ class Sample:
         'mutation' : np.uint8,
         'context' : np.uint8,
         'locus' : np.uint32,
-        'exposures' : np.float32,
         'cardinality' : np.uint8,
         'chrom' : 'S',
         'pos' : np.uint32,
@@ -49,8 +46,8 @@ class Sample:
         'corpus_name' : 'S',
     }
 
-    data_attrs = ['attribute','mutation','context','locus','exposures','cardinality','weight','chrom','pos']
-    required = ['attribute', 'mutation','context','locus','exposures','cardinality']
+    data_attrs = ['attribute','mutation','context','locus','cardinality','weight','chrom','pos']
+    required = ['attribute', 'mutation','context','locus','cardinality']
     mutation_attrs = ['attribute','mutation','context','locus','cardinality','weight','chrom','pos']
 
     N_CARDINALITY=2
@@ -110,7 +107,7 @@ class Sample:
         )
         
     
-    def get_empirical_mutation_rate(self, use_weight = True):
+    def get_empirical_mutation_rate(self, n_loci, use_weight = True):
         """
         Calculates the empirical mutation rate.
 
@@ -120,18 +117,12 @@ class Sample:
         Returns:
             scipy.sparse.dok_matrix: The empirical mutation rate.
         """
-        n_loci = self.exposures.shape[1]
 
         mutations = np.zeros((self.N_CARDINALITY, self.N_CONTEXTS, n_loci), dtype = float if use_weight else np.uint32)
 
         for mutation in self:
             mutations[mutation['cardinality'], mutation['context'], mutation['locus']] += mutation['weight'] if use_weight else 1
         
-        '''mutations = coo_matrix(
-            (self.weight if use_weight else np.ones_like(self.weight), (self.context * (self.cardinality + 1), self.locus)),
-            shape = (self.N_CONTEXTS * self.N_CARDINALITY, n_loci),
-            dtype = np.uint16 if not use_weight else float
-        )'''
         return mutations
 
 
@@ -190,7 +181,7 @@ class SampleLoader:
             subset_idx = list(range(n_samples))
 
         with h5.File(self.filename, 'r') as f:
-            all_sample_names = sorted(list(f['samples'].keys()))
+            all_sample_names = list(f['samples'].keys())
         
         self.sample_names = [all_sample_names[i] for i in subset_idx]
         self.subset_idx = subset_idx
@@ -204,11 +195,10 @@ class SampleLoader:
 
     def __iter__(self):
         with h5.File(self.filename, 'r') as f:
-            for i in self.subset_idx:
+            for i in range(len(self)):
                 yield self._read_item(f, i)
 
     def __getitem__(self, idx):
-        idx = self.subset_idx[idx]
         with h5.File(self.filename, 'r') as f:
             return self._read_item(f, idx)
 

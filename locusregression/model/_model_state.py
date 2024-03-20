@@ -25,6 +25,7 @@ class DummyCorpus:
     def __init__(self, corpus):
         self.context_frequencies = corpus.context_frequencies
         self.shared_correlates = corpus.shared_correlates
+        self.shared_exposures = corpus.shared_exposures
         self.features = corpus.features
 
 
@@ -240,7 +241,8 @@ class ModelState:
         new_rho = new_rho/np.sum(new_rho, axis = -1, keepdims = True)
 
         self._svi_update('_rho', new_rho, learning_rate)
-
+        # enforce constraint after svi update
+        self._rho = self._rho/np.sum(self._rho, axis = -1, keepdims = True)
 
 
     def _get_tau_features(self, corpus_states):

@@ -165,8 +165,19 @@ def remove_feature_wrapper(*,corpus, feature_names):
 
 remove_feature_parser = subparsers.add_parser('corpus-rm-features', help = 'Remove a feature from a corpus.')
 remove_feature_parser.add_argument('corpus', type = file_exists)
-remove_feature_parser.add_argument('feature-name', type = str, nargs='+')
+remove_feature_parser.add_argument('feature-names', type = str, nargs='+')
 remove_feature_parser.set_defaults(func = remove_feature_wrapper)
+
+
+def rename_corpus_wrapper(*,corpus,name):
+    with buffered_writer(corpus) as f:
+        data_group = f['metadata']
+        data_group.attrs['name'] = name
+
+rename_parser = subparsers.add_parser('corpus-rename', help = 'Rename a corpus.')
+rename_parser.add_argument('corpus', type = file_exists)
+rename_parser.add_argument('name', type = str)
+rename_parser.set_defaults(func = rename_corpus_wrapper)
 
 
 @contextmanager
@@ -212,31 +223,34 @@ def process_bedgraph(
     group='all',
     normalization='power',
     extend=0,*,
+    corpus,
     genome_file,
     bedgraph_file,
-    regions_file,
     feature_name,
-    output,
 ):
+    with _get_regions_filename(corpus) as regions_file:
 
-    feature_vals = make_continous_features_bedgraph(
-        bedgraph_file=bedgraph_file,
-        regions_file=regions_file,
-        genome_file=genome_file,
-        extend=extend,
-        null='nan',
-    )
+        feature_vals = make_continous_features_bedgraph(
+            bedgraph_file=bedgraph_file,
+            regions_file=regions_file,
+            genome_file=genome_file,
+            extend=extend,
+            null='nan',
+        )
 
-    print('#feature=' + feature_name, file=output)
-    print(f'#type={normalization}', file=output)
-    print('#group=' + group, file = output)
-    print(*feature_vals, sep = '\n', file = output)
+    with buffered_writer(corpus) as h5_object:
+        write_feature(
+            h5_object,
+            name = feature_name,
+            group = group,
+            type = normalization,
+            values = feature_vals,
+        )
 
-
-bedgraph_sub = subparsers.add_parser('ingest-bedgraph', help = 'Summarize bigwig file for a given cell type.')
+bedgraph_sub = subparsers.add_parser('corpus-ingest-bedgraph', help = 'Summarize bigwig file for a given cell type.')
+bedgraph_sub.add_argument('corpus', type = file_exists, help = 'Path to compiled corpus file.')
 bedgraph_sub.add_argument('bedgraph-file', type = file_exists)
 bedgraph_sub.add_argument('--genome-file','-gf', type = file_exists, required=True)
-bedgraph_sub.add_argument('--regions-file','-r', type = file_exists, required=True,)
 bedgraph_sub.add_argument('--feature-name','-name', type = str, required=True,)
 bedgraph_sub.add_argument('--group','-g', type = str, default='all', help = 'Group name for feature.')
 bedgraph_sub.add_argument('--extend','-e', type = posint, default=0, help = 'Extend each region by this many basepairs.')
@@ -244,8 +258,51 @@ bedgraph_sub.add_argument('--normalization','-norm', type = str, choices=['power
                         default='power', 
                         help = 'Normalization to apply to feature.'
                         )
-bedgraph_sub.add_argument('--output','-o', type = argparse.FileType('w'), default=sys.stdout)
 bedgraph_sub.set_defaults(func = process_bedgraph)
+
+
+def process_vector(group='all',*,
+                   normalization,
+                   vector_file,
+                   feature_name,
+                   corpus):
+
+    type_map = {
+            'categorical' : str,
+            'cardinality' : str,
+        }
+
+    feature_vals=[]
+    with open(vector_file, 'r') as f:
+        for line in f:
+            _feature = line.strip()
+
+            feature_vals.append(
+                type_map.setdefault(normalization, float)(_feature) if not _feature=='.' else type_map.setdefault(normalization, float)('nan')
+            )
+
+    feature_vals = np.array(feature_vals)
+    assert len(feature_vals) == peek_locus_dim(corpus)
+    
+    with buffered_writer(corpus) as h5_object:
+        write_feature(
+            h5_object,
+            name = feature_name,
+            group = group,
+            type = normalization,
+            values = feature_vals,
+        )
+
+vector_sub = subparsers.add_parser('corpus-ingest-vector', help = 'Ingest a vector file as a feature.')
+vector_sub.add_argument('corpus', type = file_exists, help = 'Path to compiled corpus file.')
+vector_sub.add_argument('vector-file', type = file_exists, help = 'A text file where each line is a feature value, should be the exact same length as the number of regions in the corpus')
+vector_sub.add_argument('--feature-name','-name', type = str, required=True,)
+vector_sub.add_argument('--group','-g', type = str, default='all', help = 'Group name for feature.')
+vector_sub.add_argument('--normalization','-norm', type = str, choices=['power','minmax','quantile','standardize','categorical','cardinality'], 
+                        required=True,
+                        help = 'Normalization to apply to feature.'
+                        )
+vector_sub.set_defaults(func = process_vector)
 
 
 def process_bigwig(group='all',
@@ -372,10 +429,9 @@ discrete_sub.set_defaults(func = process_discrete)
 
 
 cardinality_sub = subparsers.add_parser('corpus-ingest-cardinality', help = 'Summarize discrete genomic features for some genomic elements.')
+cardinality_sub.add_argument('corpus', type = file_exists, help = 'Path to compiled corpus file.')
 cardinality_sub.add_argument('bed-file', type = file_exists, help = 'Bed file of genomic features. The provided column must contain +/-/., all other columns are ignored.')
-cardinality_sub.add_argument('--regions-file','-r', type = file_exists, required=True,)
 cardinality_sub.add_argument('--feature-name','-name', type = str, required=True,)
-cardinality_sub.add_argument('--output','-o', type = argparse.FileType('w'), default=sys.stdout)
 cardinality_sub.add_argument('--column','-c', type = posint, default=4, help = 'Column in bed file to use for feature.')
 cardinality_sub.set_defaults(func = partial(process_discrete, 
                                          group = 'cardinality', 
@@ -383,7 +439,7 @@ cardinality_sub.set_defaults(func = partial(process_discrete,
                                          class_priority = ['+','-'],
                                          feature_type = 'cardinality',
                                         )
-                          )
+                            )
 
 def ingest_sample(mutation_rate_bedgraph=None,
                   sample_name=None,
@@ -405,10 +461,9 @@ def ingest_sample(mutation_rate_bedgraph=None,
             sample_file, 
             regions_file,
             fasta_file,
-            exposures=[1.],
             chr_prefix = chr_prefix,
             weight_col = weight_col,
-            mutation_rate_bedgraph = mutation_rate_bedgraph,
+            mutation_rate_file = mutation_rate_bedgraph,
         )
     
     sample.name = sample_name
@@ -419,7 +474,7 @@ def ingest_sample(mutation_rate_bedgraph=None,
 ingest_sample_parser = subparsers.add_parser('corpus-ingest-sample', help = 'Ingest a sample into a corpus.')
 ingest_sample_parser.add_argument('corpus', type = file_exists, help = 'Path to compiled corpus file.')
 ingest_sample_parser.add_argument('sample-file', type = file_exists, help = 'VCF file of mutations.')
-ingest_sample_parser.add_argument('--sample-name','-n', type = str, default=None, help = 'Name of sample, defaults to filename.')
+ingest_sample_parser.add_argument('--sample-name','-name', type = str, default=None, help = 'Name of sample, defaults to filename.')
 ingest_sample_parser.add_argument('--weight-col','-w', type = str, default=None, help = 'Column in INFO field to use as weight.')
 ingest_sample_parser.add_argument('--mutation-rate-bedgraph','-m', type = file_exists, default=None, help = 'Bedgraph file of mutation rates.')
 ingest_sample_parser.add_argument('--chr-prefix', default='', help = 'Prefix to append to chromosome names in VCF files.')
@@ -454,7 +509,7 @@ def remove_sample(corpus, sample_names):
 
 remove_sample_parser = subparsers.add_parser('corpus-rm-samples', help = 'Remove a sample from a corpus.')
 remove_sample_parser.add_argument('corpus', type = file_exists)
-remove_sample_parser.add_argument('sample-name', type = str, nargs='+')
+remove_sample_parser.add_argument('sample-names', type = str, nargs='+')
 remove_sample_parser.set_defaults(func = remove_sample)
     
 

@@ -65,7 +65,7 @@ class SBSCorpusMaker(CorpusMaker):
     
     @classmethod
     def featurize_mutations(cls, 
-                        vcf_file, regions_file, fasta_file, exposures,
+                        vcf_file, regions_file, fasta_file,
                         chr_prefix = '', 
                         weight_col = None, 
                         mutation_rate_file=None
@@ -189,7 +189,6 @@ class SBSCorpusMaker(CorpusMaker):
             return SBSSample(
                 **mutations,
                 name = os.path.abspath(vcf_file),
-                exposures = np.array(exposures),
             )
         
         finally:

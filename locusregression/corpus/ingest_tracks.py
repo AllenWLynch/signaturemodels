@@ -66,7 +66,7 @@ def make_continous_features_bedgraph(*,
 
         center_process = subprocess.Popen(
             ['awk','-v','OFS=\t',
-            '{ center=$2+($3-$2)/2; print $1,center,center+1,$4 }', 
+            '{ center=int($2+($3-$2)/2); print $1,center,center+1,$4 }', 
             regions_file],
             stdout = subprocess.PIPE,
         )
@@ -84,7 +84,7 @@ def make_continous_features_bedgraph(*,
         )
     else:
         input_process = subprocess.Popen(
-            ['sort', '-k1,1', '-k2,2n', bedgraph_file],
+            ['sort', '-k1,1', '-k2,2n', regions_file],
             stdout = subprocess.PIPE,
         )
 

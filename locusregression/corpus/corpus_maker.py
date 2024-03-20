@@ -147,7 +147,6 @@ class CorpusMaker:
     def featurize_mutations(sample_file,
                             regions_file,
                             fasta_file,
-                            exposures,
                             chr_prefix = '',
                             weight_col = None,
                             **kw):
@@ -378,7 +377,6 @@ class CorpusMaker:
             vcf_file, 
             regions_file,
             fasta_file,
-            exposures,
             chr_prefix = chr_prefix,
             weight_col = weight_col,
             mutation_rate_file=mutation_rate_file,
