@@ -14,6 +14,11 @@ def peek_type(filename):
         return Corpus._get_observation_class(f['metadata'].attrs['type'])
     
 
+def peek_locus_dim(filename):    
+    with h5.File(filename, 'r') as f:
+        return len(f['regions']['chromosome'][...])
+        
+
 def peek_type_opened(h5_object):
     return Corpus._get_observation_class(h5_object['metadata'].attrs['type'])
 
@@ -97,13 +102,13 @@ def write_regions(h5_object, bed12_regions):
     save_attrs = ['chromosome','start','end','name','block_count','block_sizes','block_starts']
     for attribute in save_attrs:
         vals = [getattr(region, attribute) for region in bed12_regions]
-        if type(vals[0]) == str:
+        if isinstance(vals[0], str):
             vals = np.array(vals).astype('S')
         elif type(vals[0]) == list:
             vals = np.array(list(map(lambda x : ','.join(map(str, x)), vals))).astype('S')
         else:
             vals = np.array(vals)
-
+        
         regions_group.create_dataset(attribute, data = vals)
 
 
@@ -118,7 +123,7 @@ def read_regions(h5_object):
 
         if key in ['block_sizes', 'block_starts']:
             val = list(
-                map(lambda x : map(int, x.split(',')), val)
+                map(lambda x : list(map(int, x.split(','))), val)
             )
         
         return val
@@ -142,7 +147,7 @@ def read_regions(h5_object):
     return regions
 
 
-def create_corpus(filename,*, name, type, context_frequencies, regions):
+def create_corpus(filename, exposures=None,*,name, type, context_frequencies, regions):
 
     with h5.File(filename, 'w') as f:
         data_group = f.create_group('metadata')
@@ -150,6 +155,11 @@ def create_corpus(filename,*, name, type, context_frequencies, regions):
         data_group.attrs['type'] = type
 
         f.create_dataset('context_frequencies', data = context_frequencies)
+        
+        if exposures is None:
+            exposures = np.ones((1,context_frequencies.shape[-1]))
+
+        f.create_dataset('exposures', data = exposures)
 
         write_regions(f, regions)
 
@@ -162,16 +172,17 @@ def save_corpus(corpus, filename):
                 name = corpus.name,
                 type = corpus.type,
                 context_frequencies = corpus.context_frequencies,
-                regions = corpus.regions
+                regions = corpus.regions,
+                exposures = corpus.exposures,
             )
         
     with h5.File(filename, 'a') as f:    
 
         for feature_name, feature in corpus.features.items():
-            write_feature(f, feature_name, feature)
+            write_feature(f, name=feature_name, **feature)
             
         for i, sample in enumerate(corpus.samples):
-            write_sample(f, sample, str(i))
+            write_sample(f, sample, sample.name)
 
 
 def _load_corpus(filename, sample_obj):
@@ -183,7 +194,9 @@ def _load_corpus(filename, sample_obj):
             name = f['metadata'].attrs['name'],
             context_frequencies = f['context_frequencies'][...],
             features = read_features(f),
-            samples = sample_obj,   
+            regions = read_regions(f),
+            exposures = f['exposures'][...],
+            samples = sample_obj,
         )
 
 
@@ -194,7 +207,7 @@ def load_corpus(filename):
     with h5.File(filename, 'r') as f:
         samples = InMemorySamples([
             sample_type.read_h5_dataset(f, f'samples/{i}')
-            for i in range(len(f['samples'].keys()))
+            for i in f['samples'].keys()
         ])
 
     return _load_corpus(

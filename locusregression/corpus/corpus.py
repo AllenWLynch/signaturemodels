@@ -13,24 +13,30 @@ logger = logging.getLogger('Corpus')
 class CorpusMixin(ABC):
 
     def __init__(self,
-        metadata = {},*,
+        metadata = {},
+        exposures=None,*,
         type,
         name,
         samples,
         features,
         context_frequencies,
-        shared_exposures,
+        regions,
     ):
         self.type = type
         self.name = name
         self.samples = samples
         self.features = features
         self.context_frequencies = context_frequencies
-        self._shared_exposures = shared_exposures
+        self._shared_exposures = True
         self.metadata = metadata
+        self.regions=regions
+        
+        if exposures is None:
+            self._exposures = np.ones((1, self.locus_dim))
+        else:
+            assert exposures.shape == (1, self.locus_dim,)
+            self._exposures = exposures
 
-        if self._shared_exposures:
-            self._exposures = samples[0].exposures
 
         assert context_frequencies.shape == \
             (self.cardinalities_dim, self.context_dim, self.locus_dim)
@@ -178,8 +184,9 @@ class Corpus(CorpusMixin):
             samples = self.samples.subset(subset_idx),
             features=self.features,
             context_frequencies = self.context_frequencies,
-            shared_exposures = self.shared_exposures,
+            exposures = self.exposures,
             name = self.name,
+            regions=self.regions,
         )
 
 
@@ -204,8 +211,7 @@ class Corpus(CorpusMixin):
                 'cardinality' : sample.cardinality[mask],
                 'locus' : np.array([subsample_lookup[locus] for locus in sample.locus[mask]]).astype(int),
                 'chrom' : sample.chrom[mask],
-                'pos' : sample.pos[mask],
-                'exposures' : sample.exposures[:,loci],   
+                'pos' : sample.pos[mask], 
                 'name' : sample.name,
             })
             new_samples.append(new_sample)
@@ -222,8 +228,9 @@ class Corpus(CorpusMixin):
                 for feature_name, v in self.features.items()
             },
             context_frequencies = self.context_frequencies[:,:,loci],
-            shared_exposures = self.shared_exposures,
             name = self.name,
+            exposures = self.exposures[:, loci],
+            regions=[self.regions[l] for l in loci]
         )
     
 
@@ -235,11 +242,11 @@ class Corpus(CorpusMixin):
     def get_empirical_mutation_rate(self, use_weight=True):
 
         # returns the ln mutation rate for each locus in the first sample
-        mutation_rate = self.samples[0].get_empirical_mutation_rate(use_weight = use_weight)
+        mutation_rate = self.samples[0].get_empirical_mutation_rate(self.locus_dim, use_weight = use_weight)
 
         # loop through the rest of the samples and add the mutation rate using logsumexp
         for i in trange(1, len(self), desc = 'Piling up mutations', ncols=100):
-            mutation_rate = mutation_rate + self.samples[i].get_empirical_mutation_rate(use_weight = use_weight)
+            mutation_rate = mutation_rate + self.samples[i].get_empirical_mutation_rate(self.locus_dim, use_weight = use_weight)
         
         return mutation_rate
     

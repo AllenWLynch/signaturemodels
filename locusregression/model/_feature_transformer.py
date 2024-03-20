@@ -151,7 +151,7 @@ class CardinalityTransformer(BaseEstimator):
             f'Found cardinality features: {", ".join(self.feature_names_)}'
         )
         
-        self.transformer_ = LabelEncoder().fit(['-','nan','+'])
+        self.transformer_ = LabelEncoder().fit(['-','.','+'])
         
         return self
     

@@ -42,7 +42,7 @@ def _get_observation_likelihood(*,model_state, sample, corpus_state):
         + np.squeeze(corpus_state.cardinality_effects_, axis=2)[:, sample.cardinality, sample.locus] \
         + np.log(corpus_state.context_frequencies[sample.cardinality, sample.context, sample.locus]) \
         + np.log(model_state.lambda_[:, sample.context]) \
-        + np.log(sample.exposures[:, sample.locus]) \
+        + np.log(corpus_state.exposures[:, sample.locus]) \
         + corpus_state.theta_[:, sample.locus] \
         - corpus_state.log_denom_
     )
@@ -429,6 +429,7 @@ class LocusRegressor:
 
         if reinit:
             logger.info('Initializing model ...')
+            logger.info('Fitting model with corpuses: ' + ', '.join(corpus.corpus_names))
             self._init_model(corpus)
         
         n_subsample_loci = int(self.n_loci * self.locus_subsample)
@@ -487,6 +488,13 @@ class LocusRegressor:
                 if (not self.eval_every is None) and epoch % self.eval_every == 0:
                     
                     with TimerContext('Calculating bound'):
+
+                        '''_, gamma = self._inference(
+                                corpus = corpus,
+                                model_state = self.model_state,
+                                corpus_states = self.corpus_states,
+                                gamma = self._init_doc_variables(len(corpus))
+                            )'''
                         
                         elbo = self._bound(
                                 corpus = corpus,
