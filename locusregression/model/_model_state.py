@@ -25,6 +25,7 @@ class DummyCorpus:
     def __init__(self, corpus):
         self.context_frequencies = corpus.context_frequencies
         self.shared_correlates = corpus.shared_correlates
+        self.shared_exposures = corpus.shared_exposures
         self.features = corpus.features
 
 
