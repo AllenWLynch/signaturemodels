@@ -203,6 +203,7 @@ def make_windows(
         )
         windows_file.flush()
         
+        logger.info(f'Segmenting genome based on feature tracks ...')
         for region in _endpoints_to_regions(
             _get_endpoints(
                 allowed_chroms,
@@ -213,6 +214,7 @@ def make_windows(
             print(*region, sep='\t', file=pre_blacklist_file)
         pre_blacklist_file.flush()
 
+        logger.info(f'Removing blacklist regions ...')
         subract_process = subprocess.Popen(
             ['bedtools', 'intersect', '-a', pre_blacklist_file.name, '-b', blacklist_file, '-v'],
             stdout=subprocess.PIPE,
@@ -230,6 +232,7 @@ def make_windows(
 
         subract_process.wait()
 
+        logger.info(f'Writing final region set ...')
         for window_id, regions in regions_collection.items():
             
             chrs, starts, ends = list(zip(*regions))

@@ -6,4 +6,4 @@ from .cli import main
 from .explanation import *
 from .plot import *
 
-__version__ = '1.0.0a'
+__version__ = '1.0.1'
