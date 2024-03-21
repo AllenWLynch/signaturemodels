@@ -1,6 +1,6 @@
 
 from .model import GBTRegressor, LocusRegressor
-from .corpus import stream_corpus, MetaCorpus, SBSCorpusMaker
+from .corpus import stream_corpus, MetaCorpus, read_windows
 from argparse import ArgumentTypeError
 import os
 import joblib
@@ -112,7 +112,7 @@ def bed12_matrix_to_bedgraph(
 ):
 
     assert len(feature_names) == matrix.shape[1], 'Number of feature names does not match number of columns in matrix.'
-    regions = SBSCorpusMaker.read_windows(regions_file)
+    regions = read_windows(regions_file)
     assert len(regions) == matrix.shape[0], 'Number of regions in BED12 file does not match number of rows in matrix.'
     
     segments = []

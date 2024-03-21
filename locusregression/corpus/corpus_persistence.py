@@ -2,7 +2,7 @@ import h5py as h5
 from .corpus import Corpus
 import numpy as np
 import logging
-from .corpus_maker import BED12Record
+from .reader_utils import BED12Record
 from .sample import InMemorySamples, SampleLoader
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

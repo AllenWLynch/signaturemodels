@@ -37,7 +37,6 @@ class CorpusMixin(ABC):
             assert exposures.shape == (1, self.locus_dim,)
             self._exposures = exposures
 
-
         assert context_frequencies.shape == \
             (self.cardinalities_dim, self.context_dim, self.locus_dim)
         
