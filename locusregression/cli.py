@@ -1,6 +1,5 @@
 from ._cli_utils import *
 from .corpus import *
-from .corpus import logger as reader_logger
 from .corpus.sbs.mutation_preprocessing import get_marginal_mutation_rate, get_mutation_clusters, transfer_annotations_to_vcf
 from .model import load_model, logger
 from .model._importance_sampling import get_posterior_sample
@@ -107,11 +106,13 @@ make_windows_parser.add_argument('--output','-o', type = argparse.FileType('w'),
 make_windows_parser.set_defaults(func = make_windows_wrapper)
 
 
-def create_corpus_wrapper(*,filename, corpus_name, fasta_file, regions_file):
+def create_corpus_wrapper(dtype='sbs',*,filename, corpus_name, fasta_file, regions_file):
 
-    regions = SBSCorpusMaker.read_windows(regions_file)
+    regions = read_windows(regions_file)
 
-    context_frequencies = SBSCorpusMaker.get_context_frequencies(
+    SampleClass = Corpus._get_observation_class(dtype)
+
+    context_frequencies = SampleClass.get_context_frequencies(
         window_set=regions,
         fasta_file=fasta_file,
     )
@@ -119,7 +120,7 @@ def create_corpus_wrapper(*,filename, corpus_name, fasta_file, regions_file):
     create_corpus(
         filename=filename,
         name=corpus_name,
-        type='SBS',
+        type=dtype,
         context_frequencies=context_frequencies,
         regions=regions,
     )
@@ -129,6 +130,7 @@ corpus_init_parser.add_argument('filename', type = valid_path, help = 'Where to 
 corpus_init_parser.add_argument('--corpus-name','-n', type = str, required = True, help = 'Name of corpus, must be unique if modeling with other corpuses.')
 corpus_init_parser.add_argument('--fasta-file','-fa', type = file_exists, required = True, help = 'Sequence file, used to find context of mutations.')
 corpus_init_parser.add_argument('--regions-file','-r', type = file_exists, required = True)
+corpus_init_parser.add_argument('--dtype', type = str, default='sbs', choices=['sbs','fragment-motif','fragment-length','indel',])
 corpus_init_parser.set_defaults(func = create_corpus_wrapper)
 
 
@@ -454,10 +456,10 @@ def ingest_sample(mutation_rate_bedgraph=None,
     if mutation_rate_bedgraph is None:
         logger.warning('No mutation rate bedgraph provided, will not filter for clustered variants.')
 
-    #SampleClass = peek_type(corpus)
+    SampleClass = peek_type(corpus)
 
     with _get_regions_filename(corpus) as regions_file:
-        sample = SBSCorpusMaker.featurize_mutations(
+        sample = SampleClass.featurize_mutations(
             sample_file, 
             regions_file,
             fasta_file,
@@ -925,6 +927,7 @@ corpusstate_cache_parser.set_defaults(func = _make_corpusstate_cache)
 
 def _write_posterior_annotated_vcf(
     input_vcf, output_name,*,
+    sample_class,
     model_state, 
     weight_col, 
     corpus_state,
@@ -934,10 +937,10 @@ def _write_posterior_annotated_vcf(
     component_names,
     ):
 
-    sample = SBSCorpusMaker.ingest_sample(
+    sample = sample_class.featurize_mutations(
                     input_vcf, 
-                    regions_file=regions_file,
-                    fasta_file=fasta_file,
+                    regions_file,
+                    fasta_file,
                     chr_prefix=chr_prefix,
                     weight_col=weight_col,
                 )
@@ -973,38 +976,34 @@ def assign_components_wrapper(*,
         n_jobs=1,
     ):
 
+    SampleClass = peek_type(corpus)
     corpus_state = load_corpusstate_cache(model, corpus)
     
     model = load_model(model)
     corpus = stream_corpus(corpus)
 
-    try:
-        corpus.metadata['regions_file']
-    except KeyError as err:
-        raise ValueError('Corpus must have a "regions_file" metadata attribute.\n'
-                         'This one doesn\'t, which means it must be a partition of some corpus, or a simluted corpus.\n'
-                         'This function must use the originally-created corpus.') from err
+    
+    with _get_regions_filename(corpus) as regions_file:
 
-    annotation_fn = partial(
-        _write_posterior_annotated_vcf,
-        model_state=model.model_state, 
-        weight_col=weight_col, 
-        corpus_state=corpus_state,
-        regions_file=regions_file, 
-        fasta_file= fasta_file,
-        chr_prefix=chr_prefix,
-        component_names=model.component_names,
-    )
-
-    del corpus
-
-    Parallel(
-            n_jobs = n_jobs, 
-            verbose = 10,
-        )(
-            delayed(annotation_fn)(vcf, output_prefix + os.path.basename(vcf))
-            for vcf in vcf_files
+        annotation_fn = partial(
+            _write_posterior_annotated_vcf,
+            sample_class=SampleClass,
+            model_state=model.model_state, 
+            weight_col=weight_col, 
+            corpus_state=corpus_state,
+            regions_file=regions_file, 
+            fasta_file= fasta_file,
+            chr_prefix=chr_prefix,
+            component_names=model.component_names,
         )
+
+        Parallel(
+                n_jobs = n_jobs, 
+                verbose = 10,
+            )(
+                delayed(annotation_fn)(vcf, output_prefix + os.path.basename(vcf))
+                for vcf in vcf_files
+            )
 
     
 assign_components_parser = subparsers.add_parser('model-annotate-mutations',
