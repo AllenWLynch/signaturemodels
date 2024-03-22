@@ -871,14 +871,22 @@ class LocusRegressor:
         if len(components) == 0:
             components = self.component_names
 
-        n_card_features = len(self.model_state.strand_transformer.feature_names_)
         n_locus_features = len(self.model_state.feature_transformer.feature_names_out)
 
-        fig, ax = plt.subplots(len(components), 3, 
-                               figsize=(5.5 + 0.5*n_card_features + 0.35*n_locus_features, 1.75*len(components)), 
+        plot_card=self.model_state.fit_cardinality_
+
+        if plot_card:
+            n_card_features = len(self.model_state.strand_transformer.feature_names_)
+            gridspec=[5.5, 0.5*n_card_features, 0.35*n_locus_features + 1]
+        else:
+            n_card_features=0
+            gridspec=[5.5, 0.35*n_locus_features + 1]
+
+        fig, ax = plt.subplots(len(components), 2 + int(plot_card), 
+                               figsize=(5.5 + 0.5*n_card_features + 0.35*n_locus_features + 1, 1.75*len(components)), 
                                sharex='col',
                                gridspec_kw={
-                                   'width_ratios': [5.5, 0.5*n_card_features, 0.35*n_locus_features],
+                                   'width_ratios': gridspec,
                                    'hspace': 0.5,
                                    'wspace': 0.25,
                                    }
@@ -894,18 +902,19 @@ class LocusRegressor:
             if self.model_state.fit_cardinality_:
                 self.plot_cardinality_bias(comp, ax=ax[i,1], fontsize=7)
 
-            #try:
-            self.explanation_shap_values_[comp]
-            self.plot_explanation(comp, ax=ax[i,2])
-            #except AttributeError:
-            #    logger.warn(f'No explanations have been calculated for {comp}.')
-            #    ax[i, 2].axis('off')
+            try:
+                self.explanation_shap_values_[comp]
+            except KeyError:
+                logger.warn(f'No explanations have been calculated for {comp}. Please run model.calc_locus_explanations(corpus) first.')
+                #ax[i, -1].axis('off')
+            else:
+                self.plot_explanation(comp, ax=ax[i,-1])
             
             if i < len(components) - 1:
-                ax[i,1].tick_params(axis='x', bottom=False)
-                ax[i,2].tick_params(axis='x', bottom=False)
+                if plot_card:
+                    ax[i,1].tick_params(axis='x', bottom=False)
+                ax[i,-1].tick_params(axis='x', bottom=False)
 
-        plt.tight_layout()
         return ax
     
 
@@ -937,7 +946,7 @@ class LocusRegressor:
         ])
     
 
-    def calc_locus_explanations(self, corpus, subsample=10000, n_jobs=1):
+    def calc_locus_explanations(self, corpus,*components,subsample=10000, n_jobs=1):
 
         if not self.is_trained:
             logger.warn('This model was not trained to completion, results may be innaccurate')
@@ -957,8 +966,8 @@ class LocusRegressor:
         self.explanation_interaction_values_ = {}
         self.explanation_features_ = None
         self.explanation_display_features_ = None
-
-        for component in self.component_names:
+        
+        for component in (self.component_names if len(components)==0 else components):
             
             logger.info(
                 'Calculating SHAP values for component ' + component + ' ...'
