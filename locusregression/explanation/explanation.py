@@ -49,7 +49,6 @@ def explain(
     explainer = shap.TreeExplainer(
         tree_model,
         X_tild[background_idx],
-        check_additivity=False,
     )
 
     num_chunks = corpus.locus_dim // chunk_size + 1
