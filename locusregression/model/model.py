@@ -652,7 +652,7 @@ class LocusRegressor:
         return gamma
 
 
-    def predict(self, corpus):
+    def predict_exposures(self, corpus):
         """
         Predicts the gamma values for the given corpus.
 

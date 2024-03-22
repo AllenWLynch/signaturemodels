@@ -196,6 +196,7 @@ def make_windows(
     with tempfile.NamedTemporaryFile('w') as windows_file, \
         tempfile.NamedTemporaryFile('w') as pre_blacklist_file:
 
+        logger.info(f'Making initial coarse-grained regions ...')
         _make_fixed_size_windows(
             genome_file=genome_file,
             window_size=window_size,

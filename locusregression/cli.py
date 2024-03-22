@@ -817,11 +817,11 @@ def predict(*,model, corpuses, output):
 
     model = load_model(model)
 
-    exposures_matrix = model.predict(dataset)
+    exposures_matrix = model.predict_exposures(dataset)
 
     exposures_matrix.to_csv(output)
 
-predict_sub = subparsers.add_parser('model-predict', help = 'Predict exposures for each sample in a corpus.')
+predict_sub = subparsers.add_parser('model-predict-exposures', help = 'Predict exposures for each sample in a corpus.')
 predict_sub.add_argument('model', type = file_exists)
 predict_sub.add_argument('--corpuses', '-d', type = file_exists, nargs = '+', required=True,
                          help = 'Path to compiled corpus file/files.')
@@ -1273,4 +1273,7 @@ def main():
         func = args.pop('func')
         args = {k.replace('-','_') : v for k,v in args.items()}
 
-        func(**args)
+        try:
+            func(**args)
+        except BrokenPipeError:
+            pass
