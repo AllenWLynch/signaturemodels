@@ -912,9 +912,8 @@ class LocusRegressor:
 
             try:
                 self.explanation_shap_values_[comp]
-            except KeyError:
+            except (KeyError, AttributeError):
                 logger.warn(f'No explanations have been calculated for {comp}. Please run model.calc_locus_explanations(corpus) first.')
-                #ax[i, -1].axis('off')
             else:
                 self.plot_explanation(comp, ax=ax[i,-1])
             
