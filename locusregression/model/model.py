@@ -116,7 +116,7 @@ class LocusRegressor:
         batch_size = None,
         empirical_bayes = True,
         kappa = 0.5,
-        tau = 16,
+        tau = 1,
         eval_every = 50,
         begin_prior_updates = 10,
         time_limit = None,

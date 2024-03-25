@@ -544,10 +544,21 @@ split_parser.set_defaults(func = split_corpus)
 
 
 def empirical_mutation_rate(*,corpus, output):
-    mutation_rate = load_corpus(corpus).get_empirical_mutation_rate()
-    print(*mutation_rate, file = output, sep = '\n')
 
-empirical_mutrate_parser = subparsers.add_parser('corpus-empirical-mutation-rate',
+    with _get_regions_filename(corpus) as regions_file:
+        mutation_rate = stream_corpus(corpus)\
+                        .get_empirical_mutation_rate()\
+                        .sum((0,1))
+        
+        bed12_matrix_to_bedgraph(
+            normalize_to_windowlength = True,
+            regions_file = regions_file,
+            matrix = mutation_rate[:,None],
+            feature_names = ['mutation_rate'],
+            output = output,
+        )
+
+empirical_mutrate_parser = subparsers.add_parser('corpus-empirical-mutrate',
     help = 'Aggregate mutations in a corpus to calculate the log (natural) empirical mutation rate. This depends on having sufficient mutations to find a smooth function.'
 )
 empirical_mutrate_parser.add_argument('corpus', type = file_exists)
@@ -810,7 +821,6 @@ score_parser.add_argument('--subset-by-loci', action = 'store_true', default=Fal
 score_parser.set_defaults(func = score)
 
 
-
 def predict(*,model, corpuses, output):
 
     dataset = load_dataset(corpuses)
@@ -879,31 +889,87 @@ mutrate_r2_parser.add_argument('--corpuses', '-d', type = file_exists, nargs = '
 mutrate_r2_parser.set_defaults(func = get_mutation_rate_r2)
 
 
-def explain_wrapper(n_jobs=1,*,signature, model, corpuses, output):
-    
+def calc_locus_explanations(*,model,corpuses,components,n_jobs=1, subsample=10000):
+
+    model_path = model
     model = load_model(model)
     dataset = load_dataset(corpuses)
 
-    results = explain(signature,
-            model = model,
-            corpus = dataset,
-            n_jobs = n_jobs,
-            )
-    
-    print(*results['feature_names'], sep=',', file = output)
-    for row in results['shap_values']:
-        print(*row, sep = ',', file = output)
+    model.calc_locus_explanations(dataset,*components,n_jobs=n_jobs, subsample=subsample)
+    model.save(model_path)
 
-explain_parser = subparsers.add_parser('model-explain',
-                                        help = 'Explain the contribution of each feature to a signature.')
+explain_parser = subparsers.add_parser('model-calc-explanations',
+                                        help = 'Calculate the contribution of each feature to the mutation rate at each locus for each component.')
 explain_parser.add_argument('model', type = file_exists)
-explain_parser.add_argument('--signature','-sig', type = str, required=True)
 explain_parser.add_argument('--corpuses', '-d', type = file_exists, nargs = '+', required=True,
-    help = 'Path to compiled corpus file/files.')
-explain_parser.add_argument('--n-jobs','-j', type = posint, default = 1)
-explain_parser.add_argument('--output','-o', type =  argparse.FileType('w'), default=sys.stdout)
-explain_parser.set_defaults(func = explain_wrapper)
+                            help = 'Path to compiled corpus file/files.')
+explain_parser.add_argument('--components', '-c', type = str, nargs = '+', default=[], required=False,
+                            help = 'Components to calculate explanations for. If left unset, will calculate explanations for all components.')
+explain_parser.add_argument('--n-jobs','-j', type = posint, default=1)
+explain_parser.add_argument('--subsample','-s', type = posint, default=None)
+explain_parser.set_defaults(func = calc_locus_explanations)
 
+
+def get_mutation_rate_wrapper(*, model, corpus, output):
+
+    model = load_model(model)
+
+    with _get_regions_filename(corpus) as regions_file:
+
+        logger.info('Loading corpus ...')
+        corpus = stream_corpus(corpus)
+        # Remove the effect for each context and direction by summing over 0,1 axes
+
+        logger.info('Calculating marginal mutation rates ...')
+        mr = np.exp(model.get_log_marginal_mutation_rate(corpus)).sum((0,1))
+
+        logger.info('Writing mutation rates to bedgraph ...')
+        bed12_matrix_to_bedgraph(
+            normalize_to_windowlength=True,
+            header=False,
+            matrix = mr[:,None],
+            regions_file = regions_file,
+            feature_names=['mutation_rate'],
+            output = output,
+        )
+    
+mutrate_parser = subparsers.add_parser('model-get-marginal-mutrate',
+                                        help = 'Get the marginal mutation rate for each region in a corpus.')
+mutrate_parser.add_argument('model', type = file_exists)
+mutrate_parser.add_argument('corpus', type = file_exists)
+mutrate_parser.add_argument('--output','-o', type = argparse.FileType('w'), default=sys.stdout)
+mutrate_parser.set_defaults(func = get_mutation_rate_wrapper)
+
+
+
+def get_component_rate_wrapper(*, model, corpus, output):
+
+    model = load_model(model)
+    with _get_regions_filename(corpus) as regions_file:
+
+        logger.info('Loading corpus ...')
+        corpus = stream_corpus(corpus)
+
+        logger.info('Calculating component mutation rates ...')
+        component_rates = np.exp(model.get_log_component_mutation_rate(corpus))\
+                                .sum((1,2)).T
+
+        logger.info('Writing mutation rates to bedgraph ...')
+        bed12_matrix_to_bedgraph(
+            normalize_to_windowlength=True,
+            header=True,
+            matrix = component_rates,
+            regions_file = regions_file,
+            feature_names=model.component_names,
+            output = output,
+        )
+
+component_rate_parser = subparsers.add_parser('model-get-component-mutrate',
+                                        help = 'Get the mutation rate for each component in a corpus.')
+component_rate_parser.add_argument('model', type = file_exists)
+component_rate_parser.add_argument('corpus', type = file_exists)
+component_rate_parser.add_argument('--output','-o', type = argparse.FileType('w'), default=sys.stdout)
+component_rate_parser.set_defaults(func = get_component_rate_wrapper)
 
 
 def _make_corpusstate_cache(*,model, corpus):
@@ -968,7 +1034,6 @@ def assign_components_wrapper(*,
         vcf_files, 
         corpus, 
         output_prefix, 
-        exposure_file=None, 
         weight_col=None,
         regions_file,
         fasta_file,
@@ -980,8 +1045,6 @@ def assign_components_wrapper(*,
     corpus_state = load_corpusstate_cache(model, corpus)
     
     model = load_model(model)
-    corpus = stream_corpus(corpus)
-
     
     with _get_regions_filename(corpus) as regions_file:
 
@@ -1004,7 +1067,6 @@ def assign_components_wrapper(*,
                 delayed(annotation_fn)(vcf, output_prefix + os.path.basename(vcf))
                 for vcf in vcf_files
             )
-
     
 assign_components_parser = subparsers.add_parser('model-annotate-mutations',
     help = 'Assign each mutation in a VCF file to a component of the model.')
@@ -1021,143 +1083,6 @@ assign_components_parser.add_argument('--fasta-file','-fa', type = file_exists, 
 assign_components_parser.set_defaults(func = assign_components_wrapper)
 
 
-'''
-def summarize_all_model_attributes(*,model, prefix):
-
-    corpuses = list(load_model(model).corpus_states.keys())
-    with open(prefix + '.associations.csv', 'w') as associations_file:
-        save_associations(model = model, output = associations_file)
-
-    with open(prefix + '.signatures.csv', 'w') as signatures_file:
-        save_signatures(model = model, output = signatures_file)
-    
-    summary_plot(model = model, output = prefix + '.summary_plt.png')
-
-    for corpus in corpuses:
-        with open(prefix + f'.mutrates.{corpus}.csv', 'w') as mutrates_file:
-            save_per_component_mutation_rates(model = model, output = mutrates_file, corpus_name = corpus)
-        
-        with open(prefix + f'.overall_mutrate.{corpus}.csv', 'w') as mutrate_file:
-            save_overall_mutation_rate(model = model, output = mutrate_file, corpus_name = corpus)
-
-
-
-summarize_parser = subparsers.add_parser('model-summarize', help = 'Save all summary data for a trained model.')
-summarize_parser.add_argument('model', type = file_exists)
-summarize_parser.add_argument('--prefix','-p', type = str, required=True)
-summarize_parser.set_defaults(func = summarize_all_model_attributes)
-'''
-
-'''
-def add_sample_ingest_args(parser):
-    parser.add_argument('model', type = file_exists)
-    parser.add_argument('--vcf-file','-vcf', type = file_exists, required=True)
-    parser.add_argument('--exposure-file','-e', type = argparse.FileType('r'), default=None)
-    parser.add_argument('--output','-o', type = argparse.FileType('w'), default=sys.stdout)
-    parser.add_argument('--regions-file','-r', type = file_exists, required=True)
-    parser.add_argument('--fasta-file','-fa', type = file_exists, required=True)
-    parser.add_argument('--chr-prefix', type = str, default = '')
-
-
-def assign_components(*,model,vcf_file, corpus_name, exposure_file, output,
-                     regions_file, fasta_file, 
-                     chr_prefix = ''):
-    
-    model = load_model(model)
-
-    try:
-        model.corpus_states[corpus_name]
-    except KeyError:
-        raise ValueError(f'Corpus {corpus_name} not found in model.')
-    
-    logger.info('Reading sample from VCF file.')
-    sample = CorpusReader.ingest_sample(
-        vcf_file, exposure_file = exposure_file,
-        regions_file = regions_file, fasta_file = fasta_file,
-        chr_prefix = chr_prefix,
-    )
-    
-    mutation_assignments = model.assign_mutations_to_components(sample, corpus_name)
-
-    print(*mutation_assignments.keys(), sep = ',', file = output)
-    for row in list(zip(*mutation_assignments.values())):
-        print(*row, sep = ',', file = output)
-
-
-assign_mutations_parser = subparsers.add_parser('model-assign-components',
-                                                help = 'Assign each mutation in a VCF file to a component of the model.')
-add_sample_ingest_args(assign_mutations_parser)
-assign_mutations_parser.add_argument('--corpus-name','-n', type = str, required=True)
-assign_mutations_parser.set_defaults(func = assign_components)
-
-
-def assign_corpus(*,model,vcf_file, exposure_file, output,
-                     regions_file, fasta_file, 
-                     iters = 100, anneal_steps = 100,
-                     max_mutations = 10000,
-                     chr_prefix = '',
-                     pi_prior = None):
-    
-    model = load_model(model)
-    
-    logger.info('Reading sample from VCF file.')
-    sample = CorpusReader.ingest_sample(
-        vcf_file, exposure_file = exposure_file,
-        regions_file = regions_file, fasta_file = fasta_file,
-        chr_prefix = chr_prefix,
-    )
-    
-    corpus_logps = model.assign_sample_to_corpus(sample, 
-                                                 n_iters = iters, 
-                                                 n_samples_per_iter = anneal_steps,
-                                                 pi_prior = pi_prior,
-                                                 max_mutations = max_mutations,
-                                                )
-
-    print(*corpus_logps.keys(), sep = ',', file = output)
-    for row in list(zip(*corpus_logps.values())):
-        print(*row, sep = ',', file = output)
-
-
-assign_corpus_parser = subparsers.add_parser('model-assign-corpus-sample',
-                                             help = 'Evaluate which corpus a VCF file is most likely generated from.')
-add_sample_ingest_args(assign_corpus_parser)
-assign_corpus_parser.add_argument('--pi-prior','-pi', type = posfloat, default = None)
-assign_corpus_parser.add_argument('--iters','-iters', type = posint, default = 100)
-assign_corpus_parser.add_argument('--anneal-steps','-steps', type = posint, default = 100)
-assign_corpus_parser.add_argument('--max-mutations','-max', type = posint, default = 10000)
-assign_corpus_parser.set_defaults(func = assign_corpus)
-
-
-def assign_corpus_mutation(*,model,vcf_file, exposure_file, output,
-                        regions_file, fasta_file, iters = 100, anneal_steps = 100,
-                        chr_prefix = ''):
-    
-    model = load_model(model)
-    
-    logger.info('Reading sample from VCF file.')
-    sample = CorpusReader.ingest_sample(
-        vcf_file, exposure_file = exposure_file,
-        regions_file = regions_file, fasta_file = fasta_file,
-        chr_prefix = chr_prefix,
-    )
-
-    mutation_assignments = model.assign_mutations_to_corpus(sample, 
-                                                 n_iters = iters, 
-                                                 n_samples_per_iter = anneal_steps
-                                                )
-    
-    print(*mutation_assignments.keys(), sep = ',', file = output)
-    for row in list(zip(*mutation_assignments.values())):
-        print(*row, sep = ',', file = output)
-    
-assign_corpus_mutation_parser = subparsers.add_parser('model-assign-corpus-mutation',
-                                                        help = 'Evaluate which corpus a mutation in a VCF file is most likely generated from.')
-add_sample_ingest_args(assign_corpus_mutation_parser)
-assign_corpus_mutation_parser.add_argument('--iters','-iters', type = posint, default = 100)
-assign_corpus_mutation_parser.add_argument('--anneal-steps','-steps', type = posint, default = 100)
-assign_corpus_mutation_parser.set_defaults(func = assign_corpus_mutation)
-'''
 
 def run_simulation(*,config, prefix):
     
