@@ -17,8 +17,8 @@ class GBTRegressor(LocusRegressor):
                  max_leaf_nodes = 31,
                  min_samples_leaf = 30,
                  max_features = 1.,
-                 l2_regularization=1e-3,
-                 n_iter_no_change=3,
+                 l2_regularization=1,
+                 n_iter_no_change=2,
                  use_groups=True,
                  signature_reg = 0.,
                  cardinality_reg = 0.,
@@ -56,16 +56,10 @@ class GBTRegressor(LocusRegressor):
     @classmethod
     def sample_params(cls, trial):
         return {
-            'tree_learning_rate' : trial.suggest_loguniform('tree_learning_rate', 0.025, 0.2),
-            'max_depth' : trial.suggest_int('max_depth', 3, 6),
-            'max_trees_per_iter' : trial.suggest_int('max_trees_per_iter', 10, 100),
-            'n_iter_no_change' : trial.suggest_int('n_iter_no_change', 1, 5),
-            'l2_regularization': trial.suggest_loguniform('l2_regularization', 1e-10, 1e-1),
-            'signature_reg': trial.suggest_loguniform('signature_reg', 1e-7, 1e-1),
-            'cardinality_reg': trial.suggest_loguniform('cardinality_reg', 1e-7, 1e-1),
-            'max_leaf_nodes' : trial.suggest_int('max_leaf_nodes', 10, 50),
-            'min_samples_leaf' : trial.suggest_int('min_samples_leaf', 5, 50),
-            'max_features' : trial.suggest_categorical('max_features', [0.25, 0.5, 0.75, 1.0]),
-            'use_groups' : trial.suggest_categorical('use_groups', [True, False]),
+            'max_trees_per_iter' : trial.suggest_int('max_trees_per_iter', 3, 50),
+            'l2_regularization': trial.suggest_categorical('l2_regularization', [0.,1e-2,1e-1, 1, 10, 100, 1000]),
+            #'max_leaf_nodes' : trial.suggest_int('max_leaf_nodes', 10, 50),
+            #'min_samples_leaf' : trial.suggest_int('min_samples_leaf', 5, 50),
+            #'max_features' : trial.suggest_categorical('max_features', [0.25, 0.5, 0.75, 1.0]),
+            #'use_groups' : trial.suggest_categorical('use_groups', [True, False]),
         }
-    
