@@ -13,7 +13,7 @@ def objective(trial,
             max_components = 10,
             model_params = {},
             tune_subsample = True,
-            locus_subsample_rates = [0.125, 0.25, None, None],
+            locus_subsample_rates = [0.125, 0.25, 0.5, None],
             model_type = 'regression',
             subset_by_loci=True,
             no_improvement=5,*,
@@ -35,7 +35,6 @@ def objective(trial,
 
     if tune_subsample:
         sample_params['locus_subsample'] = trial.suggest_categorical('locus_subsample', locus_subsample_rates)
-        sample_params['batch_size'] = trial.suggest_categorical('batch_size', [128,256,None,None])
 
     model_params.update(sample_params)
 

@@ -235,7 +235,7 @@ class ModelState:
     def update_rho(self, sstats, corpus_states, learning_rate):
         
         new_rho = np.vstack([
-            np.expand_dims(sstats.mutation_sstats[k], axis = 0)
+            np.expand_dims(sstats.mutation_sstats[k] + 1, axis = 0)
             for k in range(self.n_components)
         ])
 

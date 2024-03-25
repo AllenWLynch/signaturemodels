@@ -63,7 +63,7 @@ def _estep_update(exp_Elog_gamma, alpha, flattend_phi, count_g, likelihood_scale
 
 def _calc_local_variables(*,gamma, flattend_phi):
     exp_Elog_gamma = np.exp(log_dirichlet_expectation(gamma)[:,None])
-    phi_matrix = np.outer(exp_Elog_gamma, 1/np.dot(flattend_phi.T, exp_Elog_gamma))*flattend_phi #/(batch_subsample_rate*locus_subsample_rate)
+    phi_matrix = np.outer(exp_Elog_gamma, 1/np.dot(flattend_phi.T, exp_Elog_gamma))*flattend_phi
     
     return phi_matrix
 
